@@ -44,6 +44,25 @@ class PlanDAG(BaseModel):
             for dep in s.depends_on:
                 if dep not in known:
                     raise ValueError(f"Step {s.id} depends on unknown step {dep}.")
+        graph = {s.id: s.depends_on for s in self.steps}
+        visiting: List[str] = []
+        visited: set[str] = set()
+
+        def visit(node: str) -> None:
+            if node in visited:
+                return
+            if node in visiting:
+                cycle_start = visiting.index(node)
+                cycle = visiting[cycle_start:] + [node]
+                raise ValueError(f"Plan step dependencies contain a cycle: {' -> '.join(cycle)}.")
+            visiting.append(node)
+            for dep in graph.get(node, []):
+                visit(dep)
+            visiting.pop()
+            visited.add(node)
+
+        for node in graph:
+            visit(node)
         return self
 
 

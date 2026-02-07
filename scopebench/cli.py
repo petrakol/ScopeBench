@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from scopebench.runtime.guard import evaluate_from_files
+from scopebench.scoring.calibration import CalibratedDecisionThresholds
 from scopebench.tracing.otel import init_tracing
 
 app = typer.Typer(add_completion=False, help="ScopeBench: plan-level proportionality enforcement.")
@@ -88,10 +89,14 @@ def run(
     plan_path: Path = typer.Argument(..., help="Path to plan YAML."),
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
     otel_console: bool = typer.Option(False, "--otel-console", help="Enable console OpenTelemetry exporter."),
+    calibration_scale: float = typer.Option(1.0, "--calibration-scale", min=0.0, help="Scale aggregate scores."),
 ):
     """Evaluate a plan against a task contract and print ALLOW/ASK/DENY."""
     init_tracing(enable_console=otel_console)
-    res = evaluate_from_files(str(contract_path), str(plan_path))
+    calibration = None
+    if calibration_scale != 1.0:
+        calibration = CalibratedDecisionThresholds(global_scale=calibration_scale)
+    res = evaluate_from_files(str(contract_path), str(plan_path), calibration=calibration)
     _print_result(res, as_json=json_out)
 
 
