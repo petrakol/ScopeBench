@@ -36,6 +36,12 @@ scopebench run examples/phone_charge.contract.yaml examples/phone_charge.plan.ya
 
 You should see a `DENY` decision with axis-wise reasons.
 
+Quickstart shortcut:
+
+```bash
+scopebench quickstart
+```
+
 ### 3) Start the API
 
 ```bash
@@ -47,6 +53,8 @@ Then:
 ```bash
 curl -s http://localhost:8080/health
 ```
+
+The `/evaluate` response can include a short `summary` and `next_steps` (set `include_summary=true`) to support UI/agent UX flows.
 
 ## Repository layout
 
