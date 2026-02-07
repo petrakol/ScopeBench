@@ -22,6 +22,96 @@ tools:
       dependency_creation: 0.0
       power_concentration: 0.0
 
+  web_browser:
+    category: web
+    priors:
+      depth: 0.15
+      irreversibility: 0.0
+      resource_intensity: 0.10
+      legal_exposure: 0.15
+      dependency_creation: 0.05
+      power_concentration: 0.0
+
+  api_request:
+    category: web
+    priors:
+      depth: 0.20
+      irreversibility: 0.05
+      resource_intensity: 0.10
+      legal_exposure: 0.15
+      dependency_creation: 0.10
+      power_concentration: 0.05
+
+  shell:
+    category: exec
+    priors:
+      depth: 0.30
+      irreversibility: 0.15
+      resource_intensity: 0.10
+      legal_exposure: 0.10
+      dependency_creation: 0.15
+      power_concentration: 0.05
+
+  python:
+    category: exec
+    priors:
+      depth: 0.25
+      irreversibility: 0.10
+      resource_intensity: 0.10
+      legal_exposure: 0.10
+      dependency_creation: 0.10
+      power_concentration: 0.05
+
+  file_read:
+    category: swe
+    priors:
+      depth: 0.10
+      irreversibility: 0.0
+      resource_intensity: 0.05
+      legal_exposure: 0.05
+      dependency_creation: 0.0
+      power_concentration: 0.0
+
+  file_write:
+    category: swe
+    priors:
+      depth: 0.30
+      irreversibility: 0.15
+      resource_intensity: 0.10
+      legal_exposure: 0.10
+      dependency_creation: 0.15
+      power_concentration: 0.05
+
+  database_query:
+    category: data
+    priors:
+      depth: 0.30
+      irreversibility: 0.05
+      resource_intensity: 0.15
+      legal_exposure: 0.20
+      dependency_creation: 0.15
+      power_concentration: 0.10
+
+  spreadsheet_edit:
+    category: data
+    priors:
+      depth: 0.25
+      irreversibility: 0.10
+      resource_intensity: 0.10
+      legal_exposure: 0.10
+      dependency_creation: 0.20
+      power_concentration: 0.05
+
+  email_send:
+    category: communication
+    priors:
+      depth: 0.20
+      irreversibility: 0.20
+      resource_intensity: 0.05
+      legal_exposure: 0.20
+      dependency_creation: 0.10
+      power_concentration: 0.05
+
   git_read:
     category: swe
     priors:
