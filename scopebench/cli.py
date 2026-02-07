@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -16,8 +15,45 @@ app = typer.Typer(add_completion=False, help="ScopeBench: plan-level proportiona
 console = Console()
 
 
-def _print_result(result, as_json: bool = False) -> None:
+def _compact_payload(result) -> dict:
     policy = result.policy
+    agg = result.aggregate.as_dict()
+    sorted_axes = sorted(agg.items(), key=lambda item: item[1], reverse=True)
+
+    def step_peak(v):
+        d = v.as_dict
+        top_axis = max(d, key=lambda k: d[k])
+        return d[top_axis], top_axis
+
+    peaks = []
+    for v in result.vectors:
+        val, axis = step_peak(v)
+        peaks.append((val, axis, v))
+    peaks.sort(reverse=True, key=lambda x: x[0])
+
+    return {
+        "decision": policy.decision.value,
+        "reasons": policy.reasons[:5],
+        "top_axes": [{"axis": axis, "value": value} for axis, value in sorted_axes[:3]],
+        "top_steps": [
+            {
+                "step_id": v.step_id,
+                "tool": v.tool,
+                "axis": axis,
+                "value": val,
+                "rationale": getattr(v, axis).rationale,
+            }
+            for val, axis, v in peaks[:3]
+        ],
+        "n_steps": result.aggregate.n_steps,
+    }
+
+
+def _print_result(result, as_json: bool = False, compact_json: bool = False) -> None:
+    policy = result.policy
+    if compact_json:
+        console.print_json(json.dumps(_compact_payload(result)))
+        return
     if as_json:
         payload = {
             "decision": policy.decision.value,
@@ -88,6 +124,7 @@ def run(
     contract_path: Path = typer.Argument(..., help="Path to contract YAML."),
     plan_path: Path = typer.Argument(..., help="Path to plan YAML."),
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+    compact_json: bool = typer.Option(False, "--compact-json", help="Output compact JSON for chat/agent UX."),
     otel_console: bool = typer.Option(False, "--otel-console", help="Enable console OpenTelemetry exporter."),
     calibration_scale: float = typer.Option(1.0, "--calibration-scale", min=0.0, help="Scale aggregate scores."),
 ):
@@ -97,7 +134,22 @@ def run(
     if calibration_scale != 1.0:
         calibration = CalibratedDecisionThresholds(global_scale=calibration_scale)
     res = evaluate_from_files(str(contract_path), str(plan_path), calibration=calibration)
-    _print_result(res, as_json=json_out)
+    _print_result(res, as_json=json_out, compact_json=compact_json)
+
+
+@app.command()
+def quickstart(
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+    compact_json: bool = typer.Option(False, "--compact-json", help="Output compact JSON for chat/agent UX."),
+    otel_console: bool = typer.Option(False, "--otel-console", help="Enable console OpenTelemetry exporter."),
+):
+    """Run the bundled phone-charge overreach example."""
+    init_tracing(enable_console=otel_console)
+    root = Path(__file__).resolve().parents[1]
+    contract_path = root / "examples" / "phone_charge.contract.yaml"
+    plan_path = root / "examples" / "phone_charge.plan.yaml"
+    res = evaluate_from_files(str(contract_path), str(plan_path))
+    _print_result(res, as_json=json_out, compact_json=compact_json)
 
 
 @app.command()

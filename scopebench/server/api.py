@@ -16,6 +16,7 @@ class EvaluateRequest(BaseModel):
     contract: Dict[str, Any] = Field(..., description="TaskContract as dict")
     plan: Dict[str, Any] = Field(..., description="PlanDAG as dict")
     include_steps: bool = Field(False, description="Include step-level vectors and rationales.")
+    include_summary: bool = Field(False, description="Include summary and next-step guidance.")
     calibration_scale: Optional[float] = Field(None, ge=0.0, description="Optional scale for aggregate scores.")
 
 
@@ -40,6 +41,27 @@ class EvaluateResponse(BaseModel):
     aggregate: Dict[str, float]
     n_steps: int
     steps: Optional[List[StepDetail]] = None
+    summary: Optional[str] = None
+    next_steps: Optional[List[str]] = None
+
+
+def _summarize_response(policy, aggregate) -> str:
+    top_axes = sorted(aggregate.items(), key=lambda item: item[1], reverse=True)[:3]
+    axes_text = ", ".join(f"{axis}={value:.2f}" for axis, value in top_axes)
+    return f"Decision {policy.decision.value}. Top axes: {axes_text}."
+
+
+def _next_steps_from_policy(policy) -> List[str]:
+    suggestions: List[str] = []
+    for axis, (_, threshold) in policy.exceeded.items():
+        suggestions.append(f"Reduce {axis} below {float(threshold):.2f} or split into smaller steps.")
+    for axis, threshold in policy.asked.items():
+        suggestions.append(f"Consider approval or mitigating {axis} below {float(threshold):.2f}.")
+    if any("Tool category" in reason for reason in policy.reasons):
+        suggestions.append("Remove high-risk tool categories or get explicit approval.")
+    if not suggestions:
+        suggestions.append("Proceed; plan appears proportionate to the contract.")
+    return suggestions[:5]
 
 
 def create_app() -> FastAPI:
@@ -83,6 +105,11 @@ def create_app() -> FastAPI:
                         axes=axes,
                     )
                 )
+        summary = None
+        next_steps = None
+        if req.include_summary:
+            summary = _summarize_response(pol, res.aggregate.as_dict())
+            next_steps = _next_steps_from_policy(pol)
         return EvaluateResponse(
             decision=pol.decision.value,
             reasons=pol.reasons,
@@ -91,6 +118,8 @@ def create_app() -> FastAPI:
             aggregate=res.aggregate.as_dict(),
             n_steps=res.aggregate.n_steps,
             steps=steps,
+            summary=summary,
+            next_steps=next_steps,
         )
 
     return app
