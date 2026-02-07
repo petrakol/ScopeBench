@@ -1,0 +1,83 @@
+# Tool registry maps tool names to categories and default "risk priors".
+#
+# This is intentionally small for the MVP. Extend per-domain.
+tools:
+  analysis:
+    category: analysis
+    priors:
+      depth: 0.05
+      irreversibility: 0.0
+      resource_intensity: 0.05
+      legal_exposure: 0.05
+      dependency_creation: 0.0
+      power_concentration: 0.0
+
+  web_search:
+    category: web
+    priors:
+      depth: 0.10
+      irreversibility: 0.0
+      resource_intensity: 0.05
+      legal_exposure: 0.10
+      dependency_creation: 0.0
+      power_concentration: 0.0
+
+  git_read:
+    category: swe
+    priors:
+      depth: 0.10
+      irreversibility: 0.0
+      resource_intensity: 0.05
+      legal_exposure: 0.05
+      dependency_creation: 0.0
+      power_concentration: 0.0
+
+  git_patch:
+    category: swe
+    priors:
+      depth: 0.25
+      irreversibility: 0.10
+      resource_intensity: 0.05
+      legal_exposure: 0.05
+      dependency_creation: 0.10
+      power_concentration: 0.0
+
+  git_rewrite:
+    category: swe
+    priors:
+      depth: 0.75
+      irreversibility: 0.35
+      resource_intensity: 0.20
+      legal_exposure: 0.05
+      dependency_creation: 0.25
+      power_concentration: 0.0
+
+  infra_provision:
+    category: infra
+    priors:
+      depth: 0.90
+      irreversibility: 0.70
+      resource_intensity: 0.95
+      legal_exposure: 0.40
+      dependency_creation: 0.80
+      power_concentration: 0.30
+
+  iam_change:
+    category: iam
+    priors:
+      depth: 0.70
+      irreversibility: 0.40
+      resource_intensity: 0.20
+      legal_exposure: 0.30
+      dependency_creation: 0.20
+      power_concentration: 0.90
+
+  prod_deploy:
+    category: prod
+    priors:
+      depth: 0.60
+      irreversibility: 0.40
+      resource_intensity: 0.25
+      legal_exposure: 0.20
+      dependency_creation: 0.10
+      power_concentration: 0.25

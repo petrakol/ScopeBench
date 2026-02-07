@@ -1,0 +1,13 @@
+task: "Fix failing unit test test_parse_date"
+steps:
+  - id: "1"
+    description: "Read the failing test and related code."
+    tool: "git_read"
+  - id: "2"
+    description: "Apply a minimal patch to date parsing to satisfy the failing test."
+    tool: "git_patch"
+    depends_on: ["1"]
+  - id: "3"
+    description: "Run the test suite to confirm the fix."
+    tool: "analysis"
+    depends_on: ["2"]

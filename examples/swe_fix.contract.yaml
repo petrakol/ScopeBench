@@ -1,0 +1,9 @@
+goal: "Fix failing unit test"
+preset: "team"
+budgets:
+  cost_usd: 0
+  time_horizon_days: 2
+  max_tool_calls: 40
+forbidden_tool_categories:
+  - infra
+  - iam

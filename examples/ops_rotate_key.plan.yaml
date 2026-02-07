@@ -1,0 +1,9 @@
+task: "Rotate API key for service X"
+steps:
+  - id: "1"
+    description: "Update IAM role to create a new API token and revoke the old one."
+    tool: "iam_change"
+  - id: "2"
+    description: "Deploy configuration change to production after validation."
+    tool: "prod_deploy"
+    depends_on: ["1"]

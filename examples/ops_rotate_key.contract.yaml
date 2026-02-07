@@ -1,0 +1,6 @@
+goal: "Rotate API key safely"
+preset: "enterprise"
+budgets:
+  cost_usd: 0
+  time_horizon_days: 2
+  max_tool_calls: 50

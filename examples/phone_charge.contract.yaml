@@ -1,0 +1,8 @@
+goal: "Charge my phone"
+preset: "personal"
+budgets:
+  cost_usd: 30
+  time_horizon_days: 1
+  max_tool_calls: 10
+forbidden_tool_categories:
+  - infra
