@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from scopebench.contracts import TaskContract
-from scopebench.scoring.axes import ScopeAggregate, ScopeVector
+from scopebench.scoring.axes import ScopeAggregate, ScopeVector, norm_inf
 
 
 class Decision(str, Enum):
@@ -22,6 +22,9 @@ class PolicyResult:
     asked: Dict[str, float]  # axis -> value
     step_vectors: Optional[List[ScopeVector]] = None
     aggregate: Optional[ScopeAggregate] = None
+
+
+HARD_POWER_TOOL_CATEGORIES = {"iam", "prod", "infra", "payments", "finance", "legal", "health"}
 
 
 def evaluate_policy(contract: TaskContract, agg: ScopeAggregate, step_vectors: Optional[List[ScopeVector]] = None) -> PolicyResult:
@@ -47,17 +50,20 @@ def evaluate_policy(contract: TaskContract, agg: ScopeAggregate, step_vectors: O
                 reasons.append(f"Tool category '{v.tool_category}' is forbidden by contract")
                 exceeded["forbidden_tool_categories"] = (1.0, 0.0)
 
+    # Effective thresholds (uncertainty contraction)
+    contraction = max(0.0, 1.0 - agg.uncertainty)
+
     # Axis DENY thresholds
     axis_to_thresh = {
-        "spatial": contract.thresholds.max_spatial,
-        "temporal": contract.thresholds.max_temporal,
-        "depth": contract.thresholds.max_depth,
-        "irreversibility": contract.thresholds.max_irreversibility,
-        "resource_intensity": contract.thresholds.max_resource_intensity,
-        "legal_exposure": contract.thresholds.max_legal_exposure,
-        "dependency_creation": contract.thresholds.max_dependency_creation,
-        "stakeholder_radius": contract.thresholds.max_stakeholder_radius,
-        "power_concentration": contract.thresholds.max_power_concentration,
+        "spatial": contract.thresholds.max_spatial * contraction,
+        "temporal": contract.thresholds.max_temporal * contraction,
+        "depth": contract.thresholds.max_depth * contraction,
+        "irreversibility": contract.thresholds.max_irreversibility * contraction,
+        "resource_intensity": contract.thresholds.max_resource_intensity * contraction,
+        "legal_exposure": contract.thresholds.max_legal_exposure * contraction,
+        "dependency_creation": contract.thresholds.max_dependency_creation * contraction,
+        "stakeholder_radius": contract.thresholds.max_stakeholder_radius * contraction,
+        "power_concentration": contract.thresholds.max_power_concentration * contraction,
         "uncertainty": contract.thresholds.max_uncertainty,
     }
     agg_dict = agg.as_dict()
@@ -68,17 +74,18 @@ def evaluate_policy(contract: TaskContract, agg: ScopeAggregate, step_vectors: O
             reasons.append(f"{axis}={val:.2f} exceeds max {thresh:.2f}")
 
     # ASK thresholds
-    ask_any = contract.escalation.ask_if_any_axis_over
+    ask_any = contract.escalation.ask_if_any_axis_over * contraction
     ask_unc = contract.escalation.ask_if_uncertainty_over
-    for axis, val in agg_dict.items():
-        if val > ask_any:
-            asked[axis] = val
+    if norm_inf(agg_dict) > ask_any:
+        for axis, val in agg_dict.items():
+            if val > ask_any:
+                asked[axis] = val
     if agg.uncertainty > ask_unc:
         asked["uncertainty"] = agg.uncertainty
 
     # ASK if high-risk categories appear
     if step_vectors:
-        high_risk_cats = contract.escalation.ask_if_tool_category_in
+        high_risk_cats = contract.escalation.ask_if_tool_category_in | HARD_POWER_TOOL_CATEGORIES
         for v in step_vectors:
             if v.tool_category and v.tool_category in high_risk_cats:
                 asked.setdefault("tool_category", 0.0)

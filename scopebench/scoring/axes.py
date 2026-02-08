@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -31,6 +31,21 @@ class ScopeVector(BaseModel):
     step_id: Optional[str] = None
     tool: Optional[str] = None
     tool_category: Optional[str] = None
+
+    @property
+    def axes(self) -> Tuple[str, ...]:
+        return (
+            "spatial",
+            "temporal",
+            "depth",
+            "irreversibility",
+            "resource_intensity",
+            "legal_exposure",
+            "dependency_creation",
+            "stakeholder_radius",
+            "power_concentration",
+            "uncertainty",
+        )
 
     @property
     def as_dict(self) -> Dict[str, float]:
@@ -79,3 +94,25 @@ class ScopeAggregate(BaseModel):
             "power_concentration": self.power_concentration,
             "uncertainty": self.uncertainty,
         }
+
+
+SCOPE_AXES: Tuple[str, ...] = (
+    "spatial",
+    "temporal",
+    "depth",
+    "irreversibility",
+    "resource_intensity",
+    "legal_exposure",
+    "dependency_creation",
+    "stakeholder_radius",
+    "power_concentration",
+    "uncertainty",
+)
+
+
+def norm_inf(values: Dict[str, float]) -> float:
+    return max(values.values()) if values else 0.0
+
+
+def norm_l1(values: Dict[str, float]) -> float:
+    return sum(values.values()) if values else 0.0
