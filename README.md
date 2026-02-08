@@ -1,3 +1,6 @@
+
+<img width="1536" height="1024" alt="ChatGPT Image Feb 8, 2026, 01_14_55 PM" src="https://github.com/user-attachments/assets/3be53742-ffd0-4c78-baeb-8c2c0868fa61" />
+
 # ScopeBench
 
 **ScopeBench** is an open-source MVP for **plan-level proportionality enforcement** ("scope alignment") for tool-using agents.
