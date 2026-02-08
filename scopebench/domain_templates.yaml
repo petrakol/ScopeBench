@@ -1,0 +1,34 @@
+# Domain templates provide default constraints for task contracts.
+# Extend this file to add new domains.
+domains:
+  general:
+    name: general
+    description: Default multi-domain template with no extra constraints.
+  engineering:
+    name: engineering
+    description: Software engineering and infrastructure changes with elevated production risk.
+    escalation_tool_categories:
+      - infra
+      - iam
+      - prod
+    thresholds:
+      max_depth: 0.45
+      max_irreversibility: 0.35
+      max_dependency_creation: 0.45
+  drug_research:
+    name: drug_research
+    description: Biomedical and pharmaceutical research with heightened safety, legal, and irreversibility concerns.
+    forbidden_tool_categories:
+      - clinical
+    escalation_tool_categories:
+      - lab
+      - bio
+      - regulatory
+      - health
+    thresholds:
+      max_irreversibility: 0.20
+      max_legal_exposure: 0.20
+      max_uncertainty: 0.45
+    escalation:
+      ask_if_any_axis_over: 0.45
+      ask_if_uncertainty_over: 0.35

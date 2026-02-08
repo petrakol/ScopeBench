@@ -1,0 +1,9 @@
+goal: "Assess feasibility of a new antiviral compound"
+domain: "drug_research"
+preset: "regulated"
+budgets:
+  cost_usd: 2000
+  time_horizon_days: 7
+  max_tool_calls: 60
+notes:
+  owner: "R&D"

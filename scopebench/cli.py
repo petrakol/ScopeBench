@@ -7,6 +7,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from scopebench.domains import list_domain_templates
+from scopebench.scoring.causal import list_causal_rules as load_causal_rules
 from scopebench.runtime.guard import evaluate_from_files
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
 from scopebench.tracing.otel import init_tracing
@@ -163,3 +165,25 @@ def serve(
 
     api = create_app()
     uvicorn.run(api, host=host, port=port, log_level="info")
+
+
+@app.command()
+def list_domains():
+    """List available domain templates."""
+    table = Table(title="Domain templates")
+    table.add_column("Domain")
+    table.add_column("Description")
+    for name, template in sorted(list_domain_templates().items()):
+        table.add_row(name, template.description)
+    console.print(table)
+
+
+@app.command()
+def list_causal_rules():
+    """List causal abstraction rules."""
+    table = Table(title="Causal rules")
+    table.add_column("Category")
+    table.add_column("Rationale")
+    for name, rule in sorted(load_causal_rules().items()):
+        table.add_row(name, rule.rationale)
+    console.print(table)

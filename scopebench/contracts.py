@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Set
 
 from pydantic import BaseModel, Field, model_validator
 
+from scopebench.domains import get_domain_template
 
 class Preset(str, Enum):
     """Preset envelopes for common operating contexts."""
@@ -58,6 +59,8 @@ class TaskContract(BaseModel):
     """
 
     goal: str = Field(..., min_length=1)
+    domain: str = Field(default="general", min_length=1)
+    domain_template: Optional[str] = None
     preset: Preset = Field(default=Preset.PERSONAL)
 
     # If provided, restrict tools to this set. If None, any tool in registry may be used.
@@ -130,6 +133,53 @@ class TaskContract(BaseModel):
                 "health",
                 "payments",
             }
+
+        return self._apply_domain_template_defaults()
+
+    def _apply_domain_template_defaults(self) -> "TaskContract":
+        template_name = self.domain_template or self.domain
+        template = get_domain_template(template_name)
+        if not template:
+            return self
+
+        if template.allowed_tools:
+            if self.allowed_tools is None:
+                self.allowed_tools = set(template.allowed_tools)
+            else:
+                self.allowed_tools = set(self.allowed_tools) & set(template.allowed_tools)
+
+        if template.forbidden_tool_categories:
+            self.forbidden_tool_categories |= set(template.forbidden_tool_categories)
+
+        if template.escalation_tool_categories:
+            self.escalation.ask_if_tool_category_in |= set(template.escalation_tool_categories)
+
+        if template.thresholds:
+            updates = {}
+            for key, value in template.thresholds.items():
+                if hasattr(self.thresholds, key):
+                    current = getattr(self.thresholds, key)
+                    updates[key] = min(current, float(value))
+            if updates:
+                self.thresholds = self.thresholds.model_copy(update=updates)
+
+        if template.escalation:
+            updates = {}
+            for key, value in template.escalation.items():
+                if hasattr(self.escalation, key):
+                    current = getattr(self.escalation, key)
+                    updates[key] = min(current, float(value))
+            if updates:
+                self.escalation = self.escalation.model_copy(update=updates)
+
+        if template.budgets:
+            updates = {}
+            for key, value in template.budgets.items():
+                if hasattr(self.budgets, key):
+                    current = getattr(self.budgets, key)
+                    updates[key] = min(current, float(value))
+            if updates:
+                self.budgets = self.budgets.model_copy(update=updates)
 
         return self
 

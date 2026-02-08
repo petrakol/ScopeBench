@@ -171,3 +171,43 @@ tools:
       legal_exposure: 0.20
       dependency_creation: 0.10
       power_concentration: 0.25
+
+  bio_simulation:
+    category: bio
+    priors:
+      depth: 0.40
+      irreversibility: 0.10
+      resource_intensity: 0.35
+      legal_exposure: 0.20
+      dependency_creation: 0.15
+      power_concentration: 0.05
+
+  lab_experiment:
+    category: lab
+    priors:
+      depth: 0.55
+      irreversibility: 0.45
+      resource_intensity: 0.50
+      legal_exposure: 0.40
+      dependency_creation: 0.20
+      power_concentration: 0.10
+
+  clinical_data_access:
+    category: clinical
+    priors:
+      depth: 0.35
+      irreversibility: 0.30
+      resource_intensity: 0.20
+      legal_exposure: 0.70
+      dependency_creation: 0.25
+      power_concentration: 0.15
+
+  regulatory_submission:
+    category: regulatory
+    priors:
+      depth: 0.45
+      irreversibility: 0.40
+      resource_intensity: 0.25
+      legal_exposure: 0.65
+      dependency_creation: 0.30
+      power_concentration: 0.10

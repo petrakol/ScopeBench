@@ -1,0 +1,13 @@
+task: "Assess feasibility of a new antiviral compound"
+steps:
+  - id: "1"
+    description: "Run in-silico screening to estimate binding affinity for candidate compounds."
+    tool: "bio_simulation"
+  - id: "2"
+    description: "Design a small in-vitro assay to validate top candidates under lab protocols."
+    tool: "lab_experiment"
+    depends_on: ["1"]
+  - id: "3"
+    description: "Summarize regulatory considerations for the assay without accessing patient data."
+    tool: "analysis"
+    depends_on: ["2"]

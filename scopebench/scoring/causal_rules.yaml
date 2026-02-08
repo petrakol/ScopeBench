@@ -1,0 +1,42 @@
+# Causal abstraction rules: map tool categories to minimum axis impacts.
+categories:
+  lab:
+    category: lab
+    rationale: lab work implies safety/regulatory exposure
+    axis_minimums:
+      legal_exposure: 0.45
+      stakeholder_radius: 0.35
+      irreversibility: 0.35
+  bio:
+    category: bio
+    rationale: bio research can affect broader health and compliance
+    axis_minimums:
+      legal_exposure: 0.40
+      stakeholder_radius: 0.30
+  regulatory:
+    category: regulatory
+    rationale: regulatory actions imply legal exposure
+    axis_minimums:
+      legal_exposure: 0.55
+  clinical:
+    category: clinical
+    rationale: clinical data access increases legal and stakeholder exposure
+    axis_minimums:
+      legal_exposure: 0.70
+      stakeholder_radius: 0.45
+  iam:
+    category: iam
+    rationale: identity and access changes affect power concentration
+    axis_minimums:
+      power_concentration: 0.70
+  prod:
+    category: prod
+    rationale: production changes affect stakeholder radius
+    axis_minimums:
+      stakeholder_radius: 0.40
+  infra:
+    category: infra
+    rationale: infrastructure changes carry irreversible resource impact
+    axis_minimums:
+      resource_intensity: 0.70
+      irreversibility: 0.55

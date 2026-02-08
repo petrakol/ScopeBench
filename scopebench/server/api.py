@@ -6,6 +6,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from scopebench.contracts import TaskContract
+from scopebench.domains import list_domain_templates
+from scopebench.scoring.causal import list_causal_rules
 from scopebench.plan import PlanDAG
 from scopebench.runtime.guard import evaluate
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
@@ -43,6 +45,24 @@ class EvaluateResponse(BaseModel):
     steps: Optional[List[StepDetail]] = None
     summary: Optional[str] = None
     next_steps: Optional[List[str]] = None
+
+
+class DomainTemplateResponse(BaseModel):
+    name: str
+    description: str
+    forbidden_tool_categories: list[str]
+    escalation_tool_categories: list[str]
+    thresholds: Dict[str, float]
+    escalation: Dict[str, float]
+    budgets: Dict[str, float]
+    allowed_tools: Optional[list[str]] = None
+    notes: Dict[str, str]
+
+
+class CausalRuleResponse(BaseModel):
+    category: str
+    axis_minimums: Dict[str, float]
+    rationale: str
 
 
 def _summarize_response(policy, aggregate) -> str:
@@ -121,5 +141,39 @@ def create_app() -> FastAPI:
             summary=summary,
             next_steps=next_steps,
         )
+
+    @app.get("/domains", response_model=List[DomainTemplateResponse])
+    def domains_endpoint():
+        templates = list_domain_templates()
+        payload = []
+        for template in templates.values():
+            payload.append(
+                DomainTemplateResponse(
+                    name=template.name,
+                    description=template.description,
+                    forbidden_tool_categories=sorted(template.forbidden_tool_categories),
+                    escalation_tool_categories=sorted(template.escalation_tool_categories),
+                    thresholds=template.thresholds,
+                    escalation=template.escalation,
+                    budgets=template.budgets,
+                    allowed_tools=sorted(template.allowed_tools) if template.allowed_tools else None,
+                    notes=template.notes,
+                )
+            )
+        return sorted(payload, key=lambda item: item.name)
+
+    @app.get("/causal-rules", response_model=List[CausalRuleResponse])
+    def causal_rules_endpoint():
+        rules = list_causal_rules()
+        payload = []
+        for rule in rules.values():
+            payload.append(
+                CausalRuleResponse(
+                    category=rule.category,
+                    axis_minimums=rule.axis_minimums,
+                    rationale=rule.rationale,
+                )
+            )
+        return sorted(payload, key=lambda item: item.category)
 
     return app

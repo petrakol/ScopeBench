@@ -10,6 +10,7 @@ import yaml
 
 from scopebench.plan import PlanDAG, PlanStep
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector, SCOPE_AXES
+from scopebench.scoring.causal import apply_causal_adjustments
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,34 @@ def score_step(step: PlanStep, tool_registry: ToolRegistry) -> ScopeVector:
         dependency_creation.value = min(1.0, max(dependency_creation.value, float(pri.get("dependency_creation", 0.0))))
         power_concentration.value = min(1.0, max(power_concentration.value, float(pri.get("power_concentration", 0.0))))
 
+    # Apply causal abstraction layer adjustments (domain/system consequences)
+    vector = ScopeVector(
+        step_id=step.id,
+        tool=step.tool,
+        tool_category=tool_cat,
+        spatial=spatial,
+        temporal=temporal,
+        depth=depth,
+        irreversibility=irreversibility,
+        resource_intensity=resource_intensity,
+        legal_exposure=legal_exposure,
+        dependency_creation=dependency_creation,
+        stakeholder_radius=stakeholder_radius,
+        power_concentration=power_concentration,
+        uncertainty=AxisScore(value=0.0, rationale="", confidence=0.0),
+    )
+    vector = apply_causal_adjustments(vector, tool_cat)
+
+    spatial = vector.spatial
+    temporal = vector.temporal
+    depth = vector.depth
+    irreversibility = vector.irreversibility
+    resource_intensity = vector.resource_intensity
+    legal_exposure = vector.legal_exposure
+    dependency_creation = vector.dependency_creation
+    stakeholder_radius = vector.stakeholder_radius
+    power_concentration = vector.power_concentration
+
     # Uncertainty: high if tool is unknown or description is very short/ambiguous
     uncertainty_value = 0.25
     uncertainty_reasons = []
@@ -162,6 +191,20 @@ def score_step(step: PlanStep, tool_registry: ToolRegistry) -> ScopeVector:
     if len(text.split()) < 6:
         uncertainty_value += 0.15
         uncertainty_reasons.append("very short description")
+
+    # Optional structured confidence hints from planner/effects
+    effects = step.effects or {}
+    confidence_hint = effects.get("confidence")
+    if isinstance(confidence_hint, (int, float)):
+        confidence_hint = max(0.0, min(1.0, float(confidence_hint)))
+        uncertainty_value = min(uncertainty_value, 1.0 - confidence_hint)
+        uncertainty_reasons.append("planner confidence hint")
+    confidence_overall = effects.get("confidence_overall")
+    if isinstance(confidence_overall, (int, float)):
+        confidence_overall = max(0.0, min(1.0, float(confidence_overall)))
+        uncertainty_value = min(uncertainty_value, 1.0 - confidence_overall)
+        uncertainty_reasons.append("overall confidence hint")
+
     uncertainty_value = min(1.0, uncertainty_value)
     uncertainty = AxisScore(
         value=float(uncertainty_value),

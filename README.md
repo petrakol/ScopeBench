@@ -42,6 +42,12 @@ Quickstart shortcut:
 scopebench quickstart
 ```
 
+### 2b) Run the drug research example
+
+```bash
+scopebench run examples/drug_research.contract.yaml examples/drug_research.plan.yaml
+```
+
 ### 3) Start the API
 
 ```bash
@@ -54,13 +60,27 @@ Then:
 curl -s http://localhost:8080/health
 ```
 
+Domain templates are available via:
+
+```bash
+curl -s http://localhost:8080/domains
+```
+
+Causal abstraction rules are available via:
+
+```bash
+curl -s http://localhost:8080/causal-rules
+```
+
 The `/evaluate` response can include a short `summary` and `next_steps` (set `include_summary=true`) to support UI/agent UX flows.
 
 ## Repository layout
 
 - `scopebench/contracts.py` — contract schema + presets
-- `scopebench/plan.py` — plan DAG schema
+- `scopebench/domains.py` — domain templates + defaults (loaded from `scopebench/domain_templates.yaml`)
+- `scopebench/plan.py` — plan DAG schema (supports `effects` metadata for confidence hints)
 - `scopebench/scoring/` — scoring rules and aggregation
+- `scopebench/scoring/causal.py` — causal abstraction adjustments (rules in `scopebench/scoring/causal_rules.yaml`)
 - `scopebench/policy/` — policy engine (`ALLOW/ASK/DENY`)
 - `scopebench/runtime/guard.py` — the main orchestrator
 - `scopebench/server/api.py` — FastAPI service
