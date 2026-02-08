@@ -72,7 +72,7 @@ def evaluate(
 
                 vectors.append(v)
 
-        agg = aggregate_scope(vectors)
+        agg = aggregate_scope(vectors, plan=plan)
         if calibration is not None:
             agg = apply_calibration(agg, calibration)
             span.set_attribute("scopebench.calibration.global_scale", float(calibration.global_scale))
