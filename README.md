@@ -34,7 +34,7 @@ ScopeBench helps you enforce bounded execution before actions run by combining:
 - Coding-task policy checks such as:
   - `read_before_write`
   - `validation_after_write`
-- CLI modes for one-off runs, quickstarts, weekly calibration, and API serving.
+- CLI modes for one-off runs, quickstarts, red-team stress tests, weekly calibration, and API serving.
 - HTTP API with optional:
   - step-level vectors
   - summary + next-step guidance
@@ -123,6 +123,8 @@ scopebench run <contract.yaml> <plan.yaml> [--json] [--compact-json] [--otel-con
 scopebench quickstart [--json] [--compact-json] [--otel-console]
 scopebench coding-quickstart [--json] [--compact-json] [--otel-console]
 scopebench weekly-calibrate <telemetry.jsonl> [--json]
+python -m scopebench.redteam.generate --count 120 --seed 7 --output scopebench/bench/cases/redteam.jsonl
+scopebench judge-bench scopebench/bench/cases/redteam.jsonl --judge heuristic
 scopebench serve [--host 127.0.0.1] [--port 8080] [--policy-backend python|opa|cedar]
 ```
 
