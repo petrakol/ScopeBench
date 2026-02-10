@@ -162,6 +162,7 @@ scopebench run <contract.yaml> <plan.yaml> [--json] [--compact-json] [--otel-con
 scopebench quickstart [--json] [--compact-json] [--otel-console]
 scopebench coding-quickstart [--json] [--compact-json] [--otel-console]
 scopebench weekly-calibrate <telemetry.jsonl> [--json]
+scopebench continuous-learn <telemetry.jsonl> --benchmark scopebench/bench/cases/redteam.jsonl --report-out continuous_learning_report.md [--apply-updates]
 python -m scopebench.redteam.generate --count 120 --seed 7 --output scopebench/bench/cases/redteam.jsonl
 scopebench judge-bench scopebench/bench/cases/redteam.jsonl --judge heuristic
 scopebench serve [--host 127.0.0.1] [--port 8080] [--policy-backend python|opa|cedar]

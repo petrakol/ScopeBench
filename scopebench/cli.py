@@ -10,6 +10,11 @@ from rich.console import Console
 from rich.table import Table
 
 from scopebench.bench.judge import run_judge_bench
+from scopebench.bench.continuous_learning import (
+    analyze_continuous_learning,
+    apply_learning_to_registry,
+    render_learning_report_markdown,
+)
 from scopebench.bench.weekly import (
     refresh_weekly_calibration,
     replay_benchmark_slice,
@@ -389,6 +394,61 @@ def weekly_calibrate(
 
     if not all(item.ok for item in replay):
         raise typer.Exit(code=1)
+
+
+@app.command("continuous-learn")
+def continuous_learn(
+    telemetry_jsonl: Path = typer.Argument(..., help="Path to telemetry JSONL file."),
+    benchmark_jsonl: Path = typer.Option(
+        Path("scopebench/bench/cases/redteam.jsonl"),
+        "--benchmark",
+        help="Optional benchmark JSONL for tactic mining.",
+    ),
+    registry_path: Path = typer.Option(
+        Path("scopebench/tool_registry.yaml"),
+        "--registry",
+        help="Tool registry YAML to analyze/update.",
+    ),
+    report_out: Path = typer.Option(
+        Path("continuous_learning_report.md"),
+        "--report-out",
+        help="Markdown report destination.",
+    ),
+    min_pair_support: int = typer.Option(2, "--min-pair-support", min=1),
+    apply_updates: bool = typer.Option(
+        False,
+        "--apply-updates",
+        help="Apply recommended priors/default_effects directly to tool_registry.yaml.",
+    ),
+):
+    """Mine telemetry+benchmark signals and propose registry/effects updates."""
+    report = analyze_continuous_learning(
+        telemetry_path=telemetry_jsonl,
+        benchmark_path=benchmark_jsonl,
+        registry_path=registry_path,
+        min_pair_support=min_pair_support,
+    )
+
+    report_markdown = render_learning_report_markdown(report)
+    report_out.write_text(report_markdown, encoding="utf-8")
+
+    payload = {
+        "telemetry_rows": report.telemetry_rows,
+        "benchmark_rows": report.benchmark_rows,
+        "pattern_counts": report.pattern_counts,
+        "risky_tool_pairs": [
+            {"tools": [a, b], "count": count} for (a, b), count in report.risky_tool_pairs
+        ],
+        "report_path": str(report_out),
+        "updated_registry": False,
+    }
+
+    if apply_updates:
+        apply_learning_to_registry(report, registry_path=registry_path)
+        payload["updated_registry"] = True
+        payload["registry_path"] = str(registry_path)
+
+    console.print_json(json.dumps(payload))
 
 
 @app.command("judge-bench")
