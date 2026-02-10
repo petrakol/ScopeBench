@@ -31,7 +31,7 @@ from scopebench.scoring.calibration import (
 from scopebench.scoring.rules import aggregate_scope, build_budget_ledger
 from scopebench.scoring.effects_annotator import suggest_effects_for_plan
 from scopebench.scoring.rules import build_budget_ledger
-from scopebench.plugins import PluginManager
+from scopebench.plugins import PluginManager, lint_plugin_bundle, sign_plugin_bundle
 from scopebench.session import MultiAgentSession
 from scopebench.bench.community import suggest_case
 from scopebench.bench.dataset import validate_case_object
@@ -287,6 +287,25 @@ class DatasetSuggestResponse(BaseModel):
     case: Dict[str, Any]
 
 
+class PluginWizardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    domain: str
+    publisher: str
+    name: str
+    version: str = "0.1.0"
+    tools: List[str] = Field(default_factory=list)
+    effects_mappings: List[Dict[str, Any]] = Field(default_factory=list)
+    policy_rule_templates: List[str] = Field(default_factory=list)
+    key_id: str = "community-main"
+    secret: str
+
+
+class PluginWizardResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    lint_errors: List[str]
+    bundle: Dict[str, Any]
+    publish_guidance: List[str]
 class PolicyRuleProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -1841,6 +1860,78 @@ def create_app(
             "version": payload.get("version"),
             "updated_utc": payload.get("updated_utc"),
         }
+
+    @app.get("/plugins/schema")
+    def plugins_schema_endpoint():
+        return {
+            "required": ["name", "version", "publisher"],
+            "version_pattern": "MAJOR.MINOR.PATCH",
+            "risk_classes": ["low", "moderate", "high", "critical"],
+            "contribution_keys": ["tool_categories", "effects_mappings", "scoring_axes", "policy_rules"],
+            "notes": [
+                "policy_rules load only for valid signed bundles",
+                "effects_mappings axes should use built-in scope axes in [0,1]",
+            ],
+        }
+
+    @app.post("/plugins/lint")
+    def plugins_lint_endpoint(payload: Dict[str, Any]):
+        if not isinstance(payload, dict):
+            return {"ok": False, "errors": ["payload must be an object"]}
+        errors = lint_plugin_bundle(payload)
+        return {"ok": not errors, "errors": errors}
+
+    @app.post("/plugins/wizard/generate", response_model=PluginWizardResponse)
+    def plugins_wizard_generate(payload: Dict[str, Any]):
+        req = PluginWizardRequest.model_validate(payload)
+        tool_category = f"{req.domain}_operations"
+        policy_rules = [
+            {
+                "id": f"{req.domain}.template_{idx+1}",
+                "when": {"tool_category": tool_category},
+                "action": "ASK",
+                "template": template,
+            }
+            for idx, template in enumerate(req.policy_rule_templates)
+        ]
+        mappings = []
+        for idx, mapping in enumerate(req.effects_mappings):
+            trigger = mapping.get("trigger") if isinstance(mapping, dict) else None
+            axes = mapping.get("axes") if isinstance(mapping, dict) else None
+            if isinstance(trigger, str) and isinstance(axes, dict):
+                mappings.append({"trigger": trigger, "axes": axes})
+            else:
+                mappings.append({"trigger": f"tool_{idx+1}", "axes": {"uncertainty": 0.4}})
+
+        bundle = {
+            "name": req.name,
+            "version": req.version,
+            "publisher": req.publisher,
+            "contributions": {
+                "tool_categories": {tool_category: {"description": f"Operations for {req.domain}"}},
+                "effects_mappings": mappings,
+                "scoring_axes": {f"{req.domain}_safety": {"description": f"Safety profile for {req.domain}"}},
+                "policy_rules": policy_rules,
+            },
+            "tools": {
+                tool: {
+                    "category": tool_category,
+                    "domains": [req.domain],
+                    "risk_class": "moderate",
+                    "priors": {"uncertainty": 0.3, "dependency_creation": 0.2},
+                }
+                for tool in req.tools
+            },
+            "cases": [],
+        }
+        errors = lint_plugin_bundle(bundle)
+        signed = sign_plugin_bundle(bundle, key_id=req.key_id, secret=req.secret) if not errors else bundle
+        guidance = [
+            "Run /plugins/lint and plugin-harness before publishing.",
+            "Publish signed bundle in an immutable release artifact.",
+            "Submit plugin listing update to docs/plugin_marketplace.yaml.",
+        ]
+        return PluginWizardResponse(ok=not errors, lint_errors=errors, bundle=signed, publish_guidance=guidance)
 
     @app.get("/plugins")
     def plugins_endpoint():

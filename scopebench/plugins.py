@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,124 @@ def _read_bundle(path: Path) -> Dict[str, Any]:
     if not isinstance(loaded, dict):
         raise ValueError(f"plugin bundle '{path}' must be an object/map")
     return loaded
+
+
+PLUGIN_SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
+VALID_RISK_CLASSES = {"low", "moderate", "high", "critical"}
+
+
+def lint_plugin_bundle(payload: Dict[str, Any]) -> List[str]:
+    """Return a list of schema lint errors for a plugin bundle payload."""
+    errors: List[str] = []
+
+    if not isinstance(payload.get("name"), str) or not str(payload.get("name") or "").strip():
+        errors.append("name must be a non-empty string")
+    if not isinstance(payload.get("publisher"), str) or not str(payload.get("publisher") or "").strip():
+        errors.append("publisher must be a non-empty string")
+
+    version = payload.get("version")
+    if not isinstance(version, str) or not PLUGIN_SEMVER_RE.match(version):
+        errors.append("version must be semver (MAJOR.MINOR.PATCH)")
+
+    contributions = payload.get("contributions") or {}
+    if contributions and not isinstance(contributions, dict):
+        errors.append("contributions must be an object")
+    elif isinstance(contributions, dict):
+        tc = contributions.get("tool_categories")
+        if tc is not None and not isinstance(tc, dict):
+            errors.append("contributions.tool_categories must be an object")
+
+        em = contributions.get("effects_mappings")
+        if em is not None and not isinstance(em, list):
+            errors.append("contributions.effects_mappings must be a list")
+        elif isinstance(em, list):
+            for idx, mapping in enumerate(em):
+                if not isinstance(mapping, dict):
+                    errors.append(f"contributions.effects_mappings[{idx}] must be an object")
+                    continue
+                trigger = mapping.get("trigger")
+                axes = mapping.get("axes")
+                if not isinstance(trigger, str) or not trigger.strip():
+                    errors.append(f"contributions.effects_mappings[{idx}].trigger must be a non-empty string")
+                if not isinstance(axes, dict):
+                    errors.append(f"contributions.effects_mappings[{idx}].axes must be an object")
+                else:
+                    for axis, val in axes.items():
+                        if axis not in SCOPE_AXES:
+                            errors.append(f"contributions.effects_mappings[{idx}].axes has unknown axis '{axis}'")
+                        elif not isinstance(val, (int, float)) or not (0.0 <= float(val) <= 1.0):
+                            errors.append(
+                                f"contributions.effects_mappings[{idx}].axes.{axis} must be a number in [0,1]"
+                            )
+
+        sa = contributions.get("scoring_axes")
+        if sa is not None and not isinstance(sa, dict):
+            errors.append("contributions.scoring_axes must be an object")
+
+        pr = contributions.get("policy_rules")
+        if pr is not None and not isinstance(pr, list):
+            errors.append("contributions.policy_rules must be a list")
+        elif isinstance(pr, list):
+            for idx, rule in enumerate(pr):
+                if not isinstance(rule, dict):
+                    errors.append(f"contributions.policy_rules[{idx}] must be an object")
+                    continue
+                if not isinstance(rule.get("id"), str) or not str(rule.get("id") or "").strip():
+                    errors.append(f"contributions.policy_rules[{idx}].id must be a non-empty string")
+
+    tools = payload.get("tools") or {}
+    if tools and not isinstance(tools, dict):
+        errors.append("tools must be an object")
+    elif isinstance(tools, dict):
+        for tool_name, spec in tools.items():
+            if not isinstance(tool_name, str) or not tool_name.strip():
+                errors.append("tools keys must be non-empty strings")
+                continue
+            if not isinstance(spec, dict):
+                errors.append(f"tools.{tool_name} must be an object")
+                continue
+            if not isinstance(spec.get("category"), str) or not str(spec.get("category") or "").strip():
+                errors.append(f"tools.{tool_name}.category must be a non-empty string")
+            risk_class = spec.get("risk_class")
+            if risk_class is not None and risk_class not in VALID_RISK_CLASSES:
+                errors.append(f"tools.{tool_name}.risk_class must be one of {sorted(VALID_RISK_CLASSES)}")
+            priors = spec.get("priors")
+            if priors is not None and not isinstance(priors, dict):
+                errors.append(f"tools.{tool_name}.priors must be an object")
+            elif isinstance(priors, dict):
+                for axis, val in priors.items():
+                    if axis not in SCOPE_AXES:
+                        errors.append(f"tools.{tool_name}.priors has unknown axis '{axis}'")
+                    elif not isinstance(val, (int, float)) or not (0.0 <= float(val) <= 1.0):
+                        errors.append(f"tools.{tool_name}.priors.{axis} must be a number in [0,1]")
+
+    cases = payload.get("cases")
+    if cases is not None and not isinstance(cases, list):
+        errors.append("cases must be a list")
+
+    signature = payload.get("signature")
+    if signature is not None:
+        if not isinstance(signature, dict):
+            errors.append("signature must be an object")
+        else:
+            for key in ("key_id", "algorithm", "digest", "value"):
+                if not isinstance(signature.get(key), str) or not str(signature.get(key) or "").strip():
+                    errors.append(f"signature.{key} must be a non-empty string")
+
+    return errors
+
+
+def sign_plugin_bundle(unsigned_payload: Dict[str, Any], *, key_id: str, secret: str) -> Dict[str, Any]:
+    signed_payload = dict(unsigned_payload)
+    canonical = _canonical_json(unsigned_payload).encode("utf-8")
+    signature = hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    signed_payload["signature"] = {
+        "key_id": key_id,
+        "algorithm": "hmac-sha256",
+        "digest": "sha256",
+        "value": signature,
+    }
+    return signed_payload
 
 
 @dataclass(frozen=True)

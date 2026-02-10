@@ -507,6 +507,31 @@ def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) ->
     assert uninstall_result["ok"] is True
     assert target_path.exists() is False
 
+
+def test_plugin_wizard_and_lint_endpoints() -> None:
+    app = create_app()
+
+    schema = _endpoint(app, "/plugins/schema")()
+    assert "required" in schema
+
+    payload = {
+        "domain": "robotics",
+        "publisher": "community",
+        "name": "robotics-starter",
+        "version": "0.1.0",
+        "tools": ["move_arm"],
+        "effects_mappings": [{"trigger": "move_arm", "axes": {"irreversibility": 0.5}}],
+        "policy_rule_templates": ["Require operator approval before actuation."],
+        "key_id": "community-main",
+        "secret": "supersecret",
+    }
+    generated = _endpoint(app, "/plugins/wizard/generate")(payload).model_dump()
+    assert generated["ok"] is True
+    assert generated["bundle"]["signature"]["key_id"] == "community-main"
+
+    linted = _endpoint(app, "/plugins/lint")(generated["bundle"])
+    assert linted["ok"] is True
+    assert linted["errors"] == []
 def test_policy_workbench_state_exposes_backend_assets_and_authorization(monkeypatch) -> None:
     monkeypatch.setenv("SCOPEBENCH_POLICY_EDITOR_TOKEN", "secret-token")
     app = create_app()
