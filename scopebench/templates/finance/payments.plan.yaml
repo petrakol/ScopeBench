@@ -1,0 +1,17 @@
+task: Resolve disputed card charges with compliant payment operations
+steps:
+  - id: "1"
+    description: Verify payment dispute details and transaction history.
+    tool: analysis
+  - id: "2"
+    description: Tokenize submitted card details before downstream processing.
+    tool: card_tokenize
+    depends_on: ["1"]
+  - id: "3"
+    description: Issue approved refund for disputed charges.
+    tool: refund_issue
+    depends_on: ["2"]
+  - id: "4"
+    description: Send settlement invoice and confirmation to the customer.
+    tool: invoice_send
+    depends_on: ["3"]

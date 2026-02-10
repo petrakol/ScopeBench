@@ -28,12 +28,38 @@ console = Console()
 
 
 TEMPLATES_ROOT = Path(__file__).resolve().parent / "templates"
+TEMPLATE_KINDS = {"bundle", "contract", "plan", "notes"}
 
 
 def _template_domains() -> List[str]:
     if not TEMPLATES_ROOT.exists():
         return []
     return sorted(p.name for p in TEMPLATES_ROOT.iterdir() if p.is_dir())
+
+
+def _template_variants(domain: str) -> List[str]:
+    root = TEMPLATES_ROOT / domain
+    if not root.exists():
+        return []
+    variants = {"default"}
+    for path in root.glob("*.contract.yaml"):
+        stem = path.name[: -len(".contract.yaml")]
+        if stem:
+            variants.add(stem)
+    return sorted(variants)
+
+
+def _template_file(domain: str, variant: str, kind: str) -> Path:
+    root = TEMPLATES_ROOT / domain
+    if variant == "default":
+        filename = {"contract": "contract.yaml", "plan": "plan.yaml", "notes": "notes.md"}[kind]
+    else:
+        filename = {
+            "contract": f"{variant}.contract.yaml",
+            "plan": f"{variant}.plan.yaml",
+            "notes": f"{variant}.notes.md",
+        }[kind]
+    return root / filename
 
 
 def _read_yaml(path: Path) -> Dict[str, Any]:
@@ -43,17 +69,39 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
     return raw
 
 
-def _resolve_template_name(name: str) -> Tuple[str, str]:
-    if "/" in name:
-        domain, kind = name.split("/", 1)
-    else:
-        domain, kind = name, "bundle"
+def _resolve_template_name(name: str) -> Tuple[str, str, str]:
+    segments = [part for part in name.split("/") if part]
+    if not segments:
+        raise typer.BadParameter("Template name cannot be empty")
+
+    domain = segments[0]
+    variant = "default"
+    kind = "bundle"
+
+    if len(segments) == 2:
+        if segments[1] in TEMPLATE_KINDS:
+            kind = segments[1]
+        else:
+            variant = segments[1]
+    elif len(segments) == 3:
+        variant, kind = segments[1], segments[2]
+    elif len(segments) > 3:
+        raise typer.BadParameter(
+            "Template name must be <domain>[/kind], <domain>/<variant>, or <domain>/<variant>/<kind>"
+        )
+
     if domain not in _template_domains():
         available = ", ".join(_template_domains()) or "none"
         raise typer.BadParameter(f"Unknown template domain '{domain}'. Available: {available}")
-    if kind not in {"bundle", "contract", "plan", "notes"}:
+    variants = _template_variants(domain)
+    if variant not in variants:
+        available = ", ".join(variants)
+        raise typer.BadParameter(
+            f"Unknown template variant '{variant}' in domain '{domain}'. Available: {available}"
+        )
+    if kind not in TEMPLATE_KINDS:
         raise typer.BadParameter("Template kind must be one of: bundle, contract, plan, notes")
-    return domain, kind
+    return domain, variant, kind
 
 
 def _compact_payload(result) -> dict:
@@ -165,35 +213,36 @@ def template_list() -> None:
     """List installed template domains and their available files."""
     table = Table(title="Templates")
     table.add_column("Domain")
+    table.add_column("Variants")
     table.add_column("Files")
     for domain in _template_domains():
+        variants = _template_variants(domain)
         files = []
         for filename in ("contract.yaml", "plan.yaml", "notes.md"):
             if (TEMPLATES_ROOT / domain / filename).exists():
                 files.append(filename)
-        table.add_row(domain, ", ".join(files))
+        table.add_row(domain, ", ".join(variants), ", ".join(files))
     console.print(table)
 
 
 @template_app.command("show")
 def template_show(name: str = typer.Argument(..., help="Template name: <domain>[/kind]")) -> None:
     """Show a template as YAML/markdown without modification."""
-    domain, kind = _resolve_template_name(name)
-    root = TEMPLATES_ROOT / domain
+    domain, variant, kind = _resolve_template_name(name)
 
     if kind == "notes":
-        console.print((root / "notes.md").read_text(encoding="utf-8"))
+        console.print(_template_file(domain, variant, "notes").read_text(encoding="utf-8"))
         return
     if kind == "contract":
-        console.print(yaml.safe_dump(_read_yaml(root / "contract.yaml"), sort_keys=False))
+        console.print(yaml.safe_dump(_read_yaml(_template_file(domain, variant, "contract")), sort_keys=False))
         return
     if kind == "plan":
-        console.print(yaml.safe_dump(_read_yaml(root / "plan.yaml"), sort_keys=False))
+        console.print(yaml.safe_dump(_read_yaml(_template_file(domain, variant, "plan")), sort_keys=False))
         return
 
     bundle = {
-        "contract": _read_yaml(root / "contract.yaml"),
-        "plan": _read_yaml(root / "plan.yaml"),
+        "contract": _read_yaml(_template_file(domain, variant, "contract")),
+        "plan": _read_yaml(_template_file(domain, variant, "plan")),
     }
     console.print(yaml.safe_dump(bundle, sort_keys=False))
 

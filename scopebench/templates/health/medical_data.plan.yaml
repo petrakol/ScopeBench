@@ -1,0 +1,13 @@
+task: Import and reconcile external lab data into patient charts
+steps:
+  - id: "1"
+    description: Read patient chart context and existing observations.
+    tool: patient_record_read
+  - id: "2"
+    description: Import lab results from external systems into EHR.
+    tool: lab_result_import
+    depends_on: ["1"]
+  - id: "3"
+    description: Update patient chart with reconciled values and clinician notes.
+    tool: patient_record_update
+    depends_on: ["2"]

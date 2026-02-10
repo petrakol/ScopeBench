@@ -1,0 +1,7 @@
+goal: Stabilize release-blocking defect with minimum blast radius
+preset: team
+allowed_tools: [analysis, git_read, git_patch]
+thresholds:
+  max_depth: 0.45
+  max_dependency_creation: 0.25
+  max_power_concentration: 0.20

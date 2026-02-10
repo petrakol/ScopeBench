@@ -1,0 +1,13 @@
+task: Run consent-aware marketing outreach across segmented audiences
+steps:
+  - id: "1"
+    description: Export consented audience segment for outreach targeting.
+    tool: audience_export
+  - id: "2"
+    description: Stage approved sequence in outreach automation.
+    tool: email_outreach_sequence
+    depends_on: ["1"]
+  - id: "3"
+    description: Schedule follow-up social posts with campaign-safe messaging.
+    tool: social_post_scheduler
+    depends_on: ["2"]

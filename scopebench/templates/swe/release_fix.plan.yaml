@@ -1,0 +1,13 @@
+task: Stabilize release-blocking defect with minimum blast radius
+steps:
+  - id: "1"
+    description: Inspect stack traces and relevant source modules.
+    tool: git_read
+  - id: "2"
+    description: Implement minimal patch for the defective code path.
+    tool: git_patch
+    depends_on: ["1"]
+  - id: "3"
+    description: Validate patch impact with focused analysis checks.
+    tool: analysis
+    depends_on: ["2"]

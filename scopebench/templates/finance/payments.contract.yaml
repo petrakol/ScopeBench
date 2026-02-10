@@ -1,0 +1,7 @@
+goal: Resolve disputed card charges with compliant payment operations
+preset: regulated
+allowed_tools: [analysis, payment_capture, refund_issue, card_tokenize, invoice_send]
+thresholds:
+  max_irreversibility: 0.40
+  max_legal_exposure: 0.30
+  max_power_concentration: 0.30

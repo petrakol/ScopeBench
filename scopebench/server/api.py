@@ -511,24 +511,41 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         templates_root = Path(__file__).resolve().parents[1] / "templates"
         payload: List[Dict[str, Any]] = []
         for domain_dir in sorted(p for p in templates_root.iterdir() if p.is_dir()):
-            contract = domain_dir / "contract.yaml"
-            plan = domain_dir / "plan.yaml"
-            notes = domain_dir / "notes.md"
-            payload.append(
-                {
-                    "domain": domain_dir.name,
+            variants: Dict[str, Dict[str, Any]] = {}
+
+            def load_variant(variant_name: str, contract_path: Path, plan_path: Path, notes_path: Path) -> None:
+                variants[variant_name] = {
                     "metadata": {
-                        "has_contract": contract.exists(),
-                        "has_plan": plan.exists(),
-                        "has_notes": notes.exists(),
+                        "has_contract": contract_path.exists(),
+                        "has_plan": plan_path.exists(),
+                        "has_notes": notes_path.exists(),
                     },
                     "content": {
-                        "contract": yaml.safe_load(contract.read_text(encoding="utf-8")) if contract.exists() else None,
-                        "plan": yaml.safe_load(plan.read_text(encoding="utf-8")) if plan.exists() else None,
-                        "notes": notes.read_text(encoding="utf-8") if notes.exists() else None,
+                        "contract": yaml.safe_load(contract_path.read_text(encoding="utf-8")) if contract_path.exists() else None,
+                        "plan": yaml.safe_load(plan_path.read_text(encoding="utf-8")) if plan_path.exists() else None,
+                        "notes": notes_path.read_text(encoding="utf-8") if notes_path.exists() else None,
                     },
                 }
+
+            load_variant(
+                "default",
+                domain_dir / "contract.yaml",
+                domain_dir / "plan.yaml",
+                domain_dir / "notes.md",
             )
+
+            for contract_path in sorted(domain_dir.glob("*.contract.yaml")):
+                variant = contract_path.name[: -len(".contract.yaml")]
+                if not variant:
+                    continue
+                load_variant(
+                    variant,
+                    contract_path,
+                    domain_dir / f"{variant}.plan.yaml",
+                    domain_dir / f"{variant}.notes.md",
+                )
+
+            payload.append({"domain": domain_dir.name, "variants": variants})
         return {"templates": payload}
 
     @app.get("/tools")

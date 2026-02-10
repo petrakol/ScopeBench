@@ -165,10 +165,14 @@ Response includes:
 
 ### Additional catalog endpoints
 
-- `GET /templates` returns template metadata and full content for each domain.
+- `GET /templates` returns template metadata and full content for each domain, grouped by variants (default + named domain presets).
 - `GET /tools` returns tool registry entries plus a normalized schema payload.
 - `GET /cases` returns benchmark dataset ids (case ids) and available domains.
 - `GET /ui` serves a minimal local web UI for contract/plan authoring and evaluation.
+
+Template variants are also available in the CLI using `<domain>/<variant>/<kind>` naming, e.g.
+`scopebench template show finance/payments/plan` for payments or
+`scopebench template generate health/medical_data` for medical-data flows.
 
 ### `POST /evaluate_session`
 
