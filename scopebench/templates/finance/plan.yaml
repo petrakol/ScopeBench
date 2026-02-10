@@ -1,0 +1,13 @@
+task: Rebalance low-risk portfolio accounts based on target allocation
+steps:
+  - id: "1"
+    description: Review account positions and rebalance constraints.
+    tool: analysis
+  - id: "2"
+    description: Generate proposed trades for target allocation.
+    tool: portfolio_recommendation
+    depends_on: ["1"]
+  - id: "3"
+    description: Execute approved rebalancing trades.
+    tool: trade_rebalance
+    depends_on: ["2"]

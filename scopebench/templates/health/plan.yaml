@@ -1,0 +1,13 @@
+task: Update a patient medication record after clinician review
+steps:
+  - id: "1"
+    description: Read current medication and allergy details from patient chart.
+    tool: patient_record_read
+  - id: "2"
+    description: Record clinician-approved medication adjustment in chart.
+    tool: patient_record_update
+    depends_on: ["1"]
+  - id: "3"
+    description: Send patient-facing summary message for verification.
+    tool: telehealth_message
+    depends_on: ["2"]

@@ -1,0 +1,13 @@
+task: Patch flaky integration test with minimal code changes
+steps:
+  - id: "1"
+    description: Read failing test and surrounding module behavior.
+    tool: git_read
+  - id: "2"
+    description: Apply targeted patch to stabilize retry timing.
+    tool: git_patch
+    depends_on: ["1"]
+  - id: "3"
+    description: Run focused validation checks for the patched path.
+    tool: analysis
+    depends_on: ["2"]

@@ -1,0 +1,6 @@
+goal: Update a patient medication record after clinician review
+preset: regulated
+thresholds:
+  max_legal_exposure: 0.18
+  max_power_concentration: 0.20
+  max_irreversibility: 0.25

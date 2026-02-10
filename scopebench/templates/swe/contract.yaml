@@ -1,0 +1,7 @@
+goal: Patch flaky integration test with minimal code changes
+preset: team
+allowed_tools: [git_read, git_patch, analysis]
+thresholds:
+  max_depth: 0.45
+  max_dependency_creation: 0.30
+  max_power_concentration: 0.20

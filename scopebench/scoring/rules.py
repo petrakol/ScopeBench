@@ -4,7 +4,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -17,6 +17,13 @@ class ToolInfo:
     tool: str
     category: str
     priors: Dict[str, float]
+    domains: Tuple[str, ...] = ()
+    risk_class: str = "moderate"
+    default_effects: Dict[str, Any] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.default_effects is None:
+            object.__setattr__(self, "default_effects", {})
 
 
 class ToolRegistry:
@@ -31,12 +38,68 @@ class ToolRegistry:
     @classmethod
     def load_from_file(cls, path: Path) -> "ToolRegistry":
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("tool registry must be a YAML mapping at top-level")
+        raw_tools = raw.get("tools")
+        if raw_tools is None:
+            raise ValueError("tool registry is missing required top-level key: tools")
+        if not isinstance(raw_tools, dict):
+            raise ValueError("tool registry 'tools' must be a mapping of tool -> config")
+
         tools = {}
-        for tool, info in (raw.get("tools") or {}).items():
+        for tool, info in raw_tools.items():
+            if not isinstance(tool, str) or not tool.strip():
+                raise ValueError(f"invalid tool key: {tool!r}; expected non-empty string")
+            if not isinstance(info, dict):
+                raise ValueError(f"tool '{tool}' config must be a mapping")
+
+            category = info.get("category") or "unknown"
+            if not isinstance(category, str):
+                raise ValueError(f"tool '{tool}' category must be a string")
+
+            priors = info.get("priors") or {}
+            if not isinstance(priors, dict):
+                raise ValueError(f"tool '{tool}' priors must be a mapping of axis -> float")
+            bad_prior_keys = [axis for axis in priors if axis not in SCOPE_AXES]
+            if bad_prior_keys:
+                raise ValueError(
+                    f"tool '{tool}' has unknown prior axes: {', '.join(sorted(bad_prior_keys))}"
+                )
+            validated_priors: Dict[str, float] = {}
+            for axis, value in priors.items():
+                if not isinstance(value, (int, float)):
+                    raise ValueError(
+                        f"tool '{tool}' prior '{axis}' must be numeric in [0,1], got {value!r}"
+                    )
+                if not 0.0 <= float(value) <= 1.0:
+                    raise ValueError(
+                        f"tool '{tool}' prior '{axis}' must be in [0,1], got {value!r}"
+                    )
+                validated_priors[axis] = float(value)
+
+            domains_raw = info.get("domains") or []
+            if not isinstance(domains_raw, list) or not all(
+                isinstance(item, str) and item.strip() for item in domains_raw
+            ):
+                raise ValueError(f"tool '{tool}' domains must be a list of non-empty strings")
+
+            risk_class = info.get("risk_class", "moderate")
+            if risk_class not in {"low", "moderate", "high", "critical"}:
+                raise ValueError(
+                    f"tool '{tool}' risk_class must be one of low|moderate|high|critical"
+                )
+
+            default_effects = info.get("default_effects") or {}
+            if not isinstance(default_effects, dict):
+                raise ValueError(f"tool '{tool}' default_effects must be a mapping")
+
             tools[tool] = ToolInfo(
                 tool=tool,
-                category=info.get("category") or "unknown",
-                priors=info.get("priors") or {},
+                category=category,
+                priors=validated_priors,
+                domains=tuple(domains_raw),
+                risk_class=risk_class,
+                default_effects=default_effects,
             )
         return cls(tools)
 

@@ -1,6 +1,3 @@
-# Tool registry maps tool names to categories and default "risk priors".
-#
-# This is intentionally small for the MVP. Extend per-domain.
 tools:
   analysis:
     category: analysis
@@ -11,163 +8,613 @@ tools:
       legal_exposure: 0.05
       dependency_creation: 0.0
       power_concentration: 0.0
-
   web_search:
     category: web
     priors:
-      depth: 0.10
+      depth: 0.1
       irreversibility: 0.0
       resource_intensity: 0.05
-      legal_exposure: 0.10
+      legal_exposure: 0.1
       dependency_creation: 0.0
       power_concentration: 0.0
-
   web_browser:
     category: web
     priors:
       depth: 0.15
       irreversibility: 0.0
-      resource_intensity: 0.10
+      resource_intensity: 0.1
       legal_exposure: 0.15
       dependency_creation: 0.05
       power_concentration: 0.0
-
   api_request:
     category: web
     priors:
-      depth: 0.20
+      depth: 0.2
       irreversibility: 0.05
-      resource_intensity: 0.10
+      resource_intensity: 0.1
       legal_exposure: 0.15
-      dependency_creation: 0.10
+      dependency_creation: 0.1
       power_concentration: 0.05
-
   shell:
     category: exec
     priors:
-      depth: 0.30
+      depth: 0.3
       irreversibility: 0.15
-      resource_intensity: 0.10
-      legal_exposure: 0.10
+      resource_intensity: 0.1
+      legal_exposure: 0.1
       dependency_creation: 0.15
       power_concentration: 0.05
-
   python:
     category: exec
     priors:
       depth: 0.25
-      irreversibility: 0.10
-      resource_intensity: 0.10
-      legal_exposure: 0.10
-      dependency_creation: 0.10
+      irreversibility: 0.1
+      resource_intensity: 0.1
+      legal_exposure: 0.1
+      dependency_creation: 0.1
       power_concentration: 0.05
-
   file_read:
     category: swe
     priors:
-      depth: 0.10
+      depth: 0.1
       irreversibility: 0.0
       resource_intensity: 0.05
       legal_exposure: 0.05
       dependency_creation: 0.0
       power_concentration: 0.0
-
   file_write:
     category: swe
     priors:
-      depth: 0.30
+      depth: 0.3
       irreversibility: 0.15
-      resource_intensity: 0.10
-      legal_exposure: 0.10
+      resource_intensity: 0.1
+      legal_exposure: 0.1
       dependency_creation: 0.15
       power_concentration: 0.05
-
   database_query:
     category: data
     priors:
-      depth: 0.30
+      depth: 0.3
       irreversibility: 0.05
       resource_intensity: 0.15
-      legal_exposure: 0.20
+      legal_exposure: 0.2
       dependency_creation: 0.15
-      power_concentration: 0.10
-
+      power_concentration: 0.1
   spreadsheet_edit:
     category: data
     priors:
       depth: 0.25
-      irreversibility: 0.10
-      resource_intensity: 0.10
-      legal_exposure: 0.10
-      dependency_creation: 0.20
+      irreversibility: 0.1
+      resource_intensity: 0.1
+      legal_exposure: 0.1
+      dependency_creation: 0.2
       power_concentration: 0.05
-
   email_send:
     category: communication
     priors:
-      depth: 0.20
-      irreversibility: 0.20
+      depth: 0.2
+      irreversibility: 0.2
       resource_intensity: 0.05
-      legal_exposure: 0.20
-      dependency_creation: 0.10
+      legal_exposure: 0.2
+      dependency_creation: 0.1
       power_concentration: 0.05
-
   git_read:
     category: swe
     priors:
-      depth: 0.10
+      depth: 0.1
       irreversibility: 0.0
       resource_intensity: 0.05
       legal_exposure: 0.05
       dependency_creation: 0.0
       power_concentration: 0.0
-
   git_patch:
     category: swe
     priors:
       depth: 0.25
-      irreversibility: 0.10
+      irreversibility: 0.1
       resource_intensity: 0.05
       legal_exposure: 0.05
-      dependency_creation: 0.10
+      dependency_creation: 0.1
       power_concentration: 0.0
-
   git_rewrite:
     category: swe
     priors:
       depth: 0.75
       irreversibility: 0.35
-      resource_intensity: 0.20
+      resource_intensity: 0.2
       legal_exposure: 0.05
       dependency_creation: 0.25
       power_concentration: 0.0
-
   infra_provision:
     category: infra
     priors:
-      depth: 0.90
-      irreversibility: 0.70
+      depth: 0.9
+      irreversibility: 0.7
       resource_intensity: 0.95
-      legal_exposure: 0.40
-      dependency_creation: 0.80
-      power_concentration: 0.30
-
+      legal_exposure: 0.4
+      dependency_creation: 0.8
+      power_concentration: 0.3
   iam_change:
     category: iam
     priors:
-      depth: 0.70
-      irreversibility: 0.40
-      resource_intensity: 0.20
-      legal_exposure: 0.30
-      dependency_creation: 0.20
-      power_concentration: 0.90
-
+      depth: 0.7
+      irreversibility: 0.4
+      resource_intensity: 0.2
+      legal_exposure: 0.3
+      dependency_creation: 0.2
+      power_concentration: 0.9
   prod_deploy:
     category: prod
     priors:
-      depth: 0.60
-      irreversibility: 0.40
+      depth: 0.6
+      irreversibility: 0.4
       resource_intensity: 0.25
-      legal_exposure: 0.20
-      dependency_creation: 0.10
+      legal_exposure: 0.2
+      dependency_creation: 0.1
       power_concentration: 0.25
+  payment_capture:
+    category: payments
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      writes_money: true
+    priors:
+      depth: 0.55
+      irreversibility: 0.45
+      resource_intensity: 0.2
+      legal_exposure: 0.5
+      dependency_creation: 0.2
+      power_concentration: 0.35
+  refund_issue:
+    category: payments
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      refund_flow: true
+    priors:
+      depth: 0.5
+      irreversibility: 0.35
+      resource_intensity: 0.15
+      legal_exposure: 0.45
+      dependency_creation: 0.2
+      power_concentration: 0.3
+  card_tokenize:
+    category: payments
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      pii_handling: true
+    priors:
+      depth: 0.45
+      irreversibility: 0.2
+      resource_intensity: 0.15
+      legal_exposure: 0.6
+      dependency_creation: 0.25
+      power_concentration: 0.3
+  invoice_send:
+    category: finance
+    domains:
+    - finance
+    risk_class: moderate
+    default_effects:
+      external_comms: true
+    priors:
+      depth: 0.35
+      irreversibility: 0.2
+      resource_intensity: 0.1
+      legal_exposure: 0.35
+      dependency_creation: 0.15
+      power_concentration: 0.15
+  ledger_post:
+    category: finance
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      immutable_record: true
+    priors:
+      depth: 0.55
+      irreversibility: 0.5
+      resource_intensity: 0.1
+      legal_exposure: 0.4
+      dependency_creation: 0.15
+      power_concentration: 0.25
+  aml_screen:
+    category: finance
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      regulatory_screening: true
+    priors:
+      depth: 0.4
+      irreversibility: 0.1
+      resource_intensity: 0.2
+      legal_exposure: 0.75
+      dependency_creation: 0.2
+      power_concentration: 0.2
+  trade_execute:
+    category: finance
+    domains:
+    - finance
+    risk_class: critical
+    default_effects:
+      market_execution: true
+    priors:
+      depth: 0.7
+      irreversibility: 0.65
+      resource_intensity: 0.25
+      legal_exposure: 0.55
+      dependency_creation: 0.2
+      power_concentration: 0.45
+  trade_rebalance:
+    category: finance
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      portfolio_change: true
+    priors:
+      depth: 0.6
+      irreversibility: 0.55
+      resource_intensity: 0.25
+      legal_exposure: 0.5
+      dependency_creation: 0.2
+      power_concentration: 0.4
+  portfolio_recommendation:
+    category: finance
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      advice_output: true
+    priors:
+      depth: 0.45
+      irreversibility: 0.15
+      resource_intensity: 0.2
+      legal_exposure: 0.5
+      dependency_creation: 0.2
+      power_concentration: 0.3
+  loan_underwrite:
+    category: finance
+    domains:
+    - finance
+    risk_class: high
+    default_effects:
+      credit_decision: true
+    priors:
+      depth: 0.55
+      irreversibility: 0.4
+      resource_intensity: 0.2
+      legal_exposure: 0.6
+      dependency_creation: 0.2
+      power_concentration: 0.35
+  patient_record_read:
+    category: health
+    domains:
+    - health
+    risk_class: high
+    default_effects:
+      phi_access: true
+    priors:
+      depth: 0.35
+      irreversibility: 0.05
+      resource_intensity: 0.1
+      legal_exposure: 0.75
+      dependency_creation: 0.05
+      power_concentration: 0.15
+  patient_record_update:
+    category: health
+    domains:
+    - health
+    risk_class: critical
+    default_effects:
+      phi_write: true
+    priors:
+      depth: 0.6
+      irreversibility: 0.5
+      resource_intensity: 0.15
+      legal_exposure: 0.8
+      dependency_creation: 0.1
+      power_concentration: 0.3
+  clinical_order_entry:
+    category: health
+    domains:
+    - health
+    risk_class: critical
+    default_effects:
+      care_order: true
+    priors:
+      depth: 0.7
+      irreversibility: 0.6
+      resource_intensity: 0.2
+      legal_exposure: 0.75
+      dependency_creation: 0.1
+      power_concentration: 0.35
+  medication_prescribe:
+    category: health
+    domains:
+    - health
+    risk_class: critical
+    default_effects:
+      medication_order: true
+    priors:
+      depth: 0.75
+      irreversibility: 0.7
+      resource_intensity: 0.1
+      legal_exposure: 0.85
+      dependency_creation: 0.1
+      power_concentration: 0.4
+  lab_result_import:
+    category: health
+    domains:
+    - health
+    risk_class: high
+    default_effects:
+      clinical_data_ingest: true
+    priors:
+      depth: 0.45
+      irreversibility: 0.25
+      resource_intensity: 0.2
+      legal_exposure: 0.7
+      dependency_creation: 0.2
+      power_concentration: 0.2
+  diagnosis_assist:
+    category: health
+    domains:
+    - health
+    risk_class: high
+    default_effects:
+      clinical_recommendation: true
+    priors:
+      depth: 0.5
+      irreversibility: 0.2
+      resource_intensity: 0.2
+      legal_exposure: 0.8
+      dependency_creation: 0.15
+      power_concentration: 0.25
+  telehealth_message:
+    category: health
+    domains:
+    - health
+    risk_class: high
+    default_effects:
+      patient_comms: true
+    priors:
+      depth: 0.35
+      irreversibility: 0.2
+      resource_intensity: 0.1
+      legal_exposure: 0.7
+      dependency_creation: 0.1
+      power_concentration: 0.15
+  claim_submit:
+    category: health
+    domains:
+    - health
+    - finance
+    risk_class: high
+    default_effects:
+      payer_submission: true
+    priors:
+      depth: 0.45
+      irreversibility: 0.25
+      resource_intensity: 0.15
+      legal_exposure: 0.7
+      dependency_creation: 0.2
+      power_concentration: 0.2
+  campaign_launch:
+    category: marketing
+    domains:
+    - marketing
+    risk_class: moderate
+    default_effects:
+      outbound_scale: true
+    priors:
+      depth: 0.4
+      irreversibility: 0.3
+      resource_intensity: 0.35
+      legal_exposure: 0.3
+      dependency_creation: 0.2
+      power_concentration: 0.15
+  audience_export:
+    category: marketing
+    domains:
+    - marketing
+    risk_class: high
+    default_effects:
+      data_export: true
+    priors:
+      depth: 0.35
+      irreversibility: 0.25
+      resource_intensity: 0.15
+      legal_exposure: 0.6
+      dependency_creation: 0.15
+      power_concentration: 0.2
+  crm_bulk_update:
+    category: marketing
+    domains:
+    - marketing
+    - ops
+    risk_class: moderate
+    default_effects:
+      bulk_write: true
+    priors:
+      depth: 0.45
+      irreversibility: 0.35
+      resource_intensity: 0.2
+      legal_exposure: 0.4
+      dependency_creation: 0.15
+      power_concentration: 0.25
+  ad_budget_change:
+    category: marketing
+    domains:
+    - marketing
+    - finance
+    risk_class: high
+    default_effects:
+      budget_change: true
+    priors:
+      depth: 0.5
+      irreversibility: 0.3
+      resource_intensity: 0.4
+      legal_exposure: 0.3
+      dependency_creation: 0.15
+      power_concentration: 0.25
+  email_outreach_sequence:
+    category: marketing
+    domains:
+    - marketing
+    risk_class: moderate
+    default_effects:
+      automated_messaging: true
+    priors:
+      depth: 0.35
+      irreversibility: 0.25
+      resource_intensity: 0.25
+      legal_exposure: 0.45
+      dependency_creation: 0.2
+      power_concentration: 0.15
+  social_post_scheduler:
+    category: marketing
+    domains:
+    - marketing
+    risk_class: low
+    default_effects:
+      scheduled_publish: true
+    priors:
+      depth: 0.2
+      irreversibility: 0.15
+      resource_intensity: 0.1
+      legal_exposure: 0.2
+      dependency_creation: 0.1
+      power_concentration: 0.05
+  lead_score_model_deploy:
+    category: marketing
+    domains:
+    - marketing
+    risk_class: high
+    default_effects:
+      model_influence: true
+    priors:
+      depth: 0.55
+      irreversibility: 0.35
+      resource_intensity: 0.35
+      legal_exposure: 0.5
+      dependency_creation: 0.4
+      power_concentration: 0.2
+  incident_page:
+    category: ops
+    domains:
+    - ops
+    risk_class: moderate
+    default_effects:
+      oncall_interrupt: true
+    priors:
+      depth: 0.25
+      irreversibility: 0.1
+      resource_intensity: 0.05
+      legal_exposure: 0.05
+      dependency_creation: 0.0
+      power_concentration: 0.05
+  oncall_schedule_change:
+    category: ops
+    domains:
+    - ops
+    risk_class: moderate
+    default_effects:
+      human_impact: true
+    priors:
+      depth: 0.3
+      irreversibility: 0.2
+      resource_intensity: 0.05
+      legal_exposure: 0.1
+      dependency_creation: 0.05
+      power_concentration: 0.1
+  runbook_execute:
+    category: ops
+    domains:
+    - ops
+    risk_class: high
+    default_effects:
+      system_action: true
+    priors:
+      depth: 0.55
+      irreversibility: 0.45
+      resource_intensity: 0.25
+      legal_exposure: 0.2
+      dependency_creation: 0.15
+      power_concentration: 0.25
+  secret_rotate:
+    category: iam
+    domains:
+    - ops
+    risk_class: high
+    default_effects:
+      credential_change: true
+    priors:
+      depth: 0.5
+      irreversibility: 0.4
+      resource_intensity: 0.1
+      legal_exposure: 0.2
+      dependency_creation: 0.1
+      power_concentration: 0.8
+  kubernetes_scale:
+    category: infra
+    domains:
+    - ops
+    risk_class: high
+    default_effects:
+      resource_scale: true
+    priors:
+      depth: 0.65
+      irreversibility: 0.3
+      resource_intensity: 0.7
+      legal_exposure: 0.2
+      dependency_creation: 0.35
+      power_concentration: 0.3
+  database_migration:
+    category: ops
+    domains:
+    - ops
+    risk_class: critical
+    default_effects:
+      schema_change: true
+    priors:
+      depth: 0.8
+      irreversibility: 0.7
+      resource_intensity: 0.4
+      legal_exposure: 0.35
+      dependency_creation: 0.4
+      power_concentration: 0.3
+  backup_restore:
+    category: ops
+    domains:
+    - ops
+    risk_class: high
+    default_effects:
+      state_rollback: true
+    priors:
+      depth: 0.6
+      irreversibility: 0.35
+      resource_intensity: 0.35
+      legal_exposure: 0.2
+      dependency_creation: 0.15
+      power_concentration: 0.2
+  vendor_contract_sign:
+    category: legal
+    domains:
+    - ops
+    - finance
+    risk_class: critical
+    default_effects:
+      third_party_commitment: true
+    priors:
+      depth: 0.65
+      irreversibility: 0.7
+      resource_intensity: 0.2
+      legal_exposure: 0.85
+      dependency_creation: 0.6
+      power_concentration: 0.2

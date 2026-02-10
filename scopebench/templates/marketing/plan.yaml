@@ -1,0 +1,13 @@
+task: Launch segmented outreach campaign with capped spend
+steps:
+  - id: "1"
+    description: Analyze target segment behavior and suppression list.
+    tool: analysis
+  - id: "2"
+    description: Update audience in CRM for campaign targeting.
+    tool: crm_bulk_update
+    depends_on: ["1"]
+  - id: "3"
+    description: Launch outreach sequence with approved content.
+    tool: email_outreach_sequence
+    depends_on: ["2"]
