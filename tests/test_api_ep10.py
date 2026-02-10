@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -7,7 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scopebench.plan import PlanDAG
-from scopebench.server.api import EvaluateRequest, _suggest_plan_patch, create_app
+from scopebench.server.api import (
+    CalibrationAdjustmentRequest,
+    EvaluateRequest,
+    _suggest_plan_patch,
+    create_app,
+)
 
 
 def _payload() -> dict:
@@ -95,6 +101,7 @@ def test_plan_patch_suggestions_cover_new_rules() -> None:
     class _FakePolicy:
         exceeded = {"depth": (0.8, 0.6), "irreversibility": (0.7, 0.5)}
         asked = {"dependency_creation": 0.5, "power_concentration": 0.5}
+        policy_input = None
 
     patches = _suggest_plan_patch(_FakePolicy(), plan)
     patch_ops = {patch["op"] for patch in patches}
@@ -108,9 +115,52 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     html = _endpoint(app, "/ui")()
     assert "ScopeBench Interactive Workbench" in html
     assert "Replay telemetry" in html
+    assert "Calibration Dashboard" in html
 
 
 def test_telemetry_replay_endpoint_without_configuration() -> None:
     app = create_app(telemetry_jsonl_path=None)
     replay = _endpoint(app, "/telemetry/replay")()
     assert replay["enabled"] is False
+
+
+def test_calibration_dashboard_and_adjustment_endpoints(tmp_path: Path) -> None:
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    rows = [
+        {
+            "telemetry": {"task_type": "bug_fix"},
+            "asked": {"depth": 0.8, "uncertainty": 0.7},
+            "outcome": "tests_fail",
+        },
+        {
+            "telemetry": {"task_type": "bug_fix"},
+            "asked": {"depth": 0.6},
+            "outcome": "tests_pass",
+        },
+        {
+            "telemetry": {"task_type": "general_coding"},
+            "asked": {"uncertainty": 0.9},
+            "outcome": "manual_override",
+        },
+    ]
+    telemetry_path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+
+    app = create_app(telemetry_jsonl_path=str(telemetry_path))
+    dashboard = _endpoint(app, "/calibration/dashboard")()
+    assert dashboard.enabled is True
+    domains = {entry.domain for entry in dashboard.domains}
+    assert "bug_fix" in domains
+
+    adjust_endpoint = _endpoint(app, "/calibration/adjust")
+    adjusted = adjust_endpoint(
+        CalibrationAdjustmentRequest.model_validate(
+            {
+                "domain": "bug_fix",
+                "axis_threshold_factor_delta": {"depth": -0.1},
+                "axis_scale_delta": {"depth": 0.05},
+                "abstain_uncertainty_threshold_delta": -0.02,
+            }
+        )
+    )
+    bug_fix_entry = next(entry for entry in adjusted.domains if entry.domain == "bug_fix")
+    assert bug_fix_entry.calibration["axis_threshold_factor"]["depth"] != 1.0
