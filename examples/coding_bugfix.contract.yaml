@@ -1,0 +1,9 @@
+goal: "Fix a failing unit test with minimal code changes"
+preset: "team"
+budgets:
+  cost_usd: 0
+  time_horizon_days: 1
+  max_tool_calls: 25
+forbidden_tool_categories:
+  - infra
+  - iam

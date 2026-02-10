@@ -1,0 +1,13 @@
+task: "Stabilize flaky test test_retry_timeout_behavior"
+steps:
+  - id: "1"
+    description: "Read flaky test, fixtures, and retry logic implementation."
+    tool: "git_read"
+  - id: "2"
+    description: "Patch retry timeout assertions to remove timing flakiness."
+    tool: "git_patch"
+    depends_on: ["1"]
+  - id: "3"
+    description: "Run flaky test repeatedly to verify stabilization."
+    tool: "analysis"
+    depends_on: ["2"]

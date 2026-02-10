@@ -1,0 +1,13 @@
+task: "Clean up serializer module into helper functions"
+steps:
+  - id: "1"
+    description: "Read serializer module and current tests."
+    tool: "git_read"
+  - id: "2"
+    description: "Apply minimal cleanup to extract helper functions without changing behavior."
+    tool: "git_patch"
+    depends_on: ["1"]
+  - id: "3"
+    description: "Run serializer unit tests to validate no behavior regression."
+    tool: "analysis"
+    depends_on: ["2"]

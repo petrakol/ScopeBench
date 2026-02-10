@@ -1,0 +1,9 @@
+goal: "Clean up a bounded module while preserving behavior"
+preset: "team"
+budgets:
+  cost_usd: 0
+  time_horizon_days: 2
+  max_tool_calls: 35
+forbidden_tool_categories:
+  - infra
+  - iam
