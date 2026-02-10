@@ -52,6 +52,12 @@ def evaluate_policy(
             )
             if result.decision.value == "ALLOW":
                 result.decision = Decision.ASK
+    abstain_threshold = contract.escalation.abstain_uncertainty_threshold
+    if agg.uncertainty >= abstain_threshold:
+        result.decision = Decision.ASK
+        result.asked["uncertainty"] = max(result.asked.get("uncertainty", 0.0), float(agg.uncertainty))
+        if "abstain_due_to_uncertainty" not in result.reasons:
+            result.reasons.append("abstain_due_to_uncertainty")
 
     result.policy_input = build_policy_input(contract, agg, step_vectors=step_vectors, plan=plan)
     return result

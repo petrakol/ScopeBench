@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from scopebench.contracts import TaskContract
 from scopebench.plan import PlanDAG
@@ -18,6 +22,45 @@ VALIDATION_HINTS = ("test", "verify", "validation", "assert", "check")
 
 
 class EvaluateRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "contract": {
+                    "goal": "Fix flaky auth test in CI",
+                    "non_goals": ["Refactor unrelated auth modules"],
+                    "constraints": ["Do not change production auth behavior"],
+                    "acceptance": ["Auth test passes consistently"],
+                    "preset": "balanced",
+                },
+                "plan": {
+                    "task": "Diagnose and fix flaky token refresh test",
+                    "steps": [
+                        {
+                            "id": "read-failing-test",
+                            "description": "Inspect the failing test and auth refresh implementation.",
+                            "tool": "git_read",
+                        },
+                        {
+                            "id": "patch-refresh-window",
+                            "description": "Patch the refresh timing logic to avoid race conditions.",
+                            "tool": "git_patch",
+                        },
+                        {
+                            "id": "validate-auth",
+                            "description": "Run targeted auth tests.",
+                            "tool": "pytest",
+                        },
+                    ],
+                },
+                "include_steps": True,
+                "include_summary": True,
+                "include_telemetry": True,
+                "shadow_mode": False,
+                "policy_backend": "python",
+            }
+        },
+    )
     contract: Dict[str, Any] = Field(..., description="TaskContract as dict")
     plan: Dict[str, Any] = Field(..., description="PlanDAG as dict")
     include_steps: bool = Field(False, description="Include step-level vectors and rationales.")
@@ -44,12 +87,14 @@ class EvaluateRequest(BaseModel):
 
 
 class AxisDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     value: float
     rationale: str
     confidence: float
 
 
 class StepDetail(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     step_id: Optional[str]
     tool: Optional[str]
     tool_category: Optional[str]
@@ -61,6 +106,8 @@ class StepDetail(BaseModel):
 
 
 class TelemetryDetail(BaseModel):
+    schema_version: str = "telemetry_v1"
+    model_config = ConfigDict(extra="forbid")
     preset: str
     policy_input_version: str
     task_type: str
@@ -74,6 +121,69 @@ class TelemetryDetail(BaseModel):
 
 
 class EvaluateResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "example": {
+                "decision": "ALLOW",
+                "policy_backend": "python",
+                "policy_version": "v1",
+                "policy_hash": "sha256:demo",
+                "effective_decision": "ALLOW",
+                "shadow_mode": False,
+                "reasons": ["Aggregate risk stayed below threshold."],
+                "exceeded": {},
+                "asked": {},
+                "aggregate": {
+                    "spatial": 0.08,
+                    "temporal": 0.12,
+                    "depth": 0.2,
+                    "irreversibility": 0.06,
+                    "resource_intensity": 0.1,
+                    "legal_exposure": 0.02,
+                    "dependency_creation": 0.04,
+                    "stakeholder_radius": 0.05,
+                    "power_concentration": 0.03,
+                    "uncertainty": 0.22,
+                },
+                "n_steps": 3,
+                "steps": [
+                    {
+                        "step_id": "patch-refresh-window",
+                        "tool": "git_patch",
+                        "tool_category": "write",
+                        "axes": {
+                            "uncertainty": {
+                                "value": 0.35,
+                                "rationale": "Timing behavior is partially inferred from flaky logs.",
+                                "confidence": 0.72,
+                            }
+                        },
+                    }
+                ],
+                "summary": "Decision ALLOW (effective: ALLOW). Top axes: uncertainty=0.22, depth=0.20, temporal=0.12.",
+                "next_steps": ["Proceed; plan appears proportionate to the contract."],
+                "plan_patch_suggestion": [],
+                "telemetry": {
+                    "preset": "balanced",
+                    "policy_input_version": "v1",
+                    "task_type": "bug_fix",
+                    "plan_size": 3,
+                    "decision": "ALLOW",
+                    "triggered_rules": [],
+                    "has_read_before_write": True,
+                    "has_validation_after_write": True,
+                    "ask_action": None,
+                    "outcome": None,
+                },
+                "policy_input": {
+                    "task_type": "bug_fix",
+                    "read_before_write": True,
+                    "validation_after_write": True,
+                },
+            }
+        },
+    )
     decision: str
     policy_backend: str
     policy_version: str
@@ -223,15 +333,66 @@ def _effective_decision(policy_decision: str, shadow_mode: bool) -> str:
     return policy_decision
 
 
-def create_app(default_policy_backend: str = "python") -> FastAPI:
+def _append_jsonl(path: Path, row: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _telemetry_row(
+    telemetry: TelemetryDetail,
+    policy_input: Optional[Dict[str, Any]],
+    aggregate: Dict[str, float],
+    asked: Dict[str, float],
+    exceeded: Dict[str, Dict[str, float]],
+) -> Dict[str, Any]:
+    return {
+        "schema_version": "telemetry_v1",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "policy_input": policy_input or {},
+        "decision": telemetry.decision,
+        "aggregate": aggregate,
+        "asked": asked,
+        "exceeded": exceeded,
+        "feedback": {
+            "ask_action": telemetry.ask_action,
+            "outcome": telemetry.outcome,
+        },
+        "telemetry": telemetry.model_dump(),
+    }
+
+
+def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Optional[str] = None) -> FastAPI:
     init_tracing(enable_console=False)
     app = FastAPI(title="ScopeBench", version="0.1.0")
+    configured_telemetry_path = telemetry_jsonl_path or os.getenv("SCOPEBENCH_TELEMETRY_JSONL_PATH")
 
     @app.get("/health")
     def health():
         return {"ok": True}
 
-    @app.post("/evaluate", response_model=EvaluateResponse)
+    @app.post(
+        "/evaluate",
+        response_model=EvaluateResponse,
+        openapi_extra={
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "example": EvaluateRequest.model_config["json_schema_extra"]["example"]
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "example": EvaluateResponse.model_config["json_schema_extra"]["example"]
+                        }
+                    }
+                }
+            },
+        },
+    )
     def evaluate_endpoint(req: EvaluateRequest):
         contract = TaskContract.model_validate(req.contract)
         plan = PlanDAG.model_validate(req.plan)
@@ -296,6 +457,24 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
                 "Shadow mode enabled: returning effective_decision=ALLOW while preserving policy decision for analysis"
             )
 
+        exceeded_payload = {
+            k: {"value": float(v[0]), "threshold": float(v[1])} for k, v in pol.exceeded.items()
+        }
+        asked_payload = {k: float(v) for k, v in pol.asked.items()}
+        policy_input_payload = pol.policy_input.__dict__ if (req.include_telemetry and pol.policy_input) else None
+
+        if req.include_telemetry and telemetry and configured_telemetry_path:
+            _append_jsonl(
+                Path(configured_telemetry_path),
+                _telemetry_row(
+                    telemetry=telemetry,
+                    policy_input=policy_input_payload,
+                    aggregate=res.aggregate.as_dict(),
+                    asked=asked_payload,
+                    exceeded=exceeded_payload,
+                ),
+            )
+
         return EvaluateResponse(
             decision=decision,
             policy_backend=pol.policy_backend,
@@ -304,10 +483,8 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
             effective_decision=effective_decision,
             shadow_mode=req.shadow_mode,
             reasons=reasons,
-            exceeded={
-                k: {"value": float(v[0]), "threshold": float(v[1])} for k, v in pol.exceeded.items()
-            },
-            asked={k: float(v) for k, v in pol.asked.items()},
+            exceeded=exceeded_payload,
+            asked=asked_payload,
             aggregate=res.aggregate.as_dict(),
             n_steps=res.aggregate.n_steps,
             steps=steps,
@@ -315,7 +492,32 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
             next_steps=next_steps,
             plan_patch_suggestion=patch_suggestion,
             telemetry=telemetry,
-            policy_input=(pol.policy_input.__dict__ if (req.include_telemetry and pol.policy_input) else None),
+            policy_input=policy_input_payload,
         )
+
+    @app.post(
+        "/evaluate_session",
+        response_model=EvaluateResponse,
+        openapi_extra={
+            "requestBody": {
+                "content": {
+                    "application/json": {
+                        "example": EvaluateRequest.model_config["json_schema_extra"]["example"]
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "content": {
+                        "application/json": {
+                            "example": EvaluateResponse.model_config["json_schema_extra"]["example"]
+                        }
+                    }
+                }
+            },
+        },
+    )
+    def evaluate_session_endpoint(req: EvaluateRequest):
+        return evaluate_endpoint(req)
 
     return app

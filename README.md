@@ -200,7 +200,8 @@ pytest
 - `scopebench/server/api.py` — FastAPI app and response shaping
 - `scopebench/bench/` — benchmark/telemetry utilities
 - `scopebench/tool_registry.yaml` — tool metadata used by scoring/policy
-- `examples/` — runnable scenario inputs
+- `examples/` — runnable scenario inputs (including `effects_v1` examples)
+- `docs/effects.md` — planner guide for structured effects and precedence
 - `docs/BLUEPRINT.md` — long-term architecture and roadmap
 
 ---

@@ -17,8 +17,15 @@ from scopebench.plan import PlanDAG  # noqa: E402
 from scopebench.policy.backends.factory import get_policy_backend  # noqa: E402
 from scopebench.policy.engine import evaluate_policy  # noqa: E402
 from scopebench.runtime.guard import evaluate  # noqa: E402
-from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector  # noqa: E402
+from scopebench.scoring.axes import SCOPE_AXES, AxisScore, ScopeAggregate, ScopeVector  # noqa: E402
 from scopebench.scoring.rules import aggregate_scope  # noqa: E402
+from scopebench.scoring.calibration import (  # noqa: E402
+    CalibratedDecisionThresholds,
+    apply_calibration,
+    compute_axis_calibration_from_telemetry,
+    load_calibration_file,
+    write_calibration_file,
+)
 from scopebench.server.api import (  # noqa: E402
     create_app,
     _build_telemetry,
@@ -475,6 +482,126 @@ def test_weekly_telemetry_summary_and_benchmark_replay(tmp_path: Path):
     assert all(item.ok for item in replay)
 
 
+
+def test_api_writes_telemetry_jsonl_when_enabled(tmp_path: Path):
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    pytest.importorskip("httpx")
+    app = create_app(default_policy_backend="python", telemetry_jsonl_path=str(telemetry_path))
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "contract": {"goal": "Fix failing unit test", "preset": "team"},
+        "plan": {
+            "task": "Fix failing unit test",
+            "steps": [
+                {"id": "1", "description": "Read failing test", "tool": "git_read"},
+                {"id": "2", "description": "Patch code", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        },
+        "include_telemetry": True,
+        "ask_action": "replanned",
+        "outcome": "tests_pass",
+    }
+    response = client.post("/evaluate", json=payload)
+    assert response.status_code == 200
+
+    rows = [json.loads(line) for line in telemetry_path.read_text(encoding="utf-8").splitlines() if line]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["schema_version"] == "telemetry_v1"
+    assert "policy_input" in row
+    assert "decision" in row
+    assert "aggregate" in row
+    assert "asked" in row
+    assert "exceeded" in row
+    assert row["feedback"]["ask_action"] == "replanned"
+
+
+def test_axis_calibration_apply_is_deterministic_and_complete():
+    agg = ScopeAggregate(
+        spatial=0.2,
+        temporal=0.3,
+        depth=0.4,
+        irreversibility=0.1,
+        resource_intensity=0.5,
+        legal_exposure=0.2,
+        dependency_creation=0.3,
+        stakeholder_radius=0.2,
+        power_concentration=0.1,
+        uncertainty=0.4,
+        n_steps=2,
+    )
+    calibration = CalibratedDecisionThresholds(
+        axis_scale={axis: 1.1 for axis in SCOPE_AXES},
+        axis_bias={axis: -0.02 for axis in SCOPE_AXES},
+    )
+    first = apply_calibration(agg, calibration)
+    second = apply_calibration(agg, calibration)
+    assert first == second
+    assert first.as_dict() != agg.as_dict()
+
+
+def test_compute_axis_calibration_from_telemetry_and_roundtrip_file(tmp_path: Path):
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    rows = [
+        {
+            "asked": {"uncertainty": 0.8, "depth": 0.7},
+            "exceeded": {},
+            "ask_action": "replanned",
+            "outcome": "tests_pass",
+        },
+        {
+            "asked": {"uncertainty": 0.9},
+            "exceeded": {"depth": {"value": 0.8, "threshold": 0.5}},
+            "ask_action": "ignored",
+            "outcome": "manual_override",
+        },
+        {
+            "asked": {"depth": 0.8},
+            "exceeded": {"depth": {"value": 0.9, "threshold": 0.5}},
+            "outcome": "tests_fail",
+        },
+    ]
+    telemetry_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    calibration, stats = compute_axis_calibration_from_telemetry(telemetry_path)
+    assert set(calibration.resolved_axis_scale().keys()) == set(SCOPE_AXES)
+    assert set(calibration.resolved_axis_bias().keys()) == set(SCOPE_AXES)
+    assert stats.triggered["depth"] == 3
+
+    out_path = tmp_path / "axis_calibration.json"
+    write_calibration_file(out_path, calibration)
+    loaded = load_calibration_file(out_path)
+    assert loaded.resolved_axis_scale() == calibration.resolved_axis_scale()
+    assert loaded.resolved_axis_bias() == calibration.resolved_axis_bias()
+
+
+def test_abstain_uncertainty_threshold_forces_ask_with_reason():
+    contract = TaskContract.model_validate(
+        {
+            "goal": "Low risk task",
+            "escalation": {"abstain_uncertainty_threshold": 0.2, "ask_if_uncertainty_over": 0.95},
+        }
+    )
+    agg = ScopeAggregate(
+        spatial=0.1,
+        temporal=0.1,
+        depth=0.1,
+        irreversibility=0.1,
+        resource_intensity=0.1,
+        legal_exposure=0.1,
+        dependency_creation=0.1,
+        stakeholder_radius=0.1,
+        power_concentration=0.1,
+        uncertainty=0.25,
+        n_steps=1,
+    )
+    policy = evaluate_policy(contract, agg)
+    assert policy.decision.value == "ASK"
+    assert policy.asked["uncertainty"] == pytest.approx(0.25)
+    assert "abstain_due_to_uncertainty" in policy.reasons
+
 def test_backend_selection_from_env(monkeypatch):
     monkeypatch.setenv("SCOPEBENCH_POLICY_BACKEND", "opa")
     backend = get_policy_backend()
@@ -510,6 +637,7 @@ def test_cedar_backend_matches_python_on_examples():
 
 
 def test_policy_input_v1_and_audit_metadata_in_api_response():
+    pytest.importorskip("httpx")
     app = create_app(default_policy_backend="python")
     from fastapi.testclient import TestClient
 
@@ -641,3 +769,85 @@ def test_dataset_has_at_least_five_knee_cases():
         plan = PlanDAG.model_validate(row["plan"])
         res = evaluate(contract, plan)
         assert res.policy.decision.value == row["expected_decision"]
+def test_effects_v1_schema_accepts_valid_and_rejects_invalid_version():
+    valid = PlanDAG.model_validate(
+        {
+            "task": "Effects schema check",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Proceed.",
+                    "effects": {
+                        "version": "effects_v1",
+                        "resources": {
+                            "magnitude": "medium",
+                            "kinds": ["compute"],
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    assert valid.steps[0].effects is not None
+
+    with pytest.raises(ValueError):
+        PlanDAG.model_validate(
+            {
+                "task": "Effects schema check",
+                "steps": [
+                    {
+                        "id": "1",
+                        "description": "Proceed.",
+                        "effects": {
+                            "version": "effects_v0",
+                            "resources": {"magnitude": "medium"},
+                        },
+                    }
+                ],
+            }
+        )
+
+
+def test_effects_override_tool_priors_and_keywords():
+    registry = ToolRegistry.load_default()
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Effect override",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "run tests now",  # keyword baseline low
+                    "tool": "infra_provision",  # prior for resource is high (0.95)
+                    "effects": {
+                        "version": "effects_v1",
+                        "resources": {
+                            "magnitude": "low",
+                            "rationale": "dry-run only",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    vec = score_step(plan.steps[0], registry)
+    assert vec.resource_intensity.value == pytest.approx(0.25)
+    assert "effects.resources.magnitude" in vec.resource_intensity.rationale
+
+
+def test_tool_default_effects_are_used_when_step_effects_missing():
+    registry = ToolRegistry.load_default()
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Default effects inference",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Proceed with operation.",
+                    "tool": "card_tokenize",
+                }
+            ],
+        }
+    )
+    vec = score_step(plan.steps[0], registry)
+    assert vec.legal_exposure.value >= 0.8
+    assert "effects.legal.magnitude" in vec.legal_exposure.rationale
