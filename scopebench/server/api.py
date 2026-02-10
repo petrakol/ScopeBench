@@ -21,6 +21,7 @@ from scopebench.scoring.calibration import (
     calibration_to_dict,
     compute_domain_calibration_from_telemetry,
 )
+from scopebench.scoring.effects_annotator import suggest_effects_for_plan
 from scopebench.scoring.rules import build_budget_ledger
 from scopebench.plugins import PluginManager
 from scopebench.session import MultiAgentSession
@@ -269,6 +270,24 @@ class DatasetSuggestRequest(BaseModel):
 class DatasetSuggestResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case: Dict[str, Any]
+
+
+class SuggestEffectsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan: Dict[str, Any]
+
+
+class SuggestEffectsItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_id: str
+    tool: Optional[str] = None
+    effects: Dict[str, Any]
+
+
+class SuggestEffectsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan: Dict[str, Any]
+    suggestions: List[SuggestEffectsItem]
 
 
 class StreamingPlanEvent(BaseModel):
@@ -1576,6 +1595,30 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 policy_backend=req.policy_backend,
             )
         return DatasetSuggestResponse(case=case)
+
+    @app.post("/suggest_effects", response_model=SuggestEffectsResponse)
+    def suggest_effects_endpoint(req: SuggestEffectsRequest):
+        plan = PlanDAG.model_validate(req.plan)
+        suggestions = suggest_effects_for_plan(plan)
+
+        step_lookup = {step.id: step for step in plan.steps}
+        suggestion_payload: List[SuggestEffectsItem] = []
+        for suggestion in suggestions:
+            effects_payload = suggestion.effects.model_dump(mode="json", exclude_none=True)
+            if suggestion.step_id in step_lookup:
+                step_lookup[suggestion.step_id].effects = suggestion.effects
+            suggestion_payload.append(
+                SuggestEffectsItem(
+                    step_id=suggestion.step_id,
+                    tool=suggestion.tool,
+                    effects=effects_payload,
+                )
+            )
+
+        return SuggestEffectsResponse(
+            plan=plan.model_dump(mode="json", exclude_none=True),
+            suggestions=suggestion_payload,
+        )
 
     @app.post("/evaluate", response_model=EvaluateResponse)
     @app.post(
