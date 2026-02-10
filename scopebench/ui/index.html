@@ -51,6 +51,7 @@
           <button id="run-session">Run /evaluate_session</button>
           <button id="replay" class="secondary">Replay telemetry</button>
           <button id="calibration" class="secondary">Calibration dashboard</button>
+          <button id="stream" class="secondary">Stream /evaluate_stream</button>
           <button id="refresh-plugins" class="secondary">Refresh plugins</button>
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
         </div>
@@ -94,6 +95,12 @@
         <h3>Explainability: Aggregate Risk Contributions</h3>
         <p class="muted">Shows each step's contribution along the dominant risk path per axis.</p>
         <table><thead><tr><th>Axis</th><th>Aggregate</th><th>Critical path terminal</th><th>Step contributions</th></tr></thead><tbody id="contrib-table"></tbody></table>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
+        <h3>Streaming Evaluation Timeline</h3>
+        <p class="muted">Simulate evolving plans and visualize risk growth, threshold crossings, and rationale deltas from judge outputs.</p>
+        <pre id="streaming"></pre>
       </section>
 
       <section class="card" style="margin-top: 16px">
@@ -197,6 +204,7 @@
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
       const calibrationDashboardEl = el("calibration-dashboard");
+      const streamingEl = el("streaming");
       const pluginMarketplaceEl = el("plugin-marketplace");
       const pluginManagerEl = el("plugin-manager");
       const pluginSourceEl = el("plugin-source");
@@ -398,6 +406,103 @@
         renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
       }
 
+      function buildStreamingEvents(plan) {
+        const steps = plan.steps || [];
+        if (!steps.length) return [];
+        const candidateIndex = Math.max(0, steps.length - 1);
+        const candidate = steps[candidateIndex];
+        const intensified = {
+          ...candidate,
+          description: `${candidate.description || "Step"} with broader production impact and uncertain dependencies`,
+          tool_category: candidate.tool_category || "prod"
+        };
+        const reviewStepId = `review-${candidate.id || "step"}`;
+        const reviewDepends = candidate.id ? [candidate.id] : [];
+        return [
+          {
+            event_id: "stream-update-main-step",
+            operation: "update_step",
+            step_id: String(candidate.id || "1"),
+            step: intensified,
+            context: { label: "Intensify current step scope" }
+          },
+          {
+            event_id: "stream-add-safety-review",
+            operation: "add_step",
+            step_id: reviewStepId,
+            step: {
+              id: reviewStepId,
+              description: "Add expanded rollback + post-deploy validation rationale",
+              tool: "pytest",
+              depends_on: reviewDepends
+            },
+            context: { label: "Add new validation step" }
+          }
+        ];
+      }
+
+      function summarizeStreaming(payload) {
+        const snapshots = [payload.initial, ...(payload.updates || [])];
+        const lines = [];
+        const priorByAxis = {};
+        snapshots.forEach((snapshot) => {
+          lines.push(`${snapshot.event_index}. ${snapshot.event_id} (${snapshot.operation}) => ${snapshot.decision}`);
+          Object.entries(snapshot.aggregate || {})
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .forEach(([axis, value]) => {
+              const previous = priorByAxis[axis];
+              const change = previous == null ? "" : ` (Δ ${(Number(value) - Number(previous)).toFixed(3)})`;
+              lines.push(`   • ${axis}: ${Number(value).toFixed(3)}${change}`);
+              priorByAxis[axis] = Number(value);
+            });
+
+          (snapshot.triggers || []).forEach((trigger) => {
+            if (trigger.kind === "threshold_crossed") {
+              lines.push(
+                `   ⚠ threshold crossed on ${trigger.axis}: ${Number(trigger.previous || 0).toFixed(3)} -> ${Number(trigger.current || 0).toFixed(3)} (limit ${Number(trigger.threshold || 0).toFixed(3)})`
+              );
+            } else {
+              lines.push(`   ↻ ${trigger.details || trigger.kind}`);
+            }
+          });
+
+          (snapshot.judge_output_deltas || []).forEach((stepDelta) => {
+            lines.push(`   Δ judge output for ${stepDelta.step_id}: ${stepDelta.changed_axes.join(", ") || "none"}`);
+            (stepDelta.axis_deltas || []).forEach((axisDelta) => {
+              const prevR = axisDelta.previous_rationale || "";
+              const currR = axisDelta.current_rationale || "";
+              if (prevR !== currR) {
+                lines.push(`      rationale[${axisDelta.axis}]: "${prevR}" -> "${currR}"`);
+              }
+            });
+          });
+        });
+        return lines.join("\n");
+      }
+
+      async function runStreamingEvaluation() {
+        const contract = JSON.parse(contractEl.value);
+        const plan = JSON.parse(planEl.value);
+        const events = buildStreamingEvents(plan);
+        const payload = await fetch("/evaluate_stream", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            contract,
+            plan,
+            events,
+            include_steps: false,
+            judge: "llm"
+          })
+        }).then((r) => r.json());
+
+        streamingEl.textContent = summarizeStreaming(payload);
+      }
+
+      async function replayTelemetry() {
+        const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json());
+        telemetryEl.textContent = JSON.stringify(replay, null, 2);
       async function runSessionEvaluation() {
         const body = sessionPayloadFromState();
         sessionPayloadEl.textContent = JSON.stringify(body, null, 2);
@@ -420,6 +525,18 @@
         renderWhatIfEditors(picked.plan);
         scheduleAutoEvaluate();
       });
+      el("run").addEventListener("click", () => runEvaluation().catch((err) => {
+        resultEl.textContent = `Error: ${err.message}`;
+      }));
+      el("replay").addEventListener("click", () => replayTelemetry().catch((err) => {
+        telemetryEl.textContent = `Error: ${err.message}`;
+      }));
+      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
+        calibrationDashboardEl.textContent = `Error: ${err.message}`;
+      }));
+      el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
+        streamingEl.textContent = `Error: ${err.message}`;
+      }));
       el("run").addEventListener("click", () => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }));
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
@@ -444,6 +561,18 @@
 
       renderDag(defaultPlan);
       renderWhatIfEditors(defaultPlan);
+      loadCatalog().catch((err) => {
+        catalogEl.textContent = `Catalog load error: ${err.message}`;
+      });
+      loadCalibrationDashboard().catch((err) => {
+        calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
+      });
+      runStreamingEvaluation().catch((err) => {
+        streamingEl.textContent = `Streaming load error: ${err.message}`;
+      });
+      runEvaluation().catch((err) => {
+        resultEl.textContent = `Error: ${err.message}`;
+      });
       renderSessionBuilder();
       loadCatalog().catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
       loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });

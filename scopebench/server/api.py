@@ -290,6 +290,7 @@ class StreamStepDelta(BaseModel):
     model_config = ConfigDict(extra="forbid")
     step_id: str
     changed_axes: List[str]
+    axis_deltas: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class StreamingEvaluationSnapshot(BaseModel):
@@ -464,12 +465,21 @@ def _step_detail_payload(vectors, plan: PlanDAG) -> List[StepDetail]:
     return details
 
 
-def _vector_axes_by_step(vectors: List[Any]) -> Dict[str, Dict[str, float]]:
-    payload: Dict[str, Dict[str, float]] = {}
+def _vector_axes_by_step(vectors: List[Any]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    payload: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for vector in vectors:
         if not vector.step_id:
             continue
-        payload[vector.step_id] = vector.as_dict
+        step_axes: Dict[str, Dict[str, Any]] = {}
+        for axis in SCOPE_AXES:
+            detail = getattr(vector, axis, None)
+            if detail is None:
+                continue
+            step_axes[axis] = {
+                "value": float(getattr(detail, "value", 0.0)),
+                "rationale": str(getattr(detail, "rationale", "") or ""),
+            }
+        payload[vector.step_id] = step_axes
     return payload
 
 
@@ -486,13 +496,35 @@ def _judge_output_deltas(
         previous_axes = previous.get(step_id)
         if previous_axes is None:
             continue
+        axis_deltas: List[Dict[str, Any]] = []
         changed_axes = [
             axis
-            for axis, value in current_axes.items()
-            if abs(float(value) - float(previous_axes.get(axis, 0.0))) > 1e-6
+            for axis, detail in current_axes.items()
+            if (
+                abs(float(detail.get("value", 0.0)) - float(previous_axes.get(axis, {}).get("value", 0.0))) > 1e-6
+                or str(detail.get("rationale", "")) != str(previous_axes.get(axis, {}).get("rationale", ""))
+            )
         ]
+        for axis in changed_axes:
+            before = previous_axes.get(axis, {})
+            after = current_axes.get(axis, {})
+            axis_deltas.append(
+                {
+                    "axis": axis,
+                    "previous": float(before.get("value", 0.0)),
+                    "current": float(after.get("value", 0.0)),
+                    "previous_rationale": str(before.get("rationale", "") or ""),
+                    "current_rationale": str(after.get("rationale", "") or ""),
+                }
+            )
         if changed_axes:
-            deltas.append(StreamStepDelta(step_id=step_id, changed_axes=sorted(changed_axes)))
+            deltas.append(
+                StreamStepDelta(
+                    step_id=step_id,
+                    changed_axes=sorted(changed_axes),
+                    axis_deltas=sorted(axis_deltas, key=lambda item: str(item.get("axis", ""))),
+                )
+            )
     return sorted(deltas, key=lambda item: item.step_id)
 
 
