@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from scopebench.contracts import TaskContract
 from scopebench.plan import PlanDAG
-from scopebench.policy.backends.base import PolicyInput, PolicyResult
+from scopebench.policy.backends.base import Decision, PolicyInput, PolicyResult
 from scopebench.policy.backends.factory import get_policy_backend
 from scopebench.scoring.axes import ScopeAggregate, ScopeVector
 
@@ -34,5 +34,13 @@ def evaluate_policy(
 ) -> PolicyResult:
     backend = get_policy_backend(policy_backend)
     result = backend.evaluate(contract, agg, step_vectors=step_vectors, plan=plan)
+
+    abstain_threshold = contract.escalation.abstain_uncertainty_threshold
+    if agg.uncertainty >= abstain_threshold:
+        result.decision = Decision.ASK
+        result.asked["uncertainty"] = max(result.asked.get("uncertainty", 0.0), float(agg.uncertainty))
+        if "abstain_due_to_uncertainty" not in result.reasons:
+            result.reasons.append("abstain_due_to_uncertainty")
+
     result.policy_input = build_policy_input(contract, agg, step_vectors=step_vectors, plan=plan)
     return result
