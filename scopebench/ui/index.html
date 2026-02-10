@@ -139,6 +139,7 @@
           <button id="run">Run /evaluate</button>
           <button id="replay" class="secondary">Replay telemetry</button>
           <button id="calibration" class="secondary">Calibration dashboard</button>
+          <button id="refresh-plugins" class="secondary">Refresh plugins</button>
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
         </div>
       </div>
@@ -208,6 +209,26 @@
           <pre id="telemetry"></pre>
         </div>
       </section>
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Plugin Marketplace</h3>
+          <p class="muted">Community plugin listings from <code>docs/plugin_marketplace.yaml</code>.</p>
+          <pre id="plugin-marketplace"></pre>
+        </div>
+        <div class="card">
+          <h3>Plugin Manager</h3>
+          <div class="controls" style="margin-bottom: 8px;">
+            <input id="plugin-source" placeholder="/path/to/plugin-bundle.yaml" style="flex:1; min-width: 220px;" />
+            <input id="plugin-target-dir" placeholder="/path/to/plugins-dir" style="flex:1; min-width: 220px;" />
+          </div>
+          <div class="controls" style="margin-bottom: 8px;">
+            <button id="plugin-install">Install bundle</button>
+            <button id="plugin-uninstall" class="secondary">Uninstall bundle</button>
+          </div>
+          <pre id="plugin-manager"></pre>
+        </div>
+      </section>
+
       <section class="grid" style="margin-top: 16px">
         <div class="card">
           <h3>Calibration Dashboard</h3>
@@ -240,6 +261,10 @@
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
       const calibrationDashboardEl = el("calibration-dashboard");
+      const pluginMarketplaceEl = el("plugin-marketplace");
+      const pluginManagerEl = el("plugin-manager");
+      const pluginSourceEl = el("plugin-source");
+      const pluginTargetDirEl = el("plugin-target-dir");
       const templateSelectEl = el("template-select");
       const autoRunEl = el("auto-run");
       const EFFECT_AXES = [
@@ -504,6 +529,39 @@
         renderWhatIfEditors(JSON.parse(planEl.value));
       }
 
+      async function loadPlugins() {
+        const [marketplace, installed] = await Promise.all([
+          fetch("/plugin_marketplace").then((r) => r.json()),
+          fetch("/plugins").then((r) => r.json())
+        ]);
+        pluginMarketplaceEl.textContent = JSON.stringify(marketplace, null, 2);
+        pluginManagerEl.textContent = JSON.stringify(installed, null, 2);
+      }
+
+      async function installPluginBundle() {
+        const payload = {
+          source_path: pluginSourceEl.value,
+          plugin_dir: pluginTargetDirEl.value
+        };
+        const response = await fetch("/plugins/install", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        }).then((r) => r.json());
+        pluginManagerEl.textContent = JSON.stringify(response, null, 2);
+        await loadPlugins();
+      }
+
+      async function uninstallPluginBundle() {
+        const response = await fetch("/plugins/uninstall", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ source_path: pluginSourceEl.value })
+        }).then((r) => r.json());
+        pluginManagerEl.textContent = JSON.stringify(response, null, 2);
+        await loadPlugins();
+      }
+
       async function runEvaluation() {
         const contract = JSON.parse(contractEl.value);
         const plan = JSON.parse(planEl.value);
@@ -568,6 +626,15 @@
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
         calibrationDashboardEl.textContent = `Error: ${err.message}`;
       }));
+      el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => {
+        pluginManagerEl.textContent = `Error: ${err.message}`;
+      }));
+      el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Error: ${err.message}`;
+      }));
+      el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Error: ${err.message}`;
+      }));
       planEl.addEventListener("input", () => {
         try {
           const plan = JSON.parse(planEl.value);
@@ -584,8 +651,12 @@
       loadCatalog().catch((err) => {
         catalogEl.textContent = `Catalog load error: ${err.message}`;
       });
+      loadPlugins().catch((err) => {
+        pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
+      });
       loadCalibrationDashboard().catch((err) => {
         calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
+      });
       runEvaluation().catch((err) => {
         resultEl.textContent = `Error: ${err.message}`;
       });
