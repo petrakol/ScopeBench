@@ -9,9 +9,11 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from scopebench.bench.judge import run_judge_bench
 from scopebench.bench.weekly import replay_benchmark_slice, summarize_weekly_telemetry
-from scopebench.runtime.guard import evaluate_from_files
+from scopebench.runtime.guard import evaluate, evaluate_from_files
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
+from scopebench.scoring.llm_judge import JudgeMode
 from scopebench.tracing.otel import init_tracing
 
 app = typer.Typer(add_completion=False, help="ScopeBench: plan-level proportionality enforcement.")
@@ -214,6 +216,12 @@ def run(
     policy_backend: str = typer.Option(
         "python", "--policy-backend", help="Policy backend: python|opa|cedar."
     ),
+    judge: JudgeMode = typer.Option(
+        "heuristic", "--judge", help="Step judge mode: none|heuristic|llm."
+    ),
+    judge_cache_path: str = typer.Option(
+        ".scopebench_cache", "--judge-cache-path", help="Cache directory for LLM judge outputs."
+    ),
 ):
     """Evaluate a plan against a task contract and print ALLOW/ASK/DENY."""
     init_tracing(enable_console=otel_console)
@@ -225,6 +233,8 @@ def run(
         str(plan_path),
         calibration=calibration,
         policy_backend=policy_backend,
+        judge=judge,
+        judge_cache_path=judge_cache_path,
     )
     _print_result(res, as_json=json_out, compact_json=compact_json)
 
@@ -304,6 +314,47 @@ def weekly_calibrate(
             )
 
     if not all(item.ok for item in replay):
+        raise typer.Exit(code=1)
+
+
+@app.command("judge-bench")
+def judge_bench(
+    cases_jsonl: Path = typer.Argument(..., help="Path to benchmark cases JSONL."),
+    judge: JudgeMode = typer.Option("llm", "--judge", help="Step judge mode: none|heuristic|llm."),
+    judge_cache_path: str = typer.Option(
+        ".scopebench_cache", "--judge-cache-path", help="Cache directory for LLM judge outputs."
+    ),
+    policy_backend: str = typer.Option(
+        "python", "--policy-backend", help="Policy backend: python|opa|cedar."
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Run judge quality benchmark against expected decisions."""
+    payload = run_judge_bench(
+        cases_jsonl,
+        evaluate_case=lambda contract, plan: evaluate(
+            contract,
+            plan,
+            policy_backend=policy_backend,
+            judge=judge,
+            judge_cache_path=judge_cache_path,
+        ),
+    )
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+    else:
+        console.print(f"[bold]Judge bench[/bold] total={payload['total_cases']}")
+        for domain in sorted(payload["per_domain"]):
+            stats = payload["per_domain"][domain]
+            console.print(
+                f" - {domain}: agreement={stats['agreement']:.2f} "
+                f"({stats['matched']}/{stats['total']})"
+            )
+        if payload["error_case_ids"]:
+            console.print(f"Errors: {', '.join(payload['error_case_ids'])}")
+
+    if payload["error_case_ids"]:
         raise typer.Exit(code=1)
 
 
