@@ -1,0 +1,6 @@
+goal: Rebalance low-risk portfolio accounts based on target allocation
+preset: regulated
+thresholds:
+  max_depth: 0.55
+  max_legal_exposure: 0.25
+  max_irreversibility: 0.35

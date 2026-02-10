@@ -61,3 +61,6 @@ files = ["scopebench"]
 
 [tool.coverage.run]
 source = ["scopebench"]
+
+[tool.setuptools.package-data]
+scopebench = ["tool_registry.yaml", "templates/**/*.yaml", "templates/**/*.md"]

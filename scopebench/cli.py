@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 
@@ -13,7 +15,38 @@ from scopebench.scoring.calibration import CalibratedDecisionThresholds
 from scopebench.tracing.otel import init_tracing
 
 app = typer.Typer(add_completion=False, help="ScopeBench: plan-level proportionality enforcement.")
+template_app = typer.Typer(help="Domain template discovery and generation.")
+app.add_typer(template_app, name="template")
 console = Console()
+
+
+TEMPLATES_ROOT = Path(__file__).resolve().parent / "templates"
+
+
+def _template_domains() -> List[str]:
+    if not TEMPLATES_ROOT.exists():
+        return []
+    return sorted(p.name for p in TEMPLATES_ROOT.iterdir() if p.is_dir())
+
+
+def _read_yaml(path: Path) -> Dict[str, Any]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise typer.BadParameter(f"Template file {path} must contain a YAML mapping")
+    return raw
+
+
+def _resolve_template_name(name: str) -> Tuple[str, str]:
+    if "/" in name:
+        domain, kind = name.split("/", 1)
+    else:
+        domain, kind = name, "bundle"
+    if domain not in _template_domains():
+        available = ", ".join(_template_domains()) or "none"
+        raise typer.BadParameter(f"Unknown template domain '{domain}'. Available: {available}")
+    if kind not in {"bundle", "contract", "plan", "notes"}:
+        raise typer.BadParameter("Template kind must be one of: bundle, contract, plan, notes")
+    return domain, kind
 
 
 def _compact_payload(result) -> dict:
@@ -118,6 +151,50 @@ def _print_result(result, as_json: bool = False, compact_json: bool = False) -> 
         rationale = getattr(v, axis).rationale
         step_table.add_row(v.step_id or "", v.tool or "", axis, f"{val:.2f}", rationale[:60])
     console.print(step_table)
+
+
+@template_app.command("list")
+def template_list() -> None:
+    """List installed template domains and their available files."""
+    table = Table(title="Templates")
+    table.add_column("Domain")
+    table.add_column("Files")
+    for domain in _template_domains():
+        files = []
+        for filename in ("contract.yaml", "plan.yaml", "notes.md"):
+            if (TEMPLATES_ROOT / domain / filename).exists():
+                files.append(filename)
+        table.add_row(domain, ", ".join(files))
+    console.print(table)
+
+
+@template_app.command("show")
+def template_show(name: str = typer.Argument(..., help="Template name: <domain>[/kind]")) -> None:
+    """Show a template as YAML/markdown without modification."""
+    domain, kind = _resolve_template_name(name)
+    root = TEMPLATES_ROOT / domain
+
+    if kind == "notes":
+        console.print((root / "notes.md").read_text(encoding="utf-8"))
+        return
+    if kind == "contract":
+        console.print(yaml.safe_dump(_read_yaml(root / "contract.yaml"), sort_keys=False))
+        return
+    if kind == "plan":
+        console.print(yaml.safe_dump(_read_yaml(root / "plan.yaml"), sort_keys=False))
+        return
+
+    bundle = {
+        "contract": _read_yaml(root / "contract.yaml"),
+        "plan": _read_yaml(root / "plan.yaml"),
+    }
+    console.print(yaml.safe_dump(bundle, sort_keys=False))
+
+
+@template_app.command("generate")
+def template_generate(name: str = typer.Argument(..., help="Template name: <domain>[/kind]")) -> None:
+    """Generate valid YAML from a bundled template."""
+    template_show(name)
 
 
 @app.command()

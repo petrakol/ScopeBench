@@ -1,0 +1,13 @@
+task: Rotate shared production credentials with staged verification
+steps:
+  - id: "1"
+    description: Review current IAM bindings and secret consumers.
+    tool: analysis
+  - id: "2"
+    description: Rotate production credential in secret manager.
+    tool: secret_rotate
+    depends_on: ["1"]
+  - id: "3"
+    description: Execute runbook validation checks for service health.
+    tool: runbook_execute
+    depends_on: ["2"]

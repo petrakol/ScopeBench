@@ -1,0 +1,7 @@
+goal: Rotate shared production credentials with staged verification
+preset: enterprise
+forbidden_tool_categories: [payments]
+thresholds:
+  max_irreversibility: 0.45
+  max_power_concentration: 0.30
+  max_dependency_creation: 0.35

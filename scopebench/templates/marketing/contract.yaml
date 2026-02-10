@@ -1,0 +1,6 @@
+goal: Launch segmented outreach campaign with capped spend
+preset: team
+thresholds:
+  max_resource_intensity: 0.55
+  max_legal_exposure: 0.35
+  max_dependency_creation: 0.40
