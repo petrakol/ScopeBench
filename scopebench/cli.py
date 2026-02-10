@@ -134,13 +134,21 @@ def run(
     calibration_scale: float = typer.Option(
         1.0, "--calibration-scale", min=0.0, help="Scale aggregate scores."
     ),
+    policy_backend: str = typer.Option(
+        "python", "--policy-backend", help="Policy backend: python|opa|cedar."
+    ),
 ):
     """Evaluate a plan against a task contract and print ALLOW/ASK/DENY."""
     init_tracing(enable_console=otel_console)
     calibration = None
     if calibration_scale != 1.0:
         calibration = CalibratedDecisionThresholds(global_scale=calibration_scale)
-    res = evaluate_from_files(str(contract_path), str(plan_path), calibration=calibration)
+    res = evaluate_from_files(
+        str(contract_path),
+        str(plan_path),
+        calibration=calibration,
+        policy_backend=policy_backend,
+    )
     _print_result(res, as_json=json_out, compact_json=compact_json)
 
 
@@ -226,10 +234,13 @@ def weekly_calibrate(
 def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8080, "--port"),
+    policy_backend: str = typer.Option(
+        "python", "--policy-backend", help="Policy backend: python|opa|cedar."
+    ),
 ):
     """Start the ScopeBench HTTP API."""
     from scopebench.server.api import create_app
     import uvicorn
 
-    api = create_app()
+    api = create_app(default_policy_backend=policy_backend)
     uvicorn.run(api, host=host, port=port, log_level="info")

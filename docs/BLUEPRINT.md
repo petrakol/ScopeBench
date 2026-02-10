@@ -150,3 +150,9 @@ ScopeBench validates:
 2) Expand tool registry and domain templates
 3) Add calibrated uncertainty scoring (selective prediction/abstention)
 4) Build ScopeBench dataset + labeling rubric to drive CI gates
+
+## Policy backend architecture
+
+Policy evaluation now uses a pluggable backend interface (`python`, `opa`, `cedar`) selected via env/CLI/API.
+Responses include `policy_backend`, `policy_version`, and `policy_hash` for auditability.
+
