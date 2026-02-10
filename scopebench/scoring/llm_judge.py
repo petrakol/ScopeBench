@@ -3,16 +3,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Literal, Optional, Protocol
+from typing import Dict, Iterable, Literal, Optional, Protocol
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from scopebench.plan import PlanStep
 from scopebench.scoring.axes import AxisScore, ScopeVector
 from scopebench.scoring.cache import JudgeCache
-from scopebench.scoring.providers import EnvJSONProvider, LLMProvider
+from scopebench.scoring.providers import EnvJSONProvider, LLMProvider, ProviderResult
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"
+OUTPUT_SCHEMA_VERSION = "scopebench.llm_judge.v1"
 
 
 class JudgeTelemetry(BaseModel):
@@ -24,16 +25,33 @@ class JudgeTelemetry(BaseModel):
 
 
 class JudgeOutput(BaseModel):
-    spatial: AxisScore
-    temporal: AxisScore
-    depth: AxisScore
-    irreversibility: AxisScore
-    resource_intensity: AxisScore
-    legal_exposure: AxisScore
-    dependency_creation: AxisScore
-    stakeholder_radius: AxisScore
-    power_concentration: AxisScore
-    uncertainty: AxisScore
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["scopebench.llm_judge.v1"]
+    axes: "AxisBundle"
+
+
+class AxisOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: float = Field(..., ge=0.0, le=1.0)
+    rationale: str = Field(..., min_length=1)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+
+
+class AxisBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    spatial: AxisOutput
+    temporal: AxisOutput
+    depth: AxisOutput
+    irreversibility: AxisOutput
+    resource_intensity: AxisOutput
+    legal_exposure: AxisOutput
+    dependency_creation: AxisOutput
+    stakeholder_radius: AxisOutput
+    power_concentration: AxisOutput
+    uncertainty: AxisOutput
 
 
 class StepJudge(Protocol):
@@ -65,8 +83,35 @@ class NoopStepJudge:
 
 
 @dataclass
+class ProviderAgnosticClient:
+    providers: tuple[LLMProvider, ...]
+
+    def complete(self, prompt: str) -> "ProviderAttempt":
+        last_error: Optional[RuntimeError] = None
+        failures: list[str] = []
+        for provider in self.providers:
+            try:
+                result = provider.complete(prompt)
+                return ProviderAttempt(result=result, failures=tuple(failures))
+            except RuntimeError as exc:
+                last_error = exc
+                provider_name = type(provider).__name__
+                failures.append(f"{provider_name}:{type(exc).__name__}")
+
+        if last_error is not None:
+            raise RuntimeError("all_providers_failed") from last_error
+        raise RuntimeError("no_providers_configured")
+
+
+@dataclass(frozen=True)
+class ProviderAttempt:
+    result: ProviderResult
+    failures: tuple[str, ...] = ()
+
+
+@dataclass
 class LLMStepJudge:
-    provider: LLMProvider
+    provider_client: ProviderAgnosticClient
     cache: JudgeCache
     telemetry: JudgeTelemetry = field(
         default_factory=lambda: JudgeTelemetry(
@@ -82,9 +127,11 @@ class LLMStepJudge:
         tool_category: Optional[str],
         tool_priors: Dict[str, float],
     ) -> Optional[ScopeVector]:
-        prompt = build_prompt_v1(step, tool_category=tool_category, tool_priors=tool_priors)
+        self.telemetry.fallback_reason = None
+        prompt = build_prompt_v2(step, tool_category=tool_category, tool_priors=tool_priors)
         cache_payload = {
             "prompt_version": PROMPT_VERSION,
+            "prompt": prompt,
             "step_description": step.description,
             "tool": step.tool or "",
             "tool_category": tool_category or "",
@@ -99,11 +146,17 @@ class LLMStepJudge:
 
         self.telemetry.cache_hit = False
         try:
-            provider_result = self.provider.complete(prompt)
+            attempt = self.provider_client.complete(prompt)
+            provider_result = attempt.result
             self.telemetry.provider = provider_result.provider_name
+            if attempt.failures:
+                self.telemetry.fallback_reason = (
+                    "llm_judge_provider_retries:" + ",".join(attempt.failures)
+                )
             raw = json.loads(provider_result.raw_text)
+            vector = _parse_scope_vector(raw, step=step, tool_category=tool_category)
             self.cache.set(key, raw)
-            return _parse_scope_vector(raw, step=step, tool_category=tool_category)
+            return vector
         except (RuntimeError, json.JSONDecodeError, ValidationError) as exc:
             self.telemetry.fallback_reason = f"llm_judge_fallback:{type(exc).__name__}"
             return None
@@ -116,30 +169,44 @@ def _parse_scope_vector(
     tool_category: Optional[str],
 ) -> ScopeVector:
     parsed = JudgeOutput.model_validate(raw_payload)
+    weighted_axes = _confidence_weight_axes(parsed.axes)
     return ScopeVector(
         step_id=step.id,
         tool=step.tool,
         tool_category=tool_category,
-        spatial=parsed.spatial,
-        temporal=parsed.temporal,
-        depth=parsed.depth,
-        irreversibility=parsed.irreversibility,
-        resource_intensity=parsed.resource_intensity,
-        legal_exposure=parsed.legal_exposure,
-        dependency_creation=parsed.dependency_creation,
-        stakeholder_radius=parsed.stakeholder_radius,
-        power_concentration=parsed.power_concentration,
-        uncertainty=parsed.uncertainty,
+        **weighted_axes,
     )
 
 
-def build_prompt_v1(
+def _confidence_weight_axes(axes: AxisBundle) -> Dict[str, AxisScore]:
+    def _weight(axis: AxisOutput) -> AxisScore:
+        return AxisScore(
+            value=round(axis.value * axis.confidence, 6),
+            rationale=axis.rationale,
+            confidence=axis.confidence,
+        )
+
+    return {
+        "spatial": _weight(axes.spatial),
+        "temporal": _weight(axes.temporal),
+        "depth": _weight(axes.depth),
+        "irreversibility": _weight(axes.irreversibility),
+        "resource_intensity": _weight(axes.resource_intensity),
+        "legal_exposure": _weight(axes.legal_exposure),
+        "dependency_creation": _weight(axes.dependency_creation),
+        "stakeholder_radius": _weight(axes.stakeholder_radius),
+        "power_concentration": _weight(axes.power_concentration),
+        "uncertainty": _weight(axes.uncertainty),
+    }
+
+
+def build_prompt_v2(
     step: PlanStep,
     *,
     tool_category: Optional[str],
     tool_priors: Dict[str, float],
 ) -> str:
-    spec_path = Path(__file__).resolve().parent / "prompts" / "prompt_v1.md"
+    spec_path = Path(__file__).resolve().parent / "prompts" / "prompt_v2.md"
     spec = spec_path.read_text(encoding="utf-8").strip()
     payload = {
         "step_id": step.id,
@@ -152,17 +219,35 @@ def build_prompt_v1(
     return f"{spec}\n\nINPUT_JSON={context}\n"
 
 
+def build_prompt_v1(
+    step: PlanStep,
+    *,
+    tool_category: Optional[str],
+    tool_priors: Dict[str, float],
+) -> str:
+    return build_prompt_v2(step, tool_category=tool_category, tool_priors=tool_priors)
+
+
 JudgeMode = Literal["none", "heuristic", "llm"]
 
 
 def build_step_judge(
     mode: JudgeMode,
     *,
-    provider: Optional[LLMProvider] = None,
+    provider: Optional[LLMProvider | Iterable[LLMProvider]] = None,
     cache_path: Optional[str] = None,
 ) -> StepJudge:
     if mode in {"none", "heuristic"}:
         return NoopStepJudge(mode=mode)
-    chosen_provider = provider or EnvJSONProvider()
+    if provider is None:
+        providers = (EnvJSONProvider(),)
+    elif isinstance(provider, Iterable) and not isinstance(provider, (str, bytes)):
+        providers = tuple(provider)
+    else:
+        providers = (provider,)
+
+    if not providers:
+        providers = (EnvJSONProvider(),)
+
     cache = JudgeCache.from_path(cache_path)
-    return LLMStepJudge(provider=chosen_provider, cache=cache)
+    return LLMStepJudge(provider_client=ProviderAgnosticClient(providers=providers), cache=cache)
