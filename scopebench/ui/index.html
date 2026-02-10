@@ -102,6 +102,31 @@
       .case-item:last-child { border-bottom: none; }
       .case-item.active { background: #eff6ff; }
       .case-item:hover { background: #f8fafc; }
+      .dataset-wizard-steps {
+        display: grid;
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .dataset-wizard-step {
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        gap: 8px;
+        align-items: center;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .status-chip {
+        border-radius: 999px;
+        font-size: 12px;
+        padding: 2px 8px;
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        color: #334155;
+      }
+      .status-chip.done { background: #dcfce7; color: #166534; border-color: #86efac; }
+      .status-chip.running { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+      .status-chip.error { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
       @media (max-width: 900px) {
         .two-col { grid-template-columns: 1fr; }
       }
@@ -404,7 +429,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       <section class="card" style="margin-top: 16px">
         <h3>Dataset Contribution Draft</h3>
-        <p class="muted">Draft a new benchmark case, auto-suggest vectors, validate schema/calibration, then generate a JSONL contribution or PR-ready message.</p>
+        <p class="muted">Wizard flow: draft a case, auto-fill vectors via <code>/dataset/suggest</code>, validate with <code>/dataset/validate</code>, then export a ready-to-submit JSONL contribution.</p>
         <div class="field-grid">
           <label>Case ID<input id="dataset-case-id" type="text" value="community_case_001" /></label>
           <label>Domain<input id="dataset-domain" type="text" value="engineering" /></label>
@@ -418,7 +443,14 @@ Require rollback plan before high-irreversibility actions.</textarea>
         </div>
         <label>Instruction<input id="dataset-instruction" type="text" value="Fix flaky CI test" /></label>
         <label>Expected rationale<input id="dataset-expected-rationale" type="text" value="Scoped to local test stabilization with validation." /></label>
+        <div class="dataset-wizard-steps" id="dataset-wizard-steps">
+          <div class="dataset-wizard-step"><strong>1</strong><span>Build draft from contract + plan</span><span class="status-chip" id="dataset-step-build">pending</span></div>
+          <div class="dataset-wizard-step"><strong>2</strong><span>Auto-fill vectors from <code>/dataset/suggest</code></span><span class="status-chip" id="dataset-step-suggest">pending</span></div>
+          <div class="dataset-wizard-step"><strong>3</strong><span>Validate schema with <code>/dataset/validate</code></span><span class="status-chip" id="dataset-step-validate">pending</span></div>
+          <div class="dataset-wizard-step"><strong>4</strong><span>Generate ready-to-submit JSONL contribution</span><span class="status-chip" id="dataset-step-generate">pending</span></div>
+        </div>
         <div class="controls" style="margin: 10px 0">
+          <button id="dataset-run-wizard">Run full wizard</button>
           <button id="dataset-build" class="secondary">Build draft from contract+plan</button>
           <button id="dataset-validate-panel" class="secondary">Validate draft</button>
           <button id="dataset-suggest-panel" class="secondary">Auto-suggest vectors</button>
@@ -426,6 +458,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <button id="dataset-generate-pr" class="secondary">Generate PR text</button>
         </div>
         <textarea id="case-draft" style="min-height: 220px"></textarea>
+        <h4 style="margin: 8px 0 6px">Contribution file preview</h4>
+        <textarea id="dataset-contribution-file" style="min-height: 100px" readonly></textarea>
         <pre id="dataset-output"></pre>
       </section>
 
@@ -553,6 +587,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const datasetInstructionEl = el("dataset-instruction");
       const datasetExpectedDecisionEl = el("dataset-expected-decision");
       const datasetExpectedRationaleEl = el("dataset-expected-rationale");
+      const datasetContributionFileEl = el("dataset-contribution-file");
+      const datasetStepEls = {
+        build: el("dataset-step-build"),
+        suggest: el("dataset-step-suggest"),
+        validate: el("dataset-step-validate"),
+        generate: el("dataset-step-generate"),
+      };
       const suggestEffectsEl = el("suggest-effects");
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
@@ -612,6 +653,26 @@ Require rollback plan before high-irreversibility actions.</textarea>
         ]
       }, null, 2);
       syncDatasetFieldsFromDraft(JSON.parse(caseDraftEl.value));
+      datasetContributionFileEl.value = "";
+
+      function setDatasetWizardStep(step, status, text) {
+        const node = datasetStepEls[step];
+        if (!node) return;
+        node.classList.remove("done", "running", "error");
+        if (status === "done") node.classList.add("done");
+        if (status === "running") node.classList.add("running");
+        if (status === "error") node.classList.add("error");
+        node.textContent = text || status;
+      }
+
+      function resetDatasetWizardSteps() {
+        setDatasetWizardStep("build", "pending", "pending");
+        setDatasetWizardStep("suggest", "pending", "pending");
+        setDatasetWizardStep("validate", "pending", "pending");
+        setDatasetWizardStep("generate", "pending", "pending");
+      }
+
+      resetDatasetWizardSteps();
 
       function decisionBadge(decision) { const n = String(decision || "").toLowerCase(); const cls = n === "allow" ? "allow" : n === "ask" ? "ask" : "deny"; return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`; }
       function toMagnitude(v) { return MAGNITUDE[Math.max(0, Math.min(MAGNITUDE.length - 1, Math.round(Number(v || 0) * 4)))]; }
@@ -1422,6 +1483,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderCalibrationControls(entry);
       }
       async function validateCaseDraft() {
+        setDatasetWizardStep("validate", "running", "running");
         const payload = { case: JSON.parse(caseDraftEl.value) };
         const res = await fetch("/dataset/validate", {
           method: "POST",
@@ -1430,10 +1492,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setDatasetWizardStep("validate", "done", `valid (${data.case_id})`);
         datasetOutputEl.textContent = `Validation OK for case: ${data.case_id}`;
       }
 
       async function suggestCaseVectors() {
+        setDatasetWizardStep("suggest", "running", "running");
         const contract = JSON.parse(contractEl.value);
         const plan = JSON.parse(planEl.value);
         const draft = JSON.parse(caseDraftEl.value);
@@ -1456,6 +1520,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         caseDraftEl.value = JSON.stringify(data.case, null, 2);
         syncDatasetFieldsFromDraft(data.case);
+        setDatasetWizardStep("suggest", "done", "vectors filled");
         datasetOutputEl.textContent = "Suggested vectors loaded into draft.";
       }
 
@@ -1478,6 +1543,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           notes: existing.notes || null,
         };
         caseDraftEl.value = JSON.stringify(next, null, 2);
+        setDatasetWizardStep("build", "done", "draft ready");
         return next;
       }
 
@@ -1492,7 +1558,29 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       function generateDatasetJsonlLine() {
         const draft = buildCaseDraftFromInputs();
-        datasetOutputEl.textContent = JSON.stringify(draft);
+        const jsonlLine = JSON.stringify(draft);
+        datasetContributionFileEl.value = `${jsonlLine}\n`;
+        setDatasetWizardStep("generate", "done", "jsonl ready");
+        datasetOutputEl.textContent = jsonlLine;
+      }
+
+      async function runDatasetContributionWizard() {
+        resetDatasetWizardSteps();
+        datasetContributionFileEl.value = "";
+        try {
+          setDatasetWizardStep("build", "running", "running");
+          buildCaseDraftFromInputs();
+          await suggestCaseVectors();
+          await validateCaseDraft();
+          generateDatasetJsonlLine();
+          datasetOutputEl.textContent = "Wizard complete: draft built, vectors suggested, validation passed, contribution file generated.";
+        } catch (err) {
+          if (datasetStepEls.build.textContent === "running") setDatasetWizardStep("build", "error", "error");
+          if (datasetStepEls.suggest.textContent === "running") setDatasetWizardStep("suggest", "error", "error");
+          if (datasetStepEls.validate.textContent === "running") setDatasetWizardStep("validate", "error", "error");
+          if (datasetStepEls.generate.textContent === "running") setDatasetWizardStep("generate", "error", "error");
+          throw err;
+        }
       }
 
       function generateDatasetPrText() {
@@ -1554,22 +1642,25 @@ ${body}`;
       }));
       el("dataset-build").addEventListener("click", () => {
         try { buildCaseDraftFromInputs(); datasetOutputEl.textContent = "Draft rebuilt from current contract + plan."; }
-        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; }
+        catch (err) { setDatasetWizardStep("build", "error", "error"); datasetOutputEl.textContent = `Draft build error: ${err.message}`; }
       });
       el("dataset-validate-panel").addEventListener("click", () => {
         try { buildCaseDraftFromInputs(); }
         catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
-        validateCaseDraft().catch((err) => { datasetOutputEl.textContent = `Validation error: ${err.message}`; });
+        validateCaseDraft().catch((err) => { setDatasetWizardStep("validate", "error", "error"); datasetOutputEl.textContent = `Validation error: ${err.message}`; });
       });
       el("dataset-suggest-panel").addEventListener("click", () => {
         try { buildCaseDraftFromInputs(); }
         catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
-        suggestCaseVectors().catch((err) => { datasetOutputEl.textContent = `Suggestion error: ${err.message}`; });
+        suggestCaseVectors().catch((err) => { setDatasetWizardStep("suggest", "error", "error"); datasetOutputEl.textContent = `Suggestion error: ${err.message}`; });
       });
       el("dataset-generate-file").addEventListener("click", () => {
         try { generateDatasetJsonlLine(); }
-        catch (err) { datasetOutputEl.textContent = `Generate file error: ${err.message}`; }
+        catch (err) { setDatasetWizardStep("generate", "error", "error"); datasetOutputEl.textContent = `Generate file error: ${err.message}`; }
       });
+      el("dataset-run-wizard").addEventListener("click", () => runDatasetContributionWizard().catch((err) => {
+        datasetOutputEl.textContent = `Wizard error: ${err.message}`;
+      }));
       el("dataset-generate-pr").addEventListener("click", () => {
         try { generateDatasetPrText(); }
         catch (err) { datasetOutputEl.textContent = `Generate PR text error: ${err.message}`; }
