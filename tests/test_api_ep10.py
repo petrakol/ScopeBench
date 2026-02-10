@@ -378,3 +378,29 @@ def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) ->
     uninstall_result = _endpoint(app_after_install, "/plugins/uninstall")({"source_path": str(target_path)})
     assert uninstall_result["ok"] is True
     assert target_path.exists() is False
+
+
+def test_plugin_wizard_and_lint_endpoints() -> None:
+    app = create_app()
+
+    schema = _endpoint(app, "/plugins/schema")()
+    assert "required" in schema
+
+    payload = {
+        "domain": "robotics",
+        "publisher": "community",
+        "name": "robotics-starter",
+        "version": "0.1.0",
+        "tools": ["move_arm"],
+        "effects_mappings": [{"trigger": "move_arm", "axes": {"irreversibility": 0.5}}],
+        "policy_rule_templates": ["Require operator approval before actuation."],
+        "key_id": "community-main",
+        "secret": "supersecret",
+    }
+    generated = _endpoint(app, "/plugins/wizard/generate")(payload).model_dump()
+    assert generated["ok"] is True
+    assert generated["bundle"]["signature"]["key_id"] == "community-main"
+
+    linted = _endpoint(app, "/plugins/lint")(generated["bundle"])
+    assert linted["ok"] is True
+    assert linted["errors"] == []

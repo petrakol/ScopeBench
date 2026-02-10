@@ -109,3 +109,38 @@ def test_cli_template_wizard_non_interactive() -> None:
     assert "Generate baseline de-identification workflow" in result.stdout
     assert "domain: health" in result.stdout
     assert "preset: regulated" in result.stdout
+
+
+def test_cli_plugin_generate_and_lint(tmp_path: Path) -> None:
+    runner = CliRunner()
+    out = tmp_path / "robotics-plugin.yaml"
+
+    generated = runner.invoke(
+        app,
+        [
+            "plugin-generate",
+            "--non-interactive",
+            "--out",
+            str(out),
+            "--domain",
+            "robotics",
+            "--publisher",
+            "community",
+            "--name",
+            "robotics-starter",
+            "--tools",
+            "move_arm,scan_area",
+            "--effect-mappings",
+            "1",
+            "--policy-rules",
+            "1",
+            "--secret",
+            "secret",
+        ],
+    )
+    assert generated.exit_code == 0
+    assert out.exists()
+
+    linted = runner.invoke(app, ["plugin-lint", str(out)])
+    assert linted.exit_code == 0
+    assert "passed" in linted.stdout.lower()

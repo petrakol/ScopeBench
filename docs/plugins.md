@@ -121,6 +121,34 @@ cases:
 3. Publish the bundle file in a repository release and include provenance metadata.
 4. Submit to community marketplace index (below).
 
+## Skeleton generator, signing, and linting
+
+Use the CLI wizard to scaffold a signed plugin bundle:
+
+```bash
+scopebench plugin-generate --out plugins/robotics-starter.yaml
+```
+
+The wizard asks for:
+
+- domain name
+- plugin tool list
+- effect mappings
+- policy rule templates
+- signing key metadata (`key_id`, shared secret)
+
+Validate schema correctness before publishing:
+
+```bash
+scopebench plugin-lint plugins/robotics-starter.yaml
+```
+
+The UI now includes **Plugin Authoring Wizard** at `/ui` and API endpoints:
+
+- `POST /plugins/wizard/generate` → generate + sign a skeleton bundle
+- `POST /plugins/lint` → lint arbitrary bundle payloads
+- `GET /plugins/schema` → lightweight schema requirements reference
+
 ## Publishing guidelines
 
 - Semantic version your bundle (`MAJOR.MINOR.PATCH`).

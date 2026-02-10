@@ -305,6 +305,12 @@ ScopeBench supports runtime plugin bundles for third-party tool catalogs, datase
 
 See [`docs/plugins.md`](docs/plugins.md) for authoring/signing/publishing guidance and [`docs/plugin_marketplace.yaml`](docs/plugin_marketplace.yaml) for community domain listings (robotics, biotech, supply-chain, and more).
 
+Plugin scaffolding and linting are available via CLI and UI:
+
+- `scopebench plugin-generate --out plugin.yaml` (interactive skeleton + signing)
+- `scopebench plugin-lint plugin.yaml` (schema lint checks)
+- `/ui` → **Plugin Authoring Wizard** for guided bundle generation
+
 ---
 
 ## Examples Included

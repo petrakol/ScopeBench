@@ -35,6 +35,7 @@ from scopebench.scoring.calibration import (
 from scopebench.scoring.effects_annotator import suggest_effects_for_plan
 from scopebench.scoring.llm_judge import JudgeMode
 from scopebench.tracing.otel import init_tracing
+from scopebench.plugins import lint_plugin_bundle, sign_plugin_bundle
 
 app = typer.Typer(add_completion=False, help="ScopeBench: plan-level proportionality enforcement.")
 template_app = typer.Typer(help="Domain template discovery and generation.")
@@ -711,6 +712,132 @@ def serve(
 
     api = create_app(default_policy_backend=policy_backend)
     uvicorn.run(api, host=host, port=port, log_level="info")
+
+
+
+
+@app.command("plugin-lint")
+def plugin_lint(
+    bundle_path: Path = typer.Argument(..., help="Path to plugin bundle JSON/YAML to validate."),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Lint a plugin bundle against the plugin schema."""
+    raw = yaml.safe_load(bundle_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise typer.BadParameter("Plugin bundle must be a YAML/JSON object")
+    errors = lint_plugin_bundle(raw)
+    payload = {"ok": not errors, "path": str(bundle_path), "errors": errors}
+    if json_out:
+        console.print_json(json.dumps(payload))
+    else:
+        if errors:
+            console.print(f"[bold red]Plugin lint failed[/bold red] ({len(errors)} errors)")
+            for err in errors:
+                console.print(f" - {err}")
+            raise typer.Exit(code=1)
+        console.print(f"[bold green]Plugin lint passed[/bold green]: {bundle_path}")
+
+
+@app.command("plugin-generate")
+def plugin_generate(
+    output_path: Path = typer.Option(Path("plugin_bundle.yaml"), "--out", help="Output bundle path."),
+    domain: str | None = typer.Option(None, "--domain", help="Plugin domain (e.g., robotics)."),
+    publisher: str | None = typer.Option(None, "--publisher", help="Publisher/org name."),
+    plugin_name: str | None = typer.Option(None, "--name", help="Bundle name."),
+    version: str = typer.Option("0.1.0", "--version", help="Semver bundle version."),
+    tools_csv: str | None = typer.Option(None, "--tools", help="Comma-separated tool ids."),
+    effect_mappings: int = typer.Option(1, "--effect-mappings", min=0, help="Number of effect mappings to scaffold."),
+    policy_rules: int = typer.Option(1, "--policy-rules", min=0, help="Number of policy rules to scaffold."),
+    key_id: str = typer.Option("community-main", "--key-id", help="Signing key id."),
+    secret: str | None = typer.Option(None, "--secret", help="Signing shared secret (omit for prompt)."),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Require explicit flags and skip prompts."),
+):
+    """Interactive plugin skeleton generator and signer."""
+
+    picked_domain = domain or (domain if non_interactive else typer.prompt("Plugin domain", default="robotics"))
+    picked_publisher = publisher or (publisher if non_interactive else typer.prompt("Publisher", default="community"))
+    picked_name = plugin_name or (plugin_name if non_interactive else typer.prompt("Bundle name", default=f"{picked_domain}-starter"))
+
+    if non_interactive and (not domain or not publisher or not plugin_name):
+        raise typer.BadParameter("--non-interactive requires --domain, --publisher, and --name")
+
+    tool_values = tools_csv
+    if tool_values is None and not non_interactive:
+        tool_values = typer.prompt("Tool ids (comma-separated)", default="analysis_extension")
+    tools = [item.strip() for item in (tool_values or "").split(",") if item.strip()]
+
+    mappings = []
+    for idx in range(effect_mappings):
+        if non_interactive:
+            trigger = tools[idx] if idx < len(tools) else f"tool_{idx+1}"
+        else:
+            trigger = typer.prompt(f"Effect mapping {idx+1} trigger", default=tools[idx] if idx < len(tools) else f"tool_{idx+1}")
+        mappings.append({"trigger": trigger, "axes": {"uncertainty": 0.4, "irreversibility": 0.3}})
+
+    rules = []
+    for idx in range(policy_rules):
+        default_rule = f"{picked_domain}.rule_{idx+1}"
+        rule_id = default_rule if non_interactive else typer.prompt(f"Policy rule {idx+1} id", default=default_rule)
+        rules.append({"id": rule_id, "when": {"tool_category": f"{picked_domain}_operations"}, "action": "ASK", "template": "Require operator review + rollback plan."})
+
+    bundle = {
+        "name": picked_name,
+        "version": version,
+        "publisher": picked_publisher,
+        "contributions": {
+            "tool_categories": {
+                f"{picked_domain}_operations": {
+                    "description": f"Operations for {picked_domain} plugins"
+                }
+            },
+            "effects_mappings": mappings,
+            "scoring_axes": {
+                f"{picked_domain}_safety": {"description": f"Safety/risk axis for {picked_domain}"}
+            },
+            "policy_rules": rules,
+        },
+        "tools": {},
+        "cases": [],
+        "metadata": {
+            "publish_guidance": [
+                "Run `scopebench plugin-lint <bundle>` and `scopebench plugin-harness <bundle>` before release.",
+                "Version with semver and publish immutable release artifacts.",
+                "Submit listing update to docs/plugin_marketplace.yaml via PR.",
+            ]
+        },
+    }
+
+    for tool in tools:
+        bundle["tools"][tool] = {
+            "category": f"{picked_domain}_operations",
+            "domains": [picked_domain],
+            "risk_class": "moderate",
+            "priors": {"uncertainty": 0.3, "dependency_creation": 0.2},
+        }
+
+    lint_errors = lint_plugin_bundle(bundle)
+    if lint_errors:
+        raise typer.BadParameter("Generated bundle did not pass lint: " + "; ".join(lint_errors))
+
+    signing_secret = secret
+    if signing_secret is None:
+        if non_interactive:
+            raise typer.BadParameter("--non-interactive requires --secret")
+        signing_secret = typer.prompt("Signing secret", hide_input=True)
+
+    signed_bundle = sign_plugin_bundle(bundle, key_id=key_id, secret=signing_secret)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(yaml.safe_dump(signed_bundle, sort_keys=False), encoding="utf-8")
+
+    console.print_json(json.dumps({
+        "ok": True,
+        "output_path": str(output_path),
+        "name": picked_name,
+        "domain": picked_domain,
+        "tools": tools,
+        "lint_errors": [],
+        "publish_guidance": bundle["metadata"]["publish_guidance"],
+    }))
 
 
 @app.command("plugin-harness")
