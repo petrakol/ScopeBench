@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from scopebench.contracts import TaskContract
-from scopebench.plan import PlanDAG, PlanStep
 from scopebench.plan import EffectMagnitude, EffectSpec, PlanDAG, PlanStep
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector, SCOPE_AXES
 from scopebench.scoring.knee import KneeFlag, detect_knees
@@ -31,6 +30,44 @@ class ToolInfo:
 
 
 
+
+
+_KG_MACRO_CONSEQUENCE_MAP: Dict[str, Dict[str, str]] = {
+    "grid_stability": {"axis": "resources", "channel": "infrastructure"},
+    "carbon_emissions": {"axis": "resources", "channel": "climate"},
+    "water_stress": {"axis": "resources", "channel": "environment"},
+    "data_protection_enforcement": {"axis": "legal", "channel": "regulatory"},
+    "cross_border_transfer_risk": {"axis": "legal", "channel": "jurisdiction"},
+    "consumer_harm": {"axis": "stakeholders", "channel": "market"},
+    "public_trust": {"axis": "stakeholders", "channel": "social"},
+    "civic_service_disruption": {"axis": "stakeholders", "channel": "societal"},
+    "lock_in_path_dependence": {"axis": "irreversible_actions", "channel": "structural"},
+    "regional_spillover": {"axis": "geo_scope", "channel": "spatial"},
+    "long_term_policy_liability": {"axis": "time_horizon", "channel": "temporal"},
+}
+
+_KG_STEP_PATTERNS: List[Tuple[re.Pattern, str, str]] = [
+    (re.compile(r"\b(datacenter|compute cluster|gpu cluster|power plant|grid)\b", re.I), "grid_stability", "infrastructure-scale compute and energy demand"),
+    (re.compile(r"\b(carbon|emission|climate|energy intensive)\b", re.I), "carbon_emissions", "long-tail climate externalities"),
+    (re.compile(r"\b(water|cooling)\b", re.I), "water_stress", "resource demands on local utilities"),
+    (re.compile(r"\b(gdpr|hipaa|pci|sox|regulation|compliance)\b", re.I), "data_protection_enforcement", "regulated handling path"),
+    (re.compile(r"\b(cross-border|international transfer|data export)\b", re.I), "cross_border_transfer_risk", "multi-jurisdiction transfer path"),
+    (re.compile(r"\b(financial advice|medical advice|autonomous decision|credit decision)\b", re.I), "consumer_harm", "direct downstream human impact"),
+    (re.compile(r"\b(public|customers|all users|community|society)\b", re.I), "public_trust", "broad trust and legitimacy impact"),
+    (re.compile(r"\b(citywide|statewide|nationwide|critical service)\b", re.I), "civic_service_disruption", "affects public-facing services"),
+    (re.compile(r"\b(immutable|ledger|schema migration|decommission|delete)\b", re.I), "lock_in_path_dependence", "changes are costly to reverse"),
+    (re.compile(r"\b(global|worldwide|international|multi-region)\b", re.I), "regional_spillover", "effects may spill across regions"),
+    (re.compile(r"\b(multi-year|decade|permanent|long-term)\b", re.I), "long_term_policy_liability", "effects persist beyond immediate window"),
+]
+
+_EFFECT_AXIS_KEYWORDS = {
+    "resource_intensity": ["resource", "compute", "energy", "capacity", "consumption"],
+    "legal_exposure": ["legal", "regulatory", "compliance", "jurisdiction", "liability"],
+    "stakeholder_radius": ["stakeholder", "customer", "patient", "public", "community"],
+    "irreversibility": ["irreversible", "permanent", "rollback", "immutable", "lock-in"],
+    "spatial": ["region", "global", "local", "cross-border", "site"],
+    "temporal": ["time", "horizon", "long-term", "multi-year", "persistent"],
+}
 _MAGNITUDE_TO_VALUE = {
     EffectMagnitude.NONE: 0.0,
     EffectMagnitude.LOW: 0.25,
@@ -72,16 +109,102 @@ def _effect_axis_value(step: PlanStep, axis: str) -> Optional[AxisScore]:
     return AxisScore(
         value=float(_MAGNITUDE_TO_VALUE[effect.magnitude]),
         rationale=f"{rationale}{details}",
-        confidence=0.95,
+        confidence=_effect_confidence_from_rationale(effect.rationale),
     )
 
 
+
+
+def _effect_confidence_from_rationale(rationale: Optional[str], base: float = 0.95) -> float:
+    if not rationale:
+        return base
+    lowered = rationale.lower()
+    hints = sum(1 for terms in _EFFECT_AXIS_KEYWORDS.values() if any(t in lowered for t in terms))
+    return min(0.99, base + (0.02 * hints))
+
+
+def _macro_consequences_for_step(step: PlanStep) -> List[Dict[str, Any]]:
+    text = step.description or ""
+    seen: set[str] = set()
+    consequences: List[Dict[str, Any]] = []
+    for pattern, concept, reason in _KG_STEP_PATTERNS:
+        if not pattern.search(text) or concept in seen:
+            continue
+        meta = _KG_MACRO_CONSEQUENCE_MAP.get(concept, {})
+        consequences.append({
+            "concept": concept,
+            "channel": meta.get("channel", "systemic"),
+            "confidence": 0.74,
+            "rationale": f"kg:{meta.get('axis', 'unknown')} ({reason})",
+        })
+        seen.add(concept)
+    return consequences
+
+
+def _merge_macro_consequences(step: PlanStep) -> PlanStep:
+    if step.effects is None:
+        return step
+    inferred = _macro_consequences_for_step(step)
+    if not inferred:
+        return step
+    existing = {item.concept for item in step.effects.macro_consequences}
+    merged = list(step.effects.macro_consequences)
+    for consequence in inferred:
+        if consequence["concept"] in existing:
+            continue
+        merged.append(consequence)
+    payload = step.effects.model_dump()
+    payload["macro_consequences"] = merged
+    new_effects = EffectSpec.model_validate(payload)
+    return step.model_copy(update={"effects": new_effects})
+
+
+def _macro_axis_value(step: PlanStep, axis: str) -> Optional[AxisScore]:
+    if step.effects is None or not step.effects.macro_consequences:
+        return None
+    axis_map = {
+        "resource_intensity": "resources",
+        "legal_exposure": "legal",
+        "stakeholder_radius": "stakeholders",
+        "irreversibility": "irreversible_actions",
+        "spatial": "geo_scope",
+        "temporal": "time_horizon",
+    }
+    target = axis_map.get(axis)
+    candidates = [
+        c for c in step.effects.macro_consequences if _KG_MACRO_CONSEQUENCE_MAP.get(c.concept, {}).get("axis") == target
+    ]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda c: c.confidence)
+    value = min(1.0, max(0.0, 0.35 + (0.6 * best.confidence)))
+    details = f" ({best.rationale})" if best.rationale else ""
+    return AxisScore(
+        value=float(value),
+        rationale=f"effects.macro_consequences[{best.concept}]{details}",
+        confidence=float(best.confidence),
+    )
 def _to_effect_spec(default_effects: Dict[str, Any]) -> Optional[EffectSpec]:
     if not default_effects:
         return None
 
     if "version" in default_effects:
         return EffectSpec.model_validate(default_effects)
+
+    structured = {
+        "resources": default_effects.get("resources"),
+        "legal": default_effects.get("legal"),
+        "stakeholders": default_effects.get("stakeholders"),
+        "irreversible_actions": default_effects.get("irreversible_actions"),
+        "geo_scope": default_effects.get("geo_scope"),
+        "time_horizon": default_effects.get("time_horizon"),
+        "macro_consequences": default_effects.get("macro_consequences"),
+    }
+    has_structured = any(v for v in structured.values())
+    if has_structured:
+        payload = {"version": "effects_v1"}
+        payload.update({k: v for k, v in structured.items() if v})
+        return EffectSpec.model_validate(payload)
 
     keys = {str(k) for k, v in default_effects.items() if v}
     if not keys:
@@ -169,16 +292,19 @@ def _to_effect_spec(default_effects: Dict[str, Any]) -> Optional[EffectSpec]:
             "rationale": "derived from tool default_effects",
         }
 
+    if "macro_consequences" not in effects:
+        effects["macro_consequences"] = []
+
     return EffectSpec.model_validate(effects)
 
 
 def _merge_effects(step: PlanStep, tool_info: Optional[ToolInfo]) -> PlanStep:
-    if step.effects is not None or tool_info is None or not tool_info.default_effects:
-        return step
-    inferred = _to_effect_spec(tool_info.default_effects)
-    if inferred is None:
-        return step
-    return step.model_copy(update={"effects": inferred})
+    merged_step = step
+    if step.effects is None and tool_info is not None and tool_info.default_effects:
+        inferred = _to_effect_spec(tool_info.default_effects)
+        if inferred is not None:
+            merged_step = step.model_copy(update={"effects": inferred})
+    return _merge_macro_consequences(merged_step)
 
 class ToolRegistry:
     def __init__(self, tools: Dict[str, ToolInfo]):
@@ -532,6 +658,12 @@ def score_step(step: PlanStep, tool_registry: ToolRegistry) -> ScopeVector:
         "stakeholder_radius": stakeholder_radius,
     }
     for axis, axis_score in effect_axes.items():
+        macro_override = _macro_axis_value(step, axis)
+        if macro_override is not None:
+            axis_score.value = max(axis_score.value, macro_override.value)
+            axis_score.rationale = macro_override.rationale
+            axis_score.confidence = macro_override.confidence
+
         effect_override = _effect_axis_value(step, axis)
         if effect_override is not None:
             axis_score.value = effect_override.value

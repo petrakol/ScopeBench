@@ -1090,3 +1090,54 @@ def test_tool_default_effects_are_used_when_step_effects_missing():
     vec = score_step(plan.steps[0], registry)
     assert vec.legal_exposure.value >= 0.8
     assert "effects.legal.magnitude" in vec.legal_exposure.rationale
+
+
+def test_tool_registry_declares_default_effects_for_every_tool():
+    registry = ToolRegistry.load_default()
+    for tool_name, tool_info in registry._tools.items():
+        assert tool_info.default_effects, f"tool {tool_name} missing default_effects"
+
+
+def test_macro_consequence_inference_from_step_text_maps_to_axes():
+    registry = ToolRegistry.load_default()
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Macro consequence mapping",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Provision a new compute cluster for multi-year global service rollout",
+                    "tool": "analysis",
+                    "effects": {
+                        "version": "effects_v1",
+                        "resources": {
+                            "magnitude": "low",
+                            "rationale": "manual control plane only",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    vec = score_step(plan.steps[0], registry)
+    assert "effects.macro_consequences" in vec.spatial.rationale
+    assert "effects.resources.magnitude" in vec.resource_intensity.rationale
+
+
+def test_structured_default_effects_v1_shape_is_respected():
+    registry = ToolRegistry.load_default()
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Structured defaults",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Proceed with operation.",
+                    "tool": "infra_provision",
+                }
+            ],
+        }
+    )
+    vec = score_step(plan.steps[0], registry)
+    assert vec.resource_intensity.value >= 0.95
+    assert "effects.resources.magnitude" in vec.resource_intensity.rationale

@@ -8,6 +8,32 @@ tools:
       legal_exposure: 0.05
       dependency_creation: 0.0
       power_concentration: 0.0
+    default_effects:
+      resources:
+        magnitude: low
+        kinds:
+        - compute
+        rationale: analysis-only workload
+      stakeholders:
+        magnitude: low
+        groups:
+        - operator
+        rationale: typically local analytic impact
+      geo_scope:
+        magnitude: low
+        regions:
+        - single-site
+        rationale: local execution
+      time_horizon:
+        magnitude: low
+        horizons:
+        - hours-days
+        rationale: short-lived effects
+      macro_consequences:
+      - concept: public_trust
+        channel: social
+        confidence: 0.25
+        rationale: usually minimal unless published
   web_search:
     category: web
     priors:
@@ -17,6 +43,32 @@ tools:
       legal_exposure: 0.1
       dependency_creation: 0.0
       power_concentration: 0.0
+    default_effects:
+      legal:
+        magnitude: medium
+        regimes:
+        - terms-of-service
+        rationale: subject to crawling and content-use policies
+      stakeholders:
+        magnitude: low
+        groups:
+        - external-publishers
+        rationale: queries external systems
+      geo_scope:
+        magnitude: medium
+        regions:
+        - multi-region internet
+        rationale: internet-wide retrieval surface
+      time_horizon:
+        magnitude: low
+        horizons:
+        - session
+        rationale: transient discovery effects
+      macro_consequences:
+      - concept: public_trust
+        channel: social
+        confidence: 0.35
+        rationale: retrieval quality influences downstream claims
   web_browser:
     category: web
     priors:
@@ -26,6 +78,34 @@ tools:
       legal_exposure: 0.15
       dependency_creation: 0.05
       power_concentration: 0.0
+    default_effects:
+      legal:
+        magnitude: medium
+        regimes:
+        - terms-of-service
+        - copyright
+        rationale: navigates third-party content and terms
+      stakeholders:
+        magnitude: medium
+        groups:
+        - external-publishers
+        - users
+        rationale: interaction with public content can influence user outcomes
+      geo_scope:
+        magnitude: medium
+        regions:
+        - internet
+        rationale: multi-site browsing footprint
+      time_horizon:
+        magnitude: low
+        horizons:
+        - session
+        rationale: primarily immediate effects
+      macro_consequences:
+      - concept: public_trust
+        channel: social
+        confidence: 0.4
+        rationale: content provenance affects societal confidence
   api_request:
     category: web
     priors:
@@ -35,6 +115,40 @@ tools:
       legal_exposure: 0.15
       dependency_creation: 0.1
       power_concentration: 0.05
+    default_effects:
+      resources:
+        magnitude: medium
+        kinds:
+        - network
+        - third-party compute
+        rationale: external API utilization
+      legal:
+        magnitude: medium
+        regimes:
+        - api-terms
+        - data-processing
+        rationale: cross-org data handling obligations
+      stakeholders:
+        magnitude: medium
+        groups:
+        - service-providers
+        - end-users
+        rationale: request outcomes can affect external parties
+      geo_scope:
+        magnitude: medium
+        regions:
+        - cross-region
+        rationale: API infra spans regions
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - days-weeks
+        rationale: side effects may persist in downstream systems
+      macro_consequences:
+      - concept: cross_border_transfer_risk
+        channel: jurisdiction
+        confidence: 0.5
+        rationale: API calls can move data across jurisdictions
   shell:
     category: exec
     priors:
@@ -44,6 +158,44 @@ tools:
       legal_exposure: 0.1
       dependency_creation: 0.15
       power_concentration: 0.05
+    default_effects:
+      resources:
+        magnitude: medium
+        kinds:
+        - host-compute
+        - disk
+        rationale: direct host operations
+      legal:
+        magnitude: low
+        regimes:
+        - internal-policy
+        rationale: may touch governed systems
+      stakeholders:
+        magnitude: medium
+        groups:
+        - operators
+        - team
+        rationale: system-level changes can affect collaborators
+      irreversible_actions:
+        magnitude: medium
+        actions:
+        - filesystem-mutation
+        rationale: command execution may be hard to undo
+      geo_scope:
+        magnitude: low
+        regions:
+        - single-environment
+        rationale: host-local by default
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - days-months
+        rationale: config mutations can persist
+      macro_consequences:
+      - concept: lock_in_path_dependence
+        channel: structural
+        confidence: 0.45
+        rationale: operational scripts can entrench workflows
   python:
     category: exec
     priors:
@@ -53,6 +205,44 @@ tools:
       legal_exposure: 0.1
       dependency_creation: 0.1
       power_concentration: 0.05
+    default_effects:
+      resources:
+        magnitude: medium
+        kinds:
+        - compute
+        - memory
+        rationale: code execution consumes runtime resources
+      legal:
+        magnitude: low
+        regimes:
+        - internal-policy
+        rationale: depends on accessed data
+      stakeholders:
+        magnitude: medium
+        groups:
+        - operators
+        - users
+        rationale: automation may affect downstream users
+      irreversible_actions:
+        magnitude: low
+        actions:
+        - state-mutation
+        rationale: state changes possible when writing outputs
+      geo_scope:
+        magnitude: low
+        regions:
+        - single-environment
+        rationale: local runtime unless networked
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - days-weeks
+        rationale: generated artifacts can persist
+      macro_consequences:
+      - concept: lock_in_path_dependence
+        channel: structural
+        confidence: 0.35
+        rationale: automation can become sticky process debt
   file_read:
     category: swe
     priors:
@@ -62,6 +252,37 @@ tools:
       legal_exposure: 0.05
       dependency_creation: 0.0
       power_concentration: 0.0
+    default_effects:
+      resources:
+        magnitude: low
+        kinds:
+        - io
+        rationale: read-only disk access
+      legal:
+        magnitude: medium
+        regimes:
+        - data-governance
+        rationale: may expose governed data
+      stakeholders:
+        magnitude: low
+        groups:
+        - data-owners
+        rationale: read access touches owned assets
+      geo_scope:
+        magnitude: low
+        regions:
+        - single-environment
+        rationale: local filesystem scope
+      time_horizon:
+        magnitude: low
+        horizons:
+        - session
+        rationale: read operations are transient
+      macro_consequences:
+      - concept: data_protection_enforcement
+        channel: regulatory
+        confidence: 0.4
+        rationale: sensitive data access pathways matter
   file_write:
     category: swe
     priors:
@@ -71,6 +292,44 @@ tools:
       legal_exposure: 0.1
       dependency_creation: 0.15
       power_concentration: 0.05
+    default_effects:
+      resources:
+        magnitude: medium
+        kinds:
+        - io
+        - storage
+        rationale: persistent artifact creation
+      legal:
+        magnitude: medium
+        regimes:
+        - records-policy
+        rationale: written data may become governed record
+      stakeholders:
+        magnitude: medium
+        groups:
+        - maintainers
+        - users
+        rationale: changes affect collaborators and consumers
+      irreversible_actions:
+        magnitude: medium
+        actions:
+        - state-mutation
+        rationale: writes may require manual rollback
+      geo_scope:
+        magnitude: low
+        regions:
+        - single-environment
+        rationale: local artifact footprint
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - weeks-months
+        rationale: file changes persist
+      macro_consequences:
+      - concept: lock_in_path_dependence
+        channel: structural
+        confidence: 0.5
+        rationale: persistent changes can constrain future options
   database_query:
     category: data
     priors:
@@ -80,6 +339,39 @@ tools:
       legal_exposure: 0.2
       dependency_creation: 0.15
       power_concentration: 0.1
+    default_effects:
+      resources:
+        magnitude: medium
+        kinds:
+        - database-compute
+        rationale: query load on shared data systems
+      legal:
+        magnitude: high
+        regimes:
+        - data-governance
+        - privacy
+        rationale: queries often involve sensitive records
+      stakeholders:
+        magnitude: medium
+        groups:
+        - data-subjects
+        - analysts
+        rationale: data usage influences people represented in records
+      geo_scope:
+        magnitude: medium
+        regions:
+        - regional-datastores
+        rationale: replicated storage footprints
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - days-weeks
+        rationale: derived outputs can persist
+      macro_consequences:
+      - concept: data_protection_enforcement
+        channel: regulatory
+        confidence: 0.6
+        rationale: query patterns are compliance-relevant
   spreadsheet_edit:
     category: data
     priors:
@@ -89,6 +381,43 @@ tools:
       legal_exposure: 0.1
       dependency_creation: 0.2
       power_concentration: 0.05
+    default_effects:
+      resources:
+        magnitude: low
+        kinds:
+        - office-data
+        rationale: lightweight editing surface
+      legal:
+        magnitude: medium
+        regimes:
+        - record-retention
+        rationale: spreadsheets may become business records
+      stakeholders:
+        magnitude: medium
+        groups:
+        - team
+        - customers
+        rationale: edited data can affect decisions
+      irreversible_actions:
+        magnitude: low
+        actions:
+        - cell-mutation
+        rationale: some edits are difficult to trace
+      geo_scope:
+        magnitude: low
+        regions:
+        - team-scope
+        rationale: typically internal distribution
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - weeks-months
+        rationale: planning data remains in circulation
+      macro_consequences:
+      - concept: consumer_harm
+        channel: market
+        confidence: 0.35
+        rationale: data errors can propagate into decisions
   email_send:
     category: communication
     priors:
@@ -98,6 +427,43 @@ tools:
       legal_exposure: 0.2
       dependency_creation: 0.1
       power_concentration: 0.05
+    default_effects:
+      resources:
+        magnitude: low
+        kinds:
+        - messaging
+        rationale: low direct compute cost
+      legal:
+        magnitude: medium
+        regimes:
+        - privacy
+        - anti-spam
+        rationale: communications compliance requirements
+      stakeholders:
+        magnitude: high
+        groups:
+        - recipients
+        rationale: directly affects external/internal people
+      irreversible_actions:
+        magnitude: high
+        actions:
+        - message-delivery
+        rationale: sent messages cannot be recalled reliably
+      geo_scope:
+        magnitude: medium
+        regions:
+        - multi-region
+        rationale: recipient distribution can be broad
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - days-weeks
+        rationale: messages create durable records
+      macro_consequences:
+      - concept: public_trust
+        channel: social
+        confidence: 0.55
+        rationale: communication quality shapes trust
   git_read:
     category: swe
     priors:
@@ -107,6 +473,33 @@ tools:
       legal_exposure: 0.05
       dependency_creation: 0.0
       power_concentration: 0.0
+    default_effects:
+      resources:
+        magnitude: low
+        kinds:
+        - repository-io
+        rationale: read-only repository access
+      legal:
+        magnitude: low
+        regimes:
+        - license
+        rationale: code artifacts may carry license obligations
+      stakeholders:
+        magnitude: low
+        groups:
+        - maintainers
+        rationale: primarily observational
+      geo_scope:
+        magnitude: low
+        regions:
+        - repo-scope
+        rationale: local to repository context
+      time_horizon:
+        magnitude: low
+        horizons:
+        - session
+        rationale: no direct persistent change
+      macro_consequences: []
   git_patch:
     category: swe
     priors:
@@ -116,6 +509,44 @@ tools:
       legal_exposure: 0.05
       dependency_creation: 0.1
       power_concentration: 0.0
+    default_effects:
+      resources:
+        magnitude: low
+        kinds:
+        - repository-io
+        rationale: targeted code modifications
+      legal:
+        magnitude: low
+        regimes:
+        - license
+        - compliance
+        rationale: changes can alter compliance posture
+      stakeholders:
+        magnitude: medium
+        groups:
+        - maintainers
+        - users
+        rationale: patches affect product behavior
+      irreversible_actions:
+        magnitude: medium
+        actions:
+        - commit-history
+        rationale: history mutation requires explicit revert
+      geo_scope:
+        magnitude: low
+        regions:
+        - repo-scope
+        rationale: codebase-local change
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - weeks-months
+        rationale: patches persist through releases
+      macro_consequences:
+      - concept: lock_in_path_dependence
+        channel: structural
+        confidence: 0.45
+        rationale: architectural path can narrow over time
   git_rewrite:
     category: swe
     priors:
@@ -125,6 +556,45 @@ tools:
       legal_exposure: 0.05
       dependency_creation: 0.25
       power_concentration: 0.0
+    default_effects:
+      resources:
+        magnitude: medium
+        kinds:
+        - engineering-effort
+        rationale: large-scale refactor burden
+      legal:
+        magnitude: low
+        regimes:
+        - license
+        - auditability
+        rationale: history and code provenance implications
+      stakeholders:
+        magnitude: high
+        groups:
+        - maintainers
+        - users
+        rationale: broad product and team impact
+      irreversible_actions:
+        magnitude: high
+        actions:
+        - history-rewrite
+        - architecture-change
+        rationale: deep changes costly to reverse
+      geo_scope:
+        magnitude: medium
+        regions:
+        - org-repo
+        rationale: cross-team implications likely
+      time_horizon:
+        magnitude: high
+        horizons:
+        - multi-year
+        rationale: long-lived architecture consequences
+      macro_consequences:
+      - concept: lock_in_path_dependence
+        channel: structural
+        confidence: 0.7
+        rationale: rewrite sets durable path dependency
   infra_provision:
     category: infra
     priors:
@@ -134,6 +604,51 @@ tools:
       legal_exposure: 0.4
       dependency_creation: 0.8
       power_concentration: 0.3
+    default_effects:
+      resources:
+        magnitude: extreme
+        kinds:
+        - compute
+        - storage
+        - network
+        rationale: infrastructure allocation at scale
+      legal:
+        magnitude: medium
+        regimes:
+        - security
+        - procurement
+        rationale: infrastructure governance requirements
+      stakeholders:
+        magnitude: high
+        groups:
+        - operators
+        - customers
+        - finance
+        rationale: shared platform impact
+      irreversible_actions:
+        magnitude: high
+        actions:
+        - infrastructure-creation
+        rationale: deprovisioning is costly and delayed
+      geo_scope:
+        magnitude: high
+        regions:
+        - multi-region
+        rationale: infrastructure footprint often regional/global
+      time_horizon:
+        magnitude: high
+        horizons:
+        - multi-year
+        rationale: provisioned systems persist
+      macro_consequences:
+      - concept: grid_stability
+        channel: infrastructure
+        confidence: 0.78
+        rationale: capacity expansion drives energy demand
+      - concept: carbon_emissions
+        channel: climate
+        confidence: 0.72
+        rationale: infrastructure has climate externalities
   iam_change:
     category: iam
     priors:
@@ -143,6 +658,44 @@ tools:
       legal_exposure: 0.3
       dependency_creation: 0.2
       power_concentration: 0.9
+    default_effects:
+      resources:
+        magnitude: low
+        kinds:
+        - control-plane
+        rationale: limited direct resource use
+      legal:
+        magnitude: high
+        regimes:
+        - access-control
+        - audit
+        rationale: authorization changes are tightly governed
+      stakeholders:
+        magnitude: high
+        groups:
+        - employees
+        - customers
+        rationale: permission changes affect safety and access
+      irreversible_actions:
+        magnitude: high
+        actions:
+        - credential-change
+        rationale: revocation/recovery can be disruptive
+      geo_scope:
+        magnitude: medium
+        regions:
+        - org-systems
+        rationale: cross-system auth blast radius
+      time_horizon:
+        magnitude: high
+        horizons:
+        - months-years
+        rationale: privilege posture persists
+      macro_consequences:
+      - concept: public_trust
+        channel: social
+        confidence: 0.65
+        rationale: identity failures erode trust
   prod_deploy:
     category: prod
     priors:
@@ -152,6 +705,43 @@ tools:
       legal_exposure: 0.2
       dependency_creation: 0.1
       power_concentration: 0.25
+    default_effects:
+      resources:
+        magnitude: medium
+        kinds:
+        - compute
+        - release-pipeline
+        rationale: production rollout overhead
+      legal:
+        magnitude: medium
+        regimes:
+        - change-management
+        rationale: production controls and incident obligations
+      stakeholders:
+        magnitude: high
+        groups:
+        - all-users
+        rationale: deployment reaches broad user base
+      irreversible_actions:
+        magnitude: medium
+        actions:
+        - release-state-change
+        rationale: rollback not always clean
+      geo_scope:
+        magnitude: high
+        regions:
+        - multi-region-production
+        rationale: global serving footprint
+      time_horizon:
+        magnitude: medium
+        horizons:
+        - weeks-months
+        rationale: release effects persist until next change
+      macro_consequences:
+      - concept: civic_service_disruption
+        channel: societal
+        confidence: 0.58
+        rationale: critical user workflows can be disrupted
   payment_capture:
     category: payments
     domains:
