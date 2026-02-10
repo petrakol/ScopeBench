@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from scopebench.contracts import TaskContract
 from scopebench.plan import PlanDAG, PlanStep
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector, SCOPE_AXES
 
@@ -111,6 +112,42 @@ class ToolRegistry:
     def category_of(self, tool: Optional[str]) -> Optional[str]:
         ti = self.get(tool)
         return ti.category if ti else None
+
+
+def plan_budget_consumption(plan: PlanDAG) -> Dict[str, float]:
+    """Estimate budget consumption from a plan."""
+    return {
+        "cost_usd": float(sum(step.est_cost_usd or 0.0 for step in plan.steps)),
+        "time_horizon_days": float(sum(step.est_time_days or 0.0 for step in plan.steps)),
+        "max_tool_calls": float(len(plan.steps)),
+    }
+
+
+def build_budget_ledger(contract: TaskContract, plans: List[PlanDAG]) -> Dict[str, Dict[str, float]]:
+    """Return consumed/budget/remaining/exceeded for budget dimensions."""
+    consumed = {"cost_usd": 0.0, "time_horizon_days": 0.0, "max_tool_calls": 0.0}
+    for plan in plans:
+        plan_consumed = plan_budget_consumption(plan)
+        for key in consumed:
+            consumed[key] += float(plan_consumed[key])
+
+    budgets = {
+        "cost_usd": float(contract.budgets.cost_usd),
+        "time_horizon_days": float(contract.budgets.time_horizon_days),
+        "max_tool_calls": float(contract.budgets.max_tool_calls),
+    }
+
+    ledger: Dict[str, Dict[str, float]] = {}
+    for key, budget in budgets.items():
+        used = float(consumed[key])
+        remaining = budget - used
+        ledger[key] = {
+            "budget": budget,
+            "consumed": used,
+            "remaining": remaining,
+            "exceeded": 1.0 if used > budget else 0.0,
+        }
+    return ledger
 
 
 # --- Keyword heuristics (MVP) ---
