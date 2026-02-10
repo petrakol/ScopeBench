@@ -1,5 +1,5 @@
 
-<img width="1536" height="1024" alt="ChatGPT Image Feb 8, 2026, 01_14_55 PM" src="https://github.com/user-attachments/assets/3be53742-ffd0-4c78-baeb-8c2c0868fa61" />
+<img width="973" height="209" alt="ScopeBench_w copy" src="https://github.com/user-attachments/assets/066d740e-f8ad-4876-89c5-48604a5cc7a0" />
 
 # ScopeBench
 
