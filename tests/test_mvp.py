@@ -28,6 +28,8 @@ from scopebench.scoring.calibration import (  # noqa: E402
 )
 from scopebench.server.api import (  # noqa: E402
     create_app,
+    SessionAggregateDetail,
+    _build_session_negotiation,
     _build_telemetry,
     _effective_decision,
     _next_steps_from_policy,
@@ -817,6 +819,37 @@ def test_policy_input_v1_and_audit_metadata_in_api_response():
     assert body["policy_input"]["policy_input_version"] == "v1"
 
 
+
+
+def test_session_negotiation_builds_proportional_recommendation_without_http_client():
+    per_agent = {
+        "agent-a": SessionAggregateDetail(aggregate={}, decision="ASK", ledger={"cost_usd": {"budget": 8.0, "consumed": 11.0, "remaining": 0.0, "exceeded": 3.0}}),
+        "agent-b": SessionAggregateDetail(aggregate={}, decision="ALLOW", ledger={"cost_usd": {"budget": 5.0, "consumed": 2.0, "remaining": 3.0, "exceeded": 0.0}}),
+        "agent-c": SessionAggregateDetail(aggregate={}, decision="ALLOW", ledger={"cost_usd": {"budget": 5.0, "consumed": 2.0, "remaining": 3.0, "exceeded": 0.0}}),
+    }
+    global_ledger = {"cost_usd": {"budget": 18.0, "consumed": 15.0, "remaining": 3.0, "exceeded": 0.0}}
+
+    negotiation = _build_session_negotiation(per_agent=per_agent, global_ledger=global_ledger)
+    assert negotiation.triggered is True
+    recommendation = next(item for item in negotiation.recommendations if item.budget_key == "cost_usd")
+    assert recommendation.allocated_from_headroom == pytest.approx(3.0)
+    assert recommendation.allocated_from_transfers == pytest.approx(0.0)
+    assert recommendation.remaining_unmet == pytest.approx(0.0)
+
+
+def test_session_negotiation_marks_tight_envelope_when_unmet_deficit_remains():
+    per_agent = {
+        "agent-a": SessionAggregateDetail(aggregate={}, decision="ASK", ledger={"cost_usd": {"budget": 6.0, "consumed": 12.0, "remaining": 0.0, "exceeded": 6.0}}),
+        "agent-b": SessionAggregateDetail(aggregate={}, decision="ASK", ledger={"cost_usd": {"budget": 3.0, "consumed": 4.0, "remaining": 0.0, "exceeded": 1.0}}),
+        "agent-c": SessionAggregateDetail(aggregate={}, decision="ALLOW", ledger={"cost_usd": {"budget": 3.0, "consumed": 1.0, "remaining": 2.0, "exceeded": 0.0}}),
+    }
+    global_ledger = {"cost_usd": {"budget": 12.0, "consumed": 17.0, "remaining": 0.0, "exceeded": 5.0}}
+
+    negotiation = _build_session_negotiation(per_agent=per_agent, global_ledger=global_ledger)
+    assert "tight_envelope:cost_usd" in negotiation.reason_codes
+    recommendation = next(item for item in negotiation.recommendations if item.budget_key == "cost_usd")
+    assert recommendation.remaining_unmet > 0.0
+
 def test_multi_agent_session_schema_requires_bound_agent_ids():
     from pydantic import ValidationError
 
@@ -1114,6 +1147,174 @@ def test_evaluate_session_dashboard_reports_budget_consumption():
     assert dashboard["per_agent"]["agent-a"]["budget_consumption"]["cost_usd"] == pytest.approx(5.0)
     assert dashboard["global"]["budget_utilization"]["cost_usd"] == pytest.approx(0.05)
     assert dashboard["global"]["budget_projection"]["cost_usd"] >= dashboard["global"]["budget_consumption"]["cost_usd"]
+
+
+
+def test_evaluate_session_negotiation_recommends_budget_transfers_and_reallocation():
+    pytest.importorskip("httpx")
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "session": {
+            "global_contract": {
+                "goal": "Coordinate fixes",
+                "preset": "team",
+                "budgets": {"cost_usd": 18.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+            },
+            "agents": [
+                {
+                    "agent_id": "agent-a",
+                    "contract": {
+                        "goal": "Patch service A",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 8.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "contract": {
+                        "goal": "Patch service B",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 5.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+                    },
+                },
+                {
+                    "agent_id": "agent-c",
+                    "contract": {
+                        "goal": "Validate fix",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 5.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+                    },
+                },
+            ],
+            "plans": [
+                {
+                    "agent_id": "agent-a",
+                    "plan": {
+                        "task": "Heavy patch",
+                        "steps": [
+                            {"id": "1", "description": "Patch and verify", "tool": "git_patch", "est_cost_usd": 11.0}
+                        ],
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "plan": {
+                        "task": "Light fix",
+                        "steps": [
+                            {"id": "1", "description": "Read and annotate", "tool": "git_read", "est_cost_usd": 2.0}
+                        ],
+                    },
+                },
+                {
+                    "agent_id": "agent-c",
+                    "plan": {
+                        "task": "Validation",
+                        "steps": [
+                            {"id": "1", "description": "Run tests", "tool": "pytest", "est_cost_usd": 2.0}
+                        ],
+                    },
+                },
+            ],
+        }
+    }
+
+    response = client.post("/evaluate_session", json=payload)
+    assert response.status_code == 200
+    negotiation = response.json()["negotiation"]
+    assert negotiation["triggered"] is True
+    assert "agent_over_budget:cost_usd" in negotiation["reason_codes"]
+
+    recommendation = next(item for item in negotiation["recommendations"] if item["budget_key"] == "cost_usd")
+    assert recommendation["fairness_rule"] == "proportional_by_deficit"
+    requests = {entry["agent_id"]: entry["amount"] for entry in recommendation["requests"]}
+    assert requests["agent-a"] == pytest.approx(3.0)
+    assert recommendation["allocated_from_headroom"] == pytest.approx(3.0)
+    assert recommendation["allocated_from_transfers"] == pytest.approx(0.0)
+    assert recommendation["remaining_unmet"] == pytest.approx(0.0)
+    assert recommendation["consensus"]["protocol"] == "supermajority_with_non_regression"
+
+
+def test_evaluate_session_negotiation_tight_global_envelope_reports_unmet_need():
+    pytest.importorskip("httpx")
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "session": {
+            "global_contract": {
+                "goal": "Coordinate fixes",
+                "preset": "team",
+                "budgets": {"cost_usd": 12.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+            },
+            "agents": [
+                {
+                    "agent_id": "agent-a",
+                    "contract": {
+                        "goal": "Patch service A",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 6.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "contract": {
+                        "goal": "Patch service B",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 3.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+                    },
+                },
+                {
+                    "agent_id": "agent-c",
+                    "contract": {
+                        "goal": "Validate fix",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 3.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+                    },
+                },
+            ],
+            "plans": [
+                {
+                    "agent_id": "agent-a",
+                    "plan": {
+                        "task": "Heavy patch",
+                        "steps": [
+                            {"id": "1", "description": "Patch and verify", "tool": "git_patch", "est_cost_usd": 12.0}
+                        ],
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "plan": {
+                        "task": "Fix B",
+                        "steps": [
+                            {"id": "1", "description": "Patch", "tool": "git_patch", "est_cost_usd": 4.0}
+                        ],
+                    },
+                },
+                {
+                    "agent_id": "agent-c",
+                    "plan": {
+                        "task": "Validation",
+                        "steps": [
+                            {"id": "1", "description": "Run tests", "tool": "pytest", "est_cost_usd": 1.0}
+                        ],
+                    },
+                },
+            ],
+        }
+    }
+
+    response = client.post("/evaluate_session", json=payload)
+    assert response.status_code == 200
+    negotiation = response.json()["negotiation"]
+    recommendation = next(item for item in negotiation["recommendations"] if item["budget_key"] == "cost_usd")
+    assert recommendation["global_headroom"] == pytest.approx(0.0)
+    assert recommendation["remaining_unmet"] > 0.0
+    assert "tight_envelope:cost_usd" in negotiation["reason_codes"]
 
 def test_evaluate_session_is_deterministic_for_same_input():
     pytest.importorskip("httpx")

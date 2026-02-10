@@ -269,6 +269,53 @@ class SessionDashboard(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class NegotiationRequest(BaseModel):
+    agent_id: str
+    amount: float
+
+
+class NegotiationTransfer(BaseModel):
+    from_agent: str
+    to_agent: str
+    amount: float
+
+
+class NegotiationReallocation(BaseModel):
+    agent_id: str
+    target_budget: float
+    current_budget: float
+    delta: float
+
+
+class NegotiationConsensus(BaseModel):
+    protocol: str
+    quorum_ratio: float
+    approvals: int
+    participants: int
+    status: str
+    note: str
+
+
+class NegotiationBudgetRecommendation(BaseModel):
+    budget_key: str
+    fairness_rule: str
+    total_requested: float
+    global_headroom: float
+    allocated_from_headroom: float
+    allocated_from_transfers: float
+    remaining_unmet: float
+    requests: List[NegotiationRequest]
+    transfers: List[NegotiationTransfer]
+    reallocation: List[NegotiationReallocation]
+    consensus: NegotiationConsensus
+
+
+class SessionNegotiation(BaseModel):
+    triggered: bool
+    reason_codes: List[str]
+    recommendations: List[NegotiationBudgetRecommendation]
+
+
 class CalibrationAdjustmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     domain: str = Field(..., description="Domain/task_type to adjust.")
@@ -299,6 +346,7 @@ class EvaluateSessionResponse(BaseModel):
     global_: SessionAggregateDetail = Field(..., alias="global")
     laundering_signals: List[ScopeLaunderingSignal]
     dashboard: SessionDashboard
+    negotiation: SessionNegotiation
 
     model_config = {"populate_by_name": True}
 
@@ -341,6 +389,158 @@ def _aggregate_session_risk(per_agent_aggregates: Dict[str, Dict[str, float]]) -
             sum(float(agg.get(axis, 0.0)) for agg in per_agent_aggregates.values()),
         )
     return aggregated
+
+
+def _proportional_allocations(requests: Dict[str, float], available: float) -> Dict[str, float]:
+    if available <= 0:
+        return {agent_id: 0.0 for agent_id in requests}
+    total_requested = sum(max(0.0, value) for value in requests.values())
+    if total_requested <= 0:
+        return {agent_id: 0.0 for agent_id in requests}
+    return {
+        agent_id: min(max(0.0, requested), available * (max(0.0, requested) / total_requested))
+        for agent_id, requested in requests.items()
+    }
+
+
+def _build_session_negotiation(
+    *,
+    per_agent: Dict[str, SessionAggregateDetail],
+    global_ledger: Dict[str, Dict[str, float]],
+) -> SessionNegotiation:
+    reason_codes: List[str] = []
+    recommendations: List[NegotiationBudgetRecommendation] = []
+
+    all_budget_keys = sorted(
+        {
+            key
+            for detail in per_agent.values()
+            for key in detail.ledger.keys()
+        }
+        | set(global_ledger.keys())
+    )
+
+    for budget_key in all_budget_keys:
+        requests = {
+            agent_id: max(0.0, float(detail.ledger.get(budget_key, {}).get("exceeded", 0.0)))
+            for agent_id, detail in per_agent.items()
+        }
+        requests = {agent_id: value for agent_id, value in requests.items() if value > 0.0}
+        if not requests:
+            continue
+
+        reason_codes.append(f"agent_over_budget:{budget_key}")
+        total_requested = sum(requests.values())
+        global_headroom = max(0.0, float(global_ledger.get(budget_key, {}).get("remaining", 0.0)))
+
+        headroom_allocations = _proportional_allocations(requests, min(global_headroom, total_requested))
+        unmet = {
+            agent_id: max(0.0, requests[agent_id] - headroom_allocations.get(agent_id, 0.0))
+            for agent_id in requests
+        }
+        remaining_unmet = sum(unmet.values())
+
+        donors = {
+            agent_id: max(0.0, float(detail.ledger.get(budget_key, {}).get("remaining", 0.0)))
+            for agent_id, detail in per_agent.items()
+            if float(detail.ledger.get(budget_key, {}).get("remaining", 0.0)) > 0.0
+        }
+        transfer_capacity = min(sum(donors.values()), remaining_unmet)
+        transfer_targets = _proportional_allocations(unmet, transfer_capacity)
+        transfer_supply = _proportional_allocations(donors, transfer_capacity)
+
+        transfer_records: List[NegotiationTransfer] = []
+        donor_remaining = dict(transfer_supply)
+        for recipient, recipient_amount in sorted(transfer_targets.items()):
+            needed = recipient_amount
+            if needed <= 0:
+                continue
+            for donor in sorted(donor_remaining):
+                available = donor_remaining[donor]
+                if available <= 0 or needed <= 0:
+                    continue
+                amount = min(available, needed)
+                transfer_records.append(
+                    NegotiationTransfer(from_agent=donor, to_agent=recipient, amount=amount)
+                )
+                donor_remaining[donor] -= amount
+                needed -= amount
+
+        allocated_from_headroom = sum(headroom_allocations.values())
+        allocated_from_transfers = sum(record.amount for record in transfer_records)
+        still_unmet = max(0.0, total_requested - allocated_from_headroom - allocated_from_transfers)
+        if still_unmet > 0.0:
+            reason_codes.append(f"tight_envelope:{budget_key}")
+
+        current_budgets = {
+            agent_id: float(detail.ledger.get(budget_key, {}).get("budget", 0.0))
+            for agent_id, detail in per_agent.items()
+        }
+        total_budget = sum(current_budgets.values())
+        consumption = {
+            agent_id: float(detail.ledger.get(budget_key, {}).get("consumed", 0.0))
+            for agent_id, detail in per_agent.items()
+        }
+        minimum_budget = consumption
+        flex_pool = max(0.0, total_budget - sum(minimum_budget.values()))
+        deficit_weights = {
+            agent_id: max(0.0, unmet.get(agent_id, 0.0) - transfer_targets.get(agent_id, 0.0))
+            for agent_id in current_budgets
+        }
+        rebalance = _proportional_allocations(deficit_weights, flex_pool)
+        target_budgets = {
+            agent_id: minimum_budget[agent_id] + rebalance.get(agent_id, 0.0)
+            for agent_id in current_budgets
+        }
+        reallocation = [
+            NegotiationReallocation(
+                agent_id=agent_id,
+                current_budget=current_budgets[agent_id],
+                target_budget=target_budgets[agent_id],
+                delta=target_budgets[agent_id] - current_budgets[agent_id],
+            )
+            for agent_id in sorted(current_budgets)
+        ]
+
+        participant_count = len(per_agent)
+        approvals = sum(1 for delta in (entry.delta for entry in reallocation) if delta >= 0.0)
+        quorum_ratio = 0.67
+        needed_approvals = max(1, int(participant_count * quorum_ratio + 0.999999))
+        consensus_status = "reached" if approvals >= needed_approvals else "pending"
+
+        recommendations.append(
+            NegotiationBudgetRecommendation(
+                budget_key=budget_key,
+                fairness_rule="proportional_by_deficit",
+                total_requested=total_requested,
+                global_headroom=global_headroom,
+                allocated_from_headroom=allocated_from_headroom,
+                allocated_from_transfers=allocated_from_transfers,
+                remaining_unmet=still_unmet,
+                requests=[
+                    NegotiationRequest(agent_id=agent_id, amount=amount)
+                    for agent_id, amount in sorted(requests.items())
+                ],
+                transfers=transfer_records,
+                reallocation=reallocation,
+                consensus=NegotiationConsensus(
+                    protocol="supermajority_with_non_regression",
+                    quorum_ratio=quorum_ratio,
+                    approvals=approvals,
+                    participants=participant_count,
+                    status=consensus_status,
+                    note=(
+                        "Consensus reached" if consensus_status == "reached" else "Awaiting more approvals"
+                    ),
+                ),
+            )
+        )
+
+    return SessionNegotiation(
+        triggered=bool(recommendations),
+        reason_codes=sorted(set(reason_codes)),
+        recommendations=recommendations,
+    )
 
 
 def _detect_cross_agent_scope_laundering(
@@ -1148,6 +1348,10 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             global_=global_scope,
             laundering_signals=laundering_signals,
             dashboard=dashboard,
+            negotiation=_build_session_negotiation(
+                per_agent=per_agent,
+                global_ledger=global_ledger,
+            ),
         )
 
     return app
