@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,8 @@ from scopebench.scoring.rules import aggregate_scope, build_budget_ledger
 from scopebench.scoring.effects_annotator import suggest_effects_for_plan
 from scopebench.scoring.rules import build_budget_ledger
 from scopebench.plugins import PluginManager, lint_plugin_bundle, sign_plugin_bundle
+from scopebench.bench.plugin_harness import run_plugin_test_harness
+from scopebench.bench.dataset import default_cases_path
 from scopebench.session import MultiAgentSession
 from scopebench.bench.community import suggest_case
 from scopebench.bench.dataset import validate_case_object
@@ -297,6 +300,7 @@ class PluginWizardRequest(BaseModel):
     name: str
     version: str = "0.1.0"
     tools: List[str] = Field(default_factory=list)
+    tool_definitions: List[Dict[str, Any]] = Field(default_factory=list)
     effects_mappings: List[Dict[str, Any]] = Field(default_factory=list)
     policy_rule_templates: List[str] = Field(default_factory=list)
     key_id: str = "community-main"
@@ -308,7 +312,10 @@ class PluginWizardResponse(BaseModel):
     ok: bool
     lint_errors: List[str]
     bundle: Dict[str, Any]
+    harness: Dict[str, Any]
     publish_guidance: List[str]
+
+
 class PolicyRuleProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -1906,6 +1913,29 @@ def create_app(
             else:
                 mappings.append({"trigger": f"tool_{idx+1}", "axes": {"uncertainty": 0.4}})
 
+        explicit_tools: Dict[str, Dict[str, Any]] = {}
+        for row in req.tool_definitions:
+            if not isinstance(row, dict):
+                continue
+            name = row.get("tool")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            explicit_tools[name.strip()] = {
+                "category": str(row.get("category") or tool_category),
+                "domains": row.get("domains") if isinstance(row.get("domains"), list) else [req.domain],
+                "risk_class": str(row.get("risk_class") or "moderate"),
+                "priors": row.get("priors") if isinstance(row.get("priors"), dict) else {"uncertainty": 0.3},
+            }
+
+        for tool in req.tools:
+            if tool not in explicit_tools:
+                explicit_tools[tool] = {
+                    "category": tool_category,
+                    "domains": [req.domain],
+                    "risk_class": "moderate",
+                    "priors": {"uncertainty": 0.3, "dependency_creation": 0.2},
+                }
+
         bundle = {
             "name": req.name,
             "version": req.version,
@@ -1916,25 +1946,33 @@ def create_app(
                 "scoring_axes": {f"{req.domain}_safety": {"description": f"Safety profile for {req.domain}"}},
                 "policy_rules": policy_rules,
             },
-            "tools": {
-                tool: {
-                    "category": tool_category,
-                    "domains": [req.domain],
-                    "risk_class": "moderate",
-                    "priors": {"uncertainty": 0.3, "dependency_creation": 0.2},
-                }
-                for tool in req.tools
-            },
+            "tools": explicit_tools,
             "cases": [],
         }
         errors = lint_plugin_bundle(bundle)
         signed = sign_plugin_bundle(bundle, key_id=req.key_id, secret=req.secret) if not errors else bundle
+
+        harness: Dict[str, Any] = {"passed": False, "reason": "lint_failed"}
+        if not errors:
+            with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
+                yaml.safe_dump(signed, tmp, sort_keys=False)
+                tmp_path = Path(tmp.name)
+            try:
+                harness = run_plugin_test_harness(
+                    tmp_path,
+                    keys_json=json.dumps({req.key_id: req.secret}),
+                    golden_cases_path=default_cases_path(),
+                    max_golden_cases=3,
+                ).to_dict()
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
         guidance = [
             "Run /plugins/lint and plugin-harness before publishing.",
             "Publish signed bundle in an immutable release artifact.",
             "Submit plugin listing update to docs/plugin_marketplace.yaml.",
         ]
-        return PluginWizardResponse(ok=not errors, lint_errors=errors, bundle=signed, publish_guidance=guidance)
+        return PluginWizardResponse(ok=not errors, lint_errors=errors, bundle=signed, harness=harness, publish_guidance=guidance)
 
     @app.get("/plugins")
     def plugins_endpoint():

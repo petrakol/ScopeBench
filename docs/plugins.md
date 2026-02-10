@@ -132,12 +132,12 @@ scopebench plugin-generate --out plugins/robotics-starter.yaml
 The wizard asks for:
 
 - domain name
-- plugin tool list
+- plugin tool list and optional explicit tool definitions (category/risk/priors)
 - effect mappings
 - policy rule templates
 - signing key metadata (`key_id`, shared secret)
 
-Validate schema correctness before publishing:
+Validate schema correctness before publishing (the generator also runs lint + a mini harness automatically):
 
 ```bash
 scopebench plugin-lint plugins/robotics-starter.yaml
@@ -145,7 +145,7 @@ scopebench plugin-lint plugins/robotics-starter.yaml
 
 The UI now includes **Plugin Authoring Wizard** at `/ui` and API endpoints:
 
-- `POST /plugins/wizard/generate` → generate + sign a skeleton bundle
+- `POST /plugins/wizard/generate` → generate + sign a skeleton bundle, then run lint + compatibility harness
 - `POST /plugins/lint` → lint arbitrary bundle payloads
 - `GET /plugins/schema` → lightweight schema requirements reference
 

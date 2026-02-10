@@ -520,6 +520,15 @@ def test_plugin_wizard_and_lint_endpoints() -> None:
         "name": "robotics-starter",
         "version": "0.1.0",
         "tools": ["move_arm"],
+        "tool_definitions": [
+            {
+                "tool": "move_arm",
+                "category": "robotics_operations",
+                "risk_class": "high",
+                "domains": ["robotics"],
+                "priors": {"irreversibility": 0.5, "uncertainty": 0.2},
+            }
+        ],
         "effects_mappings": [{"trigger": "move_arm", "axes": {"irreversibility": 0.5}}],
         "policy_rule_templates": ["Require operator approval before actuation."],
         "key_id": "community-main",
@@ -528,6 +537,7 @@ def test_plugin_wizard_and_lint_endpoints() -> None:
     generated = _endpoint(app, "/plugins/wizard/generate")(payload).model_dump()
     assert generated["ok"] is True
     assert generated["bundle"]["signature"]["key_id"] == "community-main"
+    assert generated["harness"]["passed"] is True
 
     linted = _endpoint(app, "/plugins/lint")(generated["bundle"])
     assert linted["ok"] is True

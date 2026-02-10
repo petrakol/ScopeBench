@@ -307,9 +307,9 @@ See [`docs/plugins.md`](docs/plugins.md) for authoring/signing/publishing guidan
 
 Plugin scaffolding and linting are available via CLI and UI:
 
-- `scopebench plugin-generate --out plugin.yaml` (interactive skeleton + signing)
+- `scopebench plugin-generate --out plugin.yaml` (interactive skeleton + signing + built-in lint/harness run)
 - `scopebench plugin-lint plugin.yaml` (schema lint checks)
-- `/ui` → **Plugin Authoring Wizard** for guided bundle generation
+- `/ui` → **Plugin Authoring Wizard** for guided bundle generation, linting, and harness summary
 
 ---
 
