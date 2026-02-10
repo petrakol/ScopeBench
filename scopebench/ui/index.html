@@ -82,6 +82,26 @@
         gap: 8px;
         align-items: center;
       }
+      .case-explorer-controls {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .case-list {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        max-height: 360px;
+        overflow: auto;
+      }
+      .case-item {
+        padding: 10px;
+        border-bottom: 1px solid #e5e7eb;
+        cursor: pointer;
+      }
+      .case-item:last-child { border-bottom: none; }
+      .case-item.active { background: #eff6ff; }
+      .case-item:hover { background: #f8fafc; }
       @media (max-width: 900px) {
         .two-col { grid-template-columns: 1fr; }
       }
@@ -249,6 +269,9 @@
         </div>
         <div class="card">
           <h3>Global aggregate & laundering detection</h3>
+          <h4>Per-agent aggregate</h4>
+          <table><thead><tr><th>Agent</th><th>Decision</th><th>Aggregate</th></tr></thead><tbody id="session-agent-table"></tbody></table>
+          <h4 style="margin-top:12px">Global aggregate</h4>
           <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody id="session-global-table"></tbody></table>
           <h4 style="margin-top:12px">Laundering signals</h4>
           <table><thead><tr><th>Axis</th><th>Global</th><th>Max agent</th><th>Delta</th><th>Ask threshold</th></tr></thead><tbody id="session-laundering-table"></tbody></table>
@@ -256,6 +279,25 @@
       </section>
 
       <section class="card" style="margin-top: 16px">
+        <h3>Dataset Case Explorer</h3>
+        <p class="muted">Browse benchmark cases by domain, expected decision, and instruction. Select a case to inspect full contract, plan, rationale, and step vectors.</p>
+        <div class="case-explorer-controls">
+          <input id="case-search" type="text" placeholder="Search by instruction, id, or rationale" />
+          <select id="case-domain-filter"></select>
+          <select id="case-decision-filter"></select>
+        </div>
+        <div class="controls" style="margin-bottom: 10px">
+          <button id="refresh-cases" class="secondary">Refresh cases</button>
+          <span id="case-summary" class="muted"></span>
+        </div>
+        <section class="grid two-col">
+          <div>
+            <div id="case-list" class="case-list"></div>
+          </div>
+          <div>
+            <pre id="case-detail"></pre>
+          </div>
+        </section>
         <h3>Budget consumption ledger</h3>
         <p class="muted">Tracks consumed budget vs limits for each agent and globally, plus laundering pressure chips.</p>
         <div id="session-ledger" class="ledger-grid"></div>
@@ -342,6 +384,12 @@
       const wizardStepsEl = el("wizard-steps");
       const caseDraftEl = el("case-draft");
       const datasetOutputEl = el("dataset-output");
+      const caseSearchEl = el("case-search");
+      const caseDomainFilterEl = el("case-domain-filter");
+      const caseDecisionFilterEl = el("case-decision-filter");
+      const caseListEl = el("case-list");
+      const caseDetailEl = el("case-detail");
+      const caseSummaryEl = el("case-summary");
       const datasetCaseIdEl = el("dataset-case-id");
       const datasetDomainEl = el("dataset-domain");
       const datasetInstructionEl = el("dataset-instruction");
@@ -370,6 +418,8 @@
       let wizardTemplates = [];
       let wizardDraft = null;
       let sessionState = JSON.parse(JSON.stringify(defaultSessionState));
+      let allCases = [];
+      let selectedCaseId = null;
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -655,6 +705,55 @@
         renderWizardSteps(plan);
       }
 
+      function scheduleAutoEvaluate() {
+        if (!autoRunEl.checked) return;
+        if (autoTimer) clearTimeout(autoTimer);
+        autoTimer = setTimeout(() => runEvaluation().catch((err) => {
+          resultEl.textContent = `Error: ${err.message}`;
+        }), 300);
+      }
+
+      function renderCaseExplorer() {
+        const query = (caseSearchEl.value || "").trim().toLowerCase();
+        const domain = caseDomainFilterEl.value || "all";
+        const decision = caseDecisionFilterEl.value || "all";
+        const filtered = allCases.filter((item) => {
+          if (domain !== "all" && item.domain !== domain) return false;
+          if (decision !== "all" && item.expected_decision !== decision) return false;
+          if (!query) return true;
+          const haystack = [item.id, item.domain, item.instruction, item.expected_rationale]
+            .map((value) => String(value || "").toLowerCase())
+            .join(" ");
+          return haystack.includes(query);
+        });
+
+        caseSummaryEl.textContent = `${filtered.length} / ${allCases.length} cases`;
+        caseListEl.innerHTML = "";
+        if (!filtered.length) {
+          caseListEl.innerHTML = '<div class="case-item">No matching cases.</div>';
+          caseDetailEl.textContent = "";
+          return;
+        }
+
+        if (!selectedCaseId || !filtered.some((item) => item.id === selectedCaseId)) {
+          selectedCaseId = filtered[0].id;
+        }
+
+        filtered.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = `case-item ${item.id === selectedCaseId ? "active" : ""}`;
+          row.innerHTML = `<strong>${item.id}</strong><div class="muted">${item.domain} • ${item.expected_decision}</div><div>${item.instruction}</div>`;
+          row.addEventListener("click", () => {
+            selectedCaseId = item.id;
+            renderCaseExplorer();
+          });
+          caseListEl.appendChild(row);
+        });
+
+        const selected = filtered.find((item) => item.id === selectedCaseId) || filtered[0];
+        caseDetailEl.textContent = JSON.stringify(selected, null, 2);
+      }
+
       function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
 
       async function loadCatalog() {
@@ -663,23 +762,38 @@
         const [templates, tools, cases] = await Promise.all([
           fetch("/templates").then((r) => r.json()),
           fetch("/tools").then((r) => r.json()),
-          fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))
+          fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [], cases: [] }))
         ]);
 
         wizardTemplates = templates.templates || [];
         const options = [];
-        (templates.templates || []).forEach((domain) => Object.entries(domain.variants || {}).forEach(([variant, body]) => { if (body.content?.contract && body.content?.plan) { options.push({ key: `${domain.domain}:${variant}`, contract: body.content.contract, plan: body.content.plan }); } }));
+        (templates.templates || []).forEach((domain) => {
+          Object.entries(domain.variants || {}).forEach(([variant, body]) => {
+            if (body.content?.contract && body.content?.plan) {
+              options.push({ key: `${domain.domain}:${variant}`, contract: body.content.contract, plan: body.content.plan });
+            }
+          });
+        });
         templateSelectEl.innerHTML = options.map((opt) => `<option value="${opt.key}">${opt.key}</option>`).join("");
         templateSelectEl._options = options;
 
-        wizardDomainEl.innerHTML = wizardTemplates
-          .map((item) => `<option value="${item.domain}">${item.domain}</option>`)
-          .join("");
+        wizardDomainEl.innerHTML = wizardTemplates.map((item) => `<option value="${item.domain}">${item.domain}</option>`).join("");
         if (!wizardDomainEl.value && wizardTemplates.length) wizardDomainEl.value = wizardTemplates[0].domain;
         renderWizardVariantOptions();
         generateWizardDraft();
+
         knownTools = (tools.tools || []).map((item) => item.tool).filter(Boolean).sort();
-        catalogEl.textContent = JSON.stringify({ templates: (templates.templates || []).length, tools: (tools.tools || []).length, cases_count: cases.count || 0, case_domains: cases.domains || [] }, null, 2);
+        allCases = cases.cases || [];
+        caseDomainFilterEl.innerHTML = ['<option value="all">All domains</option>', ...(cases.domains || []).map((d) => `<option value="${d}">${d}</option>`)].join("");
+        caseDecisionFilterEl.innerHTML = ['<option value="all">All decisions</option>', '<option value="ALLOW">ALLOW</option>', '<option value="ASK">ASK</option>', '<option value="DENY">DENY</option>'].join("");
+        renderCaseExplorer();
+
+        catalogEl.textContent = JSON.stringify({
+          templates: (templates.templates || []).length,
+          tools: (tools.tools || []).length,
+          cases_count: cases.count || 0,
+          case_domains: cases.domains || []
+        }, null, 2);
         renderWhatIfEditors(JSON.parse(planEl.value));
       }
 
@@ -693,10 +807,7 @@
       }
 
       async function installPluginBundle() {
-        const payload = {
-          source_path: pluginSourceEl.value,
-          plugin_dir: pluginTargetDirEl.value
-        };
+        const payload = { source_path: pluginSourceEl.value, plugin_dir: pluginTargetDirEl.value };
         const response = await fetch("/plugins/install", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -724,101 +835,9 @@
         const payload = await res.json();
         decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
         resultEl.textContent = JSON.stringify({ trace_id: payload.trace_id, span_id: payload.span_id, summary: payload.summary, next_steps: payload.next_steps, telemetry: payload.telemetry }, null, 2);
-        renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
-      }
-
-      function buildStreamingEvents(plan) {
-        const steps = plan.steps || [];
-        if (!steps.length) return [];
-        const candidateIndex = Math.max(0, steps.length - 1);
-        const candidate = steps[candidateIndex];
-        const intensified = {
-          ...candidate,
-          description: `${candidate.description || "Step"} with broader production impact and uncertain dependencies`,
-          tool_category: candidate.tool_category || "prod"
-        };
-        const reviewStepId = `review-${candidate.id || "step"}`;
-        const reviewDepends = candidate.id ? [candidate.id] : [];
-        return [
-          {
-            event_id: "stream-update-main-step",
-            operation: "update_step",
-            step_id: String(candidate.id || "1"),
-            step: intensified,
-            context: { label: "Intensify current step scope" }
-          },
-          {
-            event_id: "stream-add-safety-review",
-            operation: "add_step",
-            step_id: reviewStepId,
-            step: {
-              id: reviewStepId,
-              description: "Add expanded rollback + post-deploy validation rationale",
-              tool: "pytest",
-              depends_on: reviewDepends
-            },
-            context: { label: "Add new validation step" }
-          }
-        ];
-      }
-
-      function summarizeStreaming(payload) {
-        const snapshots = [payload.initial, ...(payload.updates || [])];
-        const lines = [];
-        const priorByAxis = {};
-        snapshots.forEach((snapshot) => {
-          lines.push(`${snapshot.event_index}. ${snapshot.event_id} (${snapshot.operation}) => ${snapshot.decision}`);
-          Object.entries(snapshot.aggregate || {})
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3)
-            .forEach(([axis, value]) => {
-              const previous = priorByAxis[axis];
-              const change = previous == null ? "" : ` (Δ ${(Number(value) - Number(previous)).toFixed(3)})`;
-              lines.push(`   • ${axis}: ${Number(value).toFixed(3)}${change}`);
-              priorByAxis[axis] = Number(value);
-            });
-
-          (snapshot.triggers || []).forEach((trigger) => {
-            if (trigger.kind === "threshold_crossed") {
-              lines.push(
-                `   ⚠ threshold crossed on ${trigger.axis}: ${Number(trigger.previous || 0).toFixed(3)} -> ${Number(trigger.current || 0).toFixed(3)} (limit ${Number(trigger.threshold || 0).toFixed(3)})`
-              );
-            } else {
-              lines.push(`   ↻ ${trigger.details || trigger.kind}`);
-            }
-          });
-
-          (snapshot.judge_output_deltas || []).forEach((stepDelta) => {
-            lines.push(`   Δ judge output for ${stepDelta.step_id}: ${stepDelta.changed_axes.join(", ") || "none"}`);
-            (stepDelta.axis_deltas || []).forEach((axisDelta) => {
-              const prevR = axisDelta.previous_rationale || "";
-              const currR = axisDelta.current_rationale || "";
-              if (prevR !== currR) {
-                lines.push(`      rationale[${axisDelta.axis}]: "${prevR}" -> "${currR}"`);
-              }
-            });
-          });
-        });
-        return lines.join("\n");
-      }
-
-      async function runStreamingEvaluation() {
-        const contract = JSON.parse(contractEl.value);
-        const plan = JSON.parse(planEl.value);
-        const events = buildStreamingEvents(plan);
-        const payload = await fetch("/evaluate_stream", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            contract,
-            plan,
-            events,
-            include_steps: false,
-            judge: "llm"
-          })
-        }).then((r) => r.json());
-
-        streamingEl.textContent = summarizeStreaming(payload);
+        renderAggregate(payload.aggregate || {});
+        renderStepRationales(payload.steps || []);
+        renderContributions(plan, payload.steps || [], payload.aggregate || {});
       }
 
       async function replayTelemetry() { const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json()); telemetryEl.textContent = JSON.stringify(replay, null, 2); }
@@ -952,6 +971,18 @@ ${body}`;
         renderWhatIfEditors(picked.plan);
         scheduleAutoEvaluate();
       });
+      el("run").addEventListener("click", () => runEvaluation().catch((err) => {
+        resultEl.textContent = `Error: ${err.message}`;
+      }));
+      el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => {
+        sessionResultEl.textContent = `Error: ${err.message}`;
+      }));
+      el("replay").addEventListener("click", () => replayTelemetry().catch((err) => {
+        telemetryEl.textContent = `Error: ${err.message}`;
+      }));
+      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
+        calibrationDashboardEl.textContent = `Error: ${err.message}`;
+      }));
       el("dataset-validate").addEventListener("click", () => validateCaseDraft().catch((err) => {
         datasetOutputEl.textContent = `Validation error: ${err.message}`;
       }));
@@ -986,6 +1017,19 @@ ${body}`;
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
       }));
+      el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => {
+        pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
+      }));
+      el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Install error: ${err.message}`;
+      }));
+      el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Uninstall error: ${err.message}`;
+      }));
+      el("refresh-cases").addEventListener("click", () => loadCatalog().catch((err) => {
+        catalogEl.textContent = `Catalog load error: ${err.message}`;
+      }));
+      [caseSearchEl, caseDomainFilterEl, caseDecisionFilterEl].forEach((node) => node.addEventListener("input", renderCaseExplorer));
       el("run").addEventListener("click", () => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }));
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
@@ -1004,7 +1048,9 @@ ${body}`;
         else sessionState.agents[0].plan = parsedPlan;
         renderSessionBuilder();
       });
-      ["session-budget-cost", "session-budget-time", "session-budget-tools"].forEach((id) => el(id).addEventListener("input", () => { sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2); }));
+      ["session-budget-cost", "session-budget-time", "session-budget-tools"].forEach((id) => el(id).addEventListener("input", () => {
+        sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+      }));
 
       planEl.addEventListener("input", () => {
         try { const plan = JSON.parse(planEl.value); renderDag(plan); renderWhatIfEditors(plan); scheduleAutoEvaluate(); }
@@ -1034,6 +1080,19 @@ ${body}`;
         scheduleAutoEvaluate();
       });
 
+      loadCatalog().then(() => runEvaluation()).catch((err) => {
+        catalogEl.textContent = `Catalog load error: ${err.message}`;
+      });
+      loadPlugins().catch((err) => {
+        pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
+      });
+      loadCalibrationDashboard().catch((err) => {
+        calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
+      });
+      runStreamingEvaluation().catch((err) => {
+        streamingEl.textContent = `Streaming load error: ${err.message}`;
+      });
+      renderSessionBuilder();
       renderSessionBuilder();
       loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
       loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });

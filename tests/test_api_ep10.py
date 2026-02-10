@@ -76,6 +76,10 @@ def test_templates_tools_cases_endpoints() -> None:
     assert "count" in cases
     if cases["count"] > 0:
         assert len(cases["domains"]) >= 1
+        first = cases["cases"][0]
+        assert "plan" in first
+        assert "expected_rationale" in first
+        assert "expected_step_vectors" in first
     else:
         assert "error" in cases
 

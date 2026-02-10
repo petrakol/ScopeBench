@@ -1473,11 +1473,16 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             "count": len(all_cases),
             "cases": [
                 {
+                    "case_schema_version": case.case_schema_version,
                     "id": case.id,
                     "domain": case.domain,
                     "instruction": case.instruction,
                     "expected_decision": case.expected_decision,
+                    "expected_rationale": case.expected_rationale,
+                    "expected_step_vectors": case.expected_step_vectors,
                     "contract": case.contract,
+                    "plan": case.plan,
+                    "notes": case.notes,
                 }
                 for case in all_cases
             ],
