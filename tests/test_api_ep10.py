@@ -106,6 +106,12 @@ def test_templates_tools_cases_endpoints() -> None:
         "power_concentration",
         "uncertainty",
     }
+    assert {entry.decision for entry in analytics.top_trigger_axes_by_decision} == {
+        "ASK",
+        "DENY",
+    }
+    assert all(entry.total_cases >= 0 for entry in analytics.top_trigger_axes_by_decision)
+    assert isinstance(analytics.effect_magnitude_profiles, list)
 
 
 def test_plan_patch_suggestions_cover_new_rules() -> None:

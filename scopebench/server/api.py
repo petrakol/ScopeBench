@@ -570,12 +570,34 @@ class EffectThresholdAnalytics(BaseModel):
     over_threshold_rate: float
 
 
+class DecisionAxisLeader(BaseModel):
+    axis: str
+    count: int
+    rate_within_decision: float
+
+
+class TopTriggerAxesByDecision(BaseModel):
+    decision: str
+    total_cases: int
+    top_axes: List[DecisionAxisLeader]
+
+
+class EffectMagnitudeProfile(BaseModel):
+    effect_type: str
+    magnitude: str
+    count: int
+    decision_counts: Dict[str, int]
+    decision_rates: Dict[str, float]
+
+
 class CasesAnalyticsResponse(BaseModel):
     source: str
     count: int
     decision_distribution_by_domain: List[DomainDecisionAnalytics]
     trigger_axes: List[AxisTriggerAnalytics]
     effect_magnitude_vs_threshold: List[EffectThresholdAnalytics]
+    top_trigger_axes_by_decision: List[TopTriggerAxesByDecision] = Field(default_factory=list)
+    effect_magnitude_profiles: List[EffectMagnitudeProfile] = Field(default_factory=list)
 _AXIS_TO_THRESHOLD_FIELD = {
     "spatial": "max_spatial",
     "temporal": "max_temporal",
@@ -1574,6 +1596,10 @@ def _build_cases_analytics(
     axis_threshold_total = {axis: 0.0 for axis in SCOPE_AXES}
     axis_margin_total = {axis: 0.0 for axis in SCOPE_AXES}
     axis_over_threshold = Counter({axis: 0 for axis in SCOPE_AXES})
+    dominant_axes_by_decision: Dict[str, Counter] = {
+        decision: Counter() for decision in ("ALLOW", "ASK", "DENY")
+    }
+    effect_magnitude_counts: Dict[tuple[str, str], Counter] = defaultdict(Counter)
 
     for case in all_cases:
         decision = str(case.expected_decision)
@@ -1599,6 +1625,21 @@ def _build_cases_analytics(
             "power_concentration": contract.thresholds.max_power_concentration,
             "uncertainty": contract.thresholds.max_uncertainty,
         }
+
+        top_axis = max(SCOPE_AXES, key=lambda axis: float(aggregate_dict[axis]))
+        dominant_axes_by_decision.setdefault(decision, Counter())[top_axis] += 1
+
+        for step in getattr(plan, "steps", []):
+            effects = step.effects
+            if effects is None:
+                continue
+            effects_dict = effects.model_dump(mode="python", exclude_none=True)
+            for effect_type, payload in effects_dict.items():
+                if effect_type == "version" or not isinstance(payload, dict):
+                    continue
+                magnitude = payload.get("magnitude")
+                if isinstance(magnitude, str):
+                    effect_magnitude_counts[(effect_type, magnitude)][decision] += 1
 
         ask_threshold = float(contract.escalation.ask_if_any_axis_over)
         ask_uncertainty = float(contract.escalation.ask_if_uncertainty_over)
@@ -1649,6 +1690,46 @@ def _build_cases_analytics(
         for axis in SCOPE_AXES
     ]
 
+    top_trigger_axes_by_decision: List[TopTriggerAxesByDecision] = []
+    for decision in ("ASK", "DENY"):
+        counts = dominant_axes_by_decision.get(decision, Counter())
+        total = int(sum(counts.values()))
+        top_axes = [
+            DecisionAxisLeader(
+                axis=axis,
+                count=int(count),
+                rate_within_decision=(count / total if total else 0.0),
+            )
+            for axis, count in counts.most_common(5)
+        ]
+        top_trigger_axes_by_decision.append(
+            TopTriggerAxesByDecision(
+                decision=decision,
+                total_cases=total,
+                top_axes=top_axes,
+            )
+        )
+
+    effect_magnitude_profiles: List[EffectMagnitudeProfile] = []
+    for (effect_type, magnitude), counts in sorted(effect_magnitude_counts.items()):
+        total = int(sum(counts.values()))
+        decision_counts = {
+            label: int(counts.get(label, 0)) for label in ("ALLOW", "ASK", "DENY")
+        }
+        decision_rates = {
+            label: (decision_counts[label] / total if total else 0.0)
+            for label in decision_counts
+        }
+        effect_magnitude_profiles.append(
+            EffectMagnitudeProfile(
+                effect_type=effect_type,
+                magnitude=magnitude,
+                count=total,
+                decision_counts=decision_counts,
+                decision_rates=decision_rates,
+            )
+        )
+
     total_cases = len(all_cases)
     effect_entries = [
         EffectThresholdAnalytics(
@@ -1676,6 +1757,8 @@ def _build_cases_analytics(
         decision_distribution_by_domain=domain_entries,
         trigger_axes=trigger_axes,
         effect_magnitude_vs_threshold=effect_entries,
+        top_trigger_axes_by_decision=top_trigger_axes_by_decision,
+        effect_magnitude_profiles=effect_magnitude_profiles,
     )
 
 
