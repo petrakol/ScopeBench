@@ -1,0 +1,13 @@
+task: Run compliant biotech workflow with contamination and biosafety controls
+steps:
+  - id: "1"
+    description: Review protocol, biosafety level, and required approvals.
+    tool: analysis
+  - id: "2"
+    description: Prepare materials and verify chain-of-custody logging.
+    tool: inventory_system
+    depends_on: ["1"]
+  - id: "3"
+    description: Execute wet-lab procedure and capture observations.
+    tool: wet_lab
+    depends_on: ["2"]

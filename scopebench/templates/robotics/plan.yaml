@@ -1,0 +1,13 @@
+task: Execute supervised robotics workflow with explicit safety gates
+steps:
+  - id: "1"
+    description: Validate workspace state, emergency stops, and safety interlocks.
+    tool: analysis
+  - id: "2"
+    description: Run dry-run simulation for target motion plan.
+    tool: simulator
+    depends_on: ["1"]
+  - id: "3"
+    description: Execute bounded robot operation under operator supervision.
+    tool: robotics_control
+    depends_on: ["2"]

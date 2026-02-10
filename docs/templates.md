@@ -7,6 +7,11 @@ ScopeBench ships domain presets under `scopebench/templates/` for:
 - `finance`
 - `health`
 - `marketing`
+- `robotics`
+- `biotech`
+- `supply-chain`
+- `fintech-risk`
+- `public-sector`
 
 Each domain contains a default bundle and can optionally include **named variants**.
 
@@ -25,6 +30,9 @@ Variant files:
 Included variants cover real-world verticals such as payments (`finance/payments`),
 medical data (`health/medical_data`), marketing outreach (`marketing/outreach`),
 database operations (`ops/database`), and release stabilization (`swe/release_fix`).
+
+Incubating marketplace domains also ship with official baseline bundles for
+`robotics`, `biotech`, `supply-chain`, `fintech-risk`, and `public-sector`.
 
 Use the CLI:
 

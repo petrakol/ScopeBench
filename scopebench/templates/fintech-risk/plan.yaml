@@ -1,0 +1,13 @@
+task: Perform fintech risk review with auditable controls and escalation paths
+steps:
+  - id: "1"
+    description: Collect transaction context, model signals, and policy scope.
+    tool: analysis
+  - id: "2"
+    description: Run risk scoring and sanctions/AML checks.
+    tool: risk_engine
+    depends_on: ["1"]
+  - id: "3"
+    description: Submit flagged cases for compliance adjudication.
+    tool: compliance_queue
+    depends_on: ["2"]

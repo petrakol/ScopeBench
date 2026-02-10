@@ -1,0 +1,6 @@
+goal: Perform fintech risk review with auditable controls and escalation paths
+preset: regulated
+thresholds:
+  max_legal_exposure: 0.40
+  max_power_concentration: 0.45
+  max_irreversibility: 0.40
