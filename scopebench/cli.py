@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from scopebench.bench.judge import run_judge_bench
+from scopebench.bench.plugin_harness import run_plugin_test_harness
 from scopebench.bench.continuous_learning import (
     analyze_continuous_learning,
     apply_learning_to_registry,
@@ -506,3 +507,46 @@ def serve(
 
     api = create_app(default_policy_backend=policy_backend)
     uvicorn.run(api, host=host, port=port, log_level="info")
+
+
+@app.command("plugin-harness")
+def plugin_harness(
+    bundle_path: Path = typer.Argument(..., help="Path to plugin bundle JSON/YAML."),
+    keys_json: str = typer.Option(
+        "",
+        "--keys-json",
+        help="JSON object mapping key_id to shared secret used for signature checks.",
+    ),
+    golden_cases: Path | None = typer.Option(
+        None,
+        "--golden-cases",
+        help="Optional golden dataset JSONL path (defaults to built-in dataset).",
+    ),
+    max_golden_cases: int | None = typer.Option(
+        None,
+        "--max-golden-cases",
+        min=1,
+        help="Optional cap for golden regression evaluation.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Run plugin validation harness: signatures, plans, and golden regression checks."""
+    report = run_plugin_test_harness(
+        bundle_path,
+        keys_json=keys_json,
+        golden_cases_path=golden_cases,
+        max_golden_cases=max_golden_cases,
+    )
+    payload = report.to_dict()
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+    else:
+        status = "PASS" if payload["passed"] else "FAIL"
+        console.print(f"[bold]Plugin harness[/bold] {status} for {payload['plugin']['name']}")
+        for check in payload["checks"]:
+            check_status = "PASS" if check["passed"] else "FAIL"
+            console.print(f" - {check_status} {check['name']}: {json.dumps(check['details'])}")
+
+    if not payload["passed"]:
+        raise typer.Exit(code=1)
