@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ScopeBench</title>
+    <style>
+      :root {
+        --bg-primary: #050505;
+        --bg-secondary: #111111;
+        --border: rgba(255, 255, 255, 0.16);
+        --text-muted: rgba(255, 255, 255, 0.72);
+        --panel: rgba(255, 255, 255, 0.04);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.08), transparent 40%),
+          radial-gradient(circle at 80% 70%, rgba(255, 255, 255, 0.06), transparent 35%),
+          linear-gradient(160deg, var(--bg-primary), var(--bg-secondary));
+        color: #ffffff;
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      }
+
+      .corner-logo {
+        position: fixed;
+        top: 1.5rem;
+        left: 1.5rem;
+        width: min(220px, 40vw);
+        opacity: 0.95;
+      }
+
+      .main {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 6rem 2rem 3rem;
+      }
+
+      .hero {
+        width: min(860px, 100%);
+        display: grid;
+        place-items: center;
+        gap: 1rem;
+        text-align: center;
+      }
+
+      .hero-logo {
+        width: min(700px, 86vw);
+        filter: drop-shadow(0 14px 36px rgba(255, 255, 255, 0.12));
+      }
+
+      .project-oneliner {
+        margin: 0;
+        font-size: clamp(1rem, 2.1vw, 1.25rem);
+        line-height: 1.45;
+        color: rgba(255, 255, 255, 0.9);
+      }
+
+      .tagline {
+        margin: 0;
+        font-size: clamp(0.85rem, 1.8vw, 1rem);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+
+      .manifest {
+        margin-top: 1.5rem;
+        width: min(860px, 100%);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: var(--panel);
+        padding: clamp(1rem, 2.2vw, 1.75rem);
+        text-align: left;
+        backdrop-filter: blur(5px);
+      }
+
+      .manifest h2 {
+        margin: 0 0 0.5rem;
+        font-size: clamp(1.05rem, 2vw, 1.3rem);
+      }
+
+      .manifest p {
+        margin: 0 0 0.7rem;
+        color: var(--text-muted);
+        line-height: 1.55;
+      }
+
+      .manifest ul {
+        margin: 0;
+        padding-left: 1.15rem;
+        display: grid;
+        gap: 0.45rem;
+        color: rgba(255, 255, 255, 0.9);
+      }
+
+      @media (max-width: 640px) {
+        .corner-logo {
+          top: 1rem;
+          left: 1rem;
+          width: min(160px, 48vw);
+        }
+
+        .main {
+          padding-top: 5rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <img
+      class="corner-logo"
+      src="ScopeBench_w%20copy.png"
+      alt="ScopeBench logo"
+    />
+
+    <main class="main">
+      <section class="hero" aria-label="ScopeBench landing page">
+        <img
+          class="hero-logo"
+          src="ScopeBench_w%20copy.png"
+          alt="ScopeBench"
+        />
+        <p class="project-oneliner">
+          ScopeBench is a research project for measuring how reliably AI agents stay within scope while solving real tasks.
+        </p>
+        <p class="tagline">Structured evaluation for scoped AI agents</p>
+
+        <article class="manifest" aria-label="Work in progress scientific manifest">
+          <h2>Work in Progress — Scientific Manifest</h2>
+          <p>
+            This section is a living white paper you can keep updating with the project's purpose, methods, and findings over time.
+          </p>
+          <ul>
+            <li><strong>Why ScopeBench exists:</strong> Define the gap this project addresses.</li>
+            <li><strong>What we are testing:</strong> Describe scope-control hypotheses and evaluation plans.</li>
+            <li><strong>What we found:</strong> Record results, surprises, and open questions.</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
