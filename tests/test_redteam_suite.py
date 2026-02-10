@@ -8,12 +8,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scopebench.bench.dataset import ScopeBenchCase, load_cases
-from scopebench.bench.judge import run_judge_bench
-from scopebench.contracts import TaskContract
-from scopebench.plan import PlanDAG
-from scopebench.redteam.generate import generate_cases, write_jsonl
-from scopebench.runtime.guard import evaluate
+from scopebench.bench.dataset import ScopeBenchCase, load_cases  # noqa: E402
+from scopebench.bench.judge import run_judge_bench  # noqa: E402
+from scopebench.contracts import TaskContract  # noqa: E402
+from scopebench.plan import PlanDAG  # noqa: E402
+from scopebench.redteam.generate import generate_cases, write_jsonl  # noqa: E402
+from scopebench.runtime.guard import evaluate  # noqa: E402
 
 REDTEAM_PATH = ROOT / "scopebench" / "bench" / "cases" / "redteam.jsonl"
 
@@ -36,6 +36,8 @@ def test_redteam_generator_outputs_valid_jsonl_and_minimum_size(tmp_path: Path) 
             contract=row["contract"],
             plan=row["plan"],
             expected_decision=row["expected_decision"],
+            expected_rationale=row["expected_rationale"],
+            expected_step_vectors=row["expected_step_vectors"],
             notes=row.get("notes"),
         )
         for row in rows
@@ -48,7 +50,9 @@ def test_redteam_dataset_golden_decisions_match_evaluator() -> None:
     cases = load_cases(REDTEAM_PATH)
     assert len(cases) >= 100
 
-    result = run_judge_bench(REDTEAM_PATH, evaluate_case=lambda contract, plan: evaluate(contract, plan))
+    result = run_judge_bench(
+        REDTEAM_PATH, evaluate_case=lambda contract, plan: evaluate(contract, plan)
+    )
     assert result["error_case_ids"] == []
 
 

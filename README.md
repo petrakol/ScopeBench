@@ -271,6 +271,23 @@ curl -s http://localhost:8080/cases | jq '.cases[0]'
 
 ---
 
+## Benchmark Dataset & CI Gates
+
+ScopeBench ships a large golden dataset at `scopebench/bench/cases/examples.jsonl` with 500+ curated cases across SWE, Ops, Finance, Health, and Marketing.
+
+Each case includes:
+- expected `ALLOW / ASK / DENY` decision
+- `expected_rationale` for auditability
+- step-level `expected_step_vectors` over all 10 scope axes
+
+CI runs explicit dataset gates:
+- dataset size/domain distribution sanity check
+- exact decision-match regression check (golden labels vs evaluator)
+
+See `docs/rubric_v1.md` for annotator guidance and scoring calibration.
+
+---
+
 ## Testing
 
 Run the test suite:
