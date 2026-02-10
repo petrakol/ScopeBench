@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from scopebench.contracts import TaskContract
 from scopebench.plan import PlanDAG
 from scopebench.runtime.guard import evaluate
-from scopebench.scoring.axes import combine_aggregates
+from scopebench.scoring.axes import SCOPE_AXES, combine_aggregates
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
 from scopebench.tracing.otel import current_trace_context, init_tracing
 from scopebench.scoring.rules import build_budget_ledger
@@ -228,14 +228,87 @@ class SessionAggregateDetail(BaseModel):
     decision: str
 
 
+class ScopeLaunderingSignal(BaseModel):
+    axis: str
+    global_value: float
+    max_agent_value: float
+    delta: float
+    ask_threshold: float
+
+
+class SessionDashboardEntry(BaseModel):
+    aggregate: Dict[str, float]
+    budget_consumption: Dict[str, float]
+    budget_utilization: Dict[str, float]
+    decision: str
+
+
+class SessionDashboard(BaseModel):
+    per_agent: Dict[str, SessionDashboardEntry]
+    global_: SessionDashboardEntry = Field(..., alias="global")
+
+    model_config = {"populate_by_name": True}
+
+
 class EvaluateSessionResponse(BaseModel):
     trace_id: Optional[str] = None
     span_id: Optional[str] = None
     decision: str
     per_agent: Dict[str, SessionAggregateDetail]
     global_: SessionAggregateDetail = Field(..., alias="global")
+    laundering_signals: List[ScopeLaunderingSignal]
+    dashboard: SessionDashboard
 
     model_config = {"populate_by_name": True}
+
+
+def _budget_consumption_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    return {key: float(values.get("consumed", 0.0)) for key, values in ledger.items()}
+
+
+def _budget_utilization_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    utilization: Dict[str, float] = {}
+    for key, values in ledger.items():
+        budget = float(values.get("budget", 0.0))
+        consumed = float(values.get("consumed", 0.0))
+        utilization[key] = 0.0 if budget <= 0.0 else consumed / budget
+    return utilization
+
+
+def _aggregate_session_risk(per_agent_aggregates: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    aggregated: Dict[str, float] = {}
+    for axis in SCOPE_AXES:
+        aggregated[axis] = min(
+            1.0,
+            sum(float(agg.get(axis, 0.0)) for agg in per_agent_aggregates.values()),
+        )
+    return aggregated
+
+
+def _detect_cross_agent_scope_laundering(
+    *,
+    global_aggregate: Dict[str, float],
+    per_agent_aggregates: Dict[str, Dict[str, float]],
+    ask_threshold: float,
+) -> List[ScopeLaunderingSignal]:
+    signals: List[ScopeLaunderingSignal] = []
+    for axis in SCOPE_AXES:
+        global_value = float(global_aggregate.get(axis, 0.0))
+        max_agent_value = max(
+            (float(aggregate.get(axis, 0.0)) for aggregate in per_agent_aggregates.values()),
+            default=0.0,
+        )
+        if global_value >= ask_threshold and max_agent_value < ask_threshold:
+            signals.append(
+                ScopeLaunderingSignal(
+                    axis=axis,
+                    global_value=global_value,
+                    max_agent_value=max_agent_value,
+                    delta=global_value - max_agent_value,
+                    ask_threshold=ask_threshold,
+                )
+            )
+    return signals
 
 
 def _summarize_response(policy, aggregate, effective_decision: str) -> str:
@@ -246,10 +319,6 @@ def _summarize_response(policy, aggregate, effective_decision: str) -> str:
 
 def _next_steps_from_policy(policy) -> List[str]:
     suggestions: List[str] = []
-    for axis, (_, threshold) in policy.exceeded.items():
-        suggestions.append(
-            f"Reduce {axis} below {float(threshold):.2f} or split into smaller steps."
-        )
 
     if "read_before_write" in policy.asked:
         suggestions.append(
@@ -260,6 +329,11 @@ def _next_steps_from_policy(policy) -> List[str]:
             "Add a downstream validation step after patching (for example: run targeted tests)."
         )
 
+    for axis, (_, threshold) in policy.exceeded.items():
+        suggestions.append(
+            f"Reduce {axis} below {float(threshold):.2f} or split into smaller steps."
+        )
+
     for axis, threshold in policy.asked.items():
         if axis in {"read_before_write", "validation_after_write"}:
             continue
@@ -267,6 +341,19 @@ def _next_steps_from_policy(policy) -> List[str]:
 
     if any("Tool category" in reason for reason in policy.reasons):
         suggestions.append("Remove high-risk tool categories or get explicit approval.")
+
+    knee_recommendations = []
+    if policy.policy_input is not None:
+        knee_recommendations = (
+            policy.policy_input.metadata.get("knee_plan_patch_recommendations", [])
+            if isinstance(policy.policy_input.metadata, dict)
+            else []
+        )
+    for recommendation in knee_recommendations:
+        rationale = recommendation.get("rationale") if isinstance(recommendation, dict) else None
+        if rationale:
+            suggestions.append(f"Knee recommendation: {rationale}")
+
     if not suggestions:
         suggestions.append("Proceed; plan appears proportionate to the contract.")
     return suggestions[:5]
@@ -274,6 +361,16 @@ def _next_steps_from_policy(policy) -> List[str]:
 
 def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
     patches: List[Dict[str, Any]] = []
+
+    knee_recommendations = []
+    if policy.policy_input is not None and isinstance(policy.policy_input.metadata, dict):
+        knee_recommendations = policy.policy_input.metadata.get("knee_plan_patch_recommendations", [])
+    for recommendation in knee_recommendations:
+        if isinstance(recommendation, dict):
+            patch = recommendation.get("patch")
+            if isinstance(patch, dict):
+                patches.append(patch)
+
     triggered = set(policy.exceeded.keys()) | set(policy.asked.keys())
     if "read_before_write" in policy.asked:
         first_write = next((step for step in plan.steps if step.tool in SWE_WRITE_TOOLS), None)
@@ -784,6 +881,8 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         backend = req.policy_backend or default_policy_backend
 
         per_agent: Dict[str, SessionAggregateDetail] = {}
+        per_agent_aggregates: Dict[str, Dict[str, float]] = {}
+        per_agent_dashboard: Dict[str, SessionDashboardEntry] = {}
         agent_aggregates = []
         global_plans: List[PlanDAG] = []
         global_decision = "ALLOW"
@@ -810,9 +909,17 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             if any(entry["exceeded"] > 0 for entry in agent_ledger.values()) and agent_decision != "DENY":
                 agent_decision = "ASK"
 
+            aggregate_dict = agent_aggregate.as_dict()
             per_agent[agent.agent_id] = SessionAggregateDetail(
-                aggregate=agent_aggregate.as_dict(),
+                aggregate=aggregate_dict,
                 ledger=agent_ledger,
+                decision=agent_decision,
+            )
+            per_agent_aggregates[agent.agent_id] = aggregate_dict
+            per_agent_dashboard[agent.agent_id] = SessionDashboardEntry(
+                aggregate=aggregate_dict,
+                budget_consumption=_budget_consumption_from_ledger(agent_ledger),
+                budget_utilization=_budget_utilization_from_ledger(agent_ledger),
                 decision=agent_decision,
             )
             agent_aggregates.append(agent_aggregate)
@@ -822,24 +929,44 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             elif agent_decision == "ASK" and global_decision != "DENY":
                 global_decision = "ASK"
 
-        global_aggregate = combine_aggregates(agent_aggregates)
+        global_aggregate_dict = _aggregate_session_risk(per_agent_aggregates)
         global_ledger = build_budget_ledger(session.global_contract, global_plans)
         if any(entry["exceeded"] > 0 for entry in global_ledger.values()) and global_decision != "DENY":
             global_decision = "ASK"
 
+        global_threshold = float(session.global_contract.escalation.ask_if_any_axis_over)
+        laundering_signals = _detect_cross_agent_scope_laundering(
+            global_aggregate=global_aggregate_dict,
+            per_agent_aggregates=per_agent_aggregates,
+            ask_threshold=global_threshold,
+        )
+        if laundering_signals and global_decision == "ALLOW":
+            global_decision = "ASK"
+
         global_scope = SessionAggregateDetail(
-            aggregate=global_aggregate.as_dict(),
+            aggregate=global_aggregate_dict,
             ledger=global_ledger,
             decision=global_decision,
         )
         with tracer.start_as_current_span("scopebench.evaluate_session.response"):
             trace_context = current_trace_context()
+        dashboard = SessionDashboard(
+            per_agent=per_agent_dashboard,
+            global_=SessionDashboardEntry(
+                aggregate=global_aggregate_dict,
+                budget_consumption=_budget_consumption_from_ledger(global_ledger),
+                budget_utilization=_budget_utilization_from_ledger(global_ledger),
+                decision=global_decision,
+            ),
+        )
         return EvaluateSessionResponse(
             trace_id=trace_context.get("trace_id"),
             span_id=trace_context.get("span_id"),
             decision=global_decision,
             per_agent=per_agent,
             global_=global_scope,
+            laundering_signals=laundering_signals,
+            dashboard=dashboard,
         )
 
     return app

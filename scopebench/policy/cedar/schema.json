@@ -5,22 +5,26 @@
         "shape": {
           "type": "Record",
           "attributes": {
-            "aggregate": {
-              "type": "Record",
-              "attributes": {
-                "spatial": {"type": "Long"},
-                "temporal": {"type": "Long"},
-                "depth": {"type": "Long"},
-                "uncertainty": {"type": "Long"}
-              }
-            },
-            "contract": {"type": "Record"}
+            "aggregate": {"type": "Record"},
+            "thresholds": {"type": "Record"},
+            "facts": {"type": "Record"}
           }
+        }
+      },
+      "Principal": {
+        "shape": {
+          "type": "Record",
+          "attributes": {}
         }
       }
     },
     "actions": {
-      "Evaluate": {}
+      "Evaluate": {
+        "appliesTo": {
+          "principalTypes": ["Principal"],
+          "resourceTypes": ["Request"]
+        }
+      }
     }
   }
 }

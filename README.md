@@ -178,7 +178,7 @@ Template variants are also available in the CLI using `<domain>/<variant>/<kind>
 
 ### `POST /evaluate_session`
 
-Evaluate a multi-agent session with a shared global contract, per-agent plans, and global budget enforcement.
+Evaluate a multi-agent session with a shared global contract, per-agent plans, global budget enforcement, and cross-agent scope laundering detection.
 
 Example:
 
@@ -193,6 +193,8 @@ Response includes:
 - `decision` (global)
 - `per_agent.<agent_id>.aggregate` and `per_agent.<agent_id>.ledger`
 - `global.aggregate` and `global.ledger`
+- `laundering_signals` for cross-agent envelope bypass attempts
+- `dashboard.per_agent` / `dashboard.global` budget consumption + utilization summaries
 
 
 ---
