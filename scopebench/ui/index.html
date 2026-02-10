@@ -767,6 +767,17 @@ Require rollback plan before high-irreversibility actions.</textarea>
         step.effects = step.effects || {}; step.effects[effectKey] = toMagnitude(sliderValue); planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate();
       }
 
+      function applySuggestedEffects(plan, suggestions = []) {
+        const nextPlan = JSON.parse(JSON.stringify(plan || { task: "", steps: [] }));
+        const stepById = Object.fromEntries((nextPlan.steps || []).map((step) => [String(step.id), step]));
+        (suggestions || []).forEach((item) => {
+          const stepId = String(item?.step_id || "");
+          if (!stepId || !stepById[stepId]) return;
+          stepById[stepId].effects = item.effects || {};
+        });
+        return nextPlan;
+      }
+
       async function suggestEffectsForPlan() {
         const plan = JSON.parse(planEl.value);
         const res = await fetch("/suggest_effects", {
@@ -776,9 +787,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        planEl.value = JSON.stringify(data.plan, null, 2);
-        renderDag(data.plan);
-        renderWhatIfEditors(data.plan);
+        const updatedPlan = applySuggestedEffects(data.plan || plan, data.suggestions || []);
+        planEl.value = JSON.stringify(updatedPlan, null, 2);
+        renderDag(updatedPlan);
+        renderWhatIfEditors(updatedPlan);
         scheduleAutoEvaluate();
       }
 
