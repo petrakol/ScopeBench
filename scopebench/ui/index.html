@@ -294,6 +294,46 @@
         </div>
       </section>
 
+      <section class="card" style="margin-top: 16px">
+        <h3>Policy Editing Workbench</h3>
+        <p class="muted">View backend policy assets + signed plugin rules, tune thresholds, propose rule edits, and test safely before apply.</p>
+        <div class="field-grid">
+          <label>Backend
+            <select id="policy-backend-select">
+              <option value="python">python</option>
+              <option value="opa">opa</option>
+              <option value="cedar">cedar</option>
+            </select>
+          </label>
+          <label>Editor token
+            <input id="policy-editor-token" type="text" placeholder="X-ScopeBench-Policy-Token" />
+          </label>
+          <label>Summary
+            <input id="policy-summary" type="text" placeholder="Why this policy change is needed" />
+          </label>
+        </div>
+        <div class="controls" style="margin-bottom: 8px;">
+          <button id="policy-refresh" class="secondary">Refresh policy state</button>
+          <button id="policy-test" class="secondary">Test policy edits</button>
+          <button id="policy-apply">Apply proposal</button>
+        </div>
+        <div class="grid two-col">
+          <div>
+            <h4>Threshold overrides (JSON)</h4>
+            <textarea id="policy-threshold-overrides" style="min-height: 130px">{}</textarea>
+            <h4>Proposed rules (JSON array)</h4>
+            <textarea id="policy-rules-proposal" style="min-height: 160px">[]</textarea>
+          </div>
+          <div>
+            <h4>Policy state</h4>
+            <pre id="policy-workbench-state"></pre>
+            <h4>Policy test/apply output</h4>
+            <pre id="policy-workbench-output"></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid" style="margin-top: 16px">
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Per-agent aggregates</h3>
@@ -416,6 +456,13 @@
       const wizardStepsEl = el("wizard-steps");
       const caseDraftEl = el("case-draft");
       const datasetOutputEl = el("dataset-output");
+      const policyBackendSelectEl = el("policy-backend-select");
+      const policyEditorTokenEl = el("policy-editor-token");
+      const policySummaryEl = el("policy-summary");
+      const policyThresholdOverridesEl = el("policy-threshold-overrides");
+      const policyRulesProposalEl = el("policy-rules-proposal");
+      const policyWorkbenchStateEl = el("policy-workbench-state");
+      const policyWorkbenchOutputEl = el("policy-workbench-output");
       const effectLabModeEl = el("effect-lab-mode");
       const effectLabExplicitEl = el("effect-lab-explicit");
       const effectLabPriorsEl = el("effect-lab-priors");
@@ -961,6 +1008,60 @@
         pluginManagerEl.textContent = JSON.stringify(installed, null, 2);
       }
 
+      function parsePolicyEditorJson(text, fallback) {
+        try {
+          const parsed = JSON.parse(text || "");
+          return parsed == null ? fallback : parsed;
+        } catch (_err) {
+          return fallback;
+        }
+      }
+
+      async function loadPolicyWorkbenchState() {
+        const backend = policyBackendSelectEl.value || "python";
+        const token = policyEditorTokenEl.value.trim();
+        const headers = token ? { "X-ScopeBench-Policy-Token": token } : {};
+        const payload = await fetch(`/policy/workbench?policy_backend=${encodeURIComponent(backend)}`, { headers }).then((r) => r.json());
+        policyWorkbenchStateEl.textContent = JSON.stringify(payload, null, 2);
+      }
+
+      async function testPolicyWorkbenchEdits() {
+        const body = {
+          policy_backend: policyBackendSelectEl.value || "python",
+          contract: JSON.parse(contractEl.value),
+          plan: JSON.parse(planEl.value),
+          threshold_overrides: parsePolicyEditorJson(policyThresholdOverridesEl.value, {}),
+          proposed_rules: parsePolicyEditorJson(policyRulesProposalEl.value, [])
+        };
+        const response = await fetch("/policy/workbench/test", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body)
+        }).then((r) => r.json());
+        policyWorkbenchOutputEl.textContent = JSON.stringify(response, null, 2);
+      }
+
+      async function applyPolicyWorkbenchEdits() {
+        const token = policyEditorTokenEl.value.trim();
+        const body = {
+          policy_backend: policyBackendSelectEl.value || "python",
+          summary: policySummaryEl.value.trim() || null,
+          contract: JSON.parse(contractEl.value),
+          plan: JSON.parse(planEl.value),
+          threshold_overrides: parsePolicyEditorJson(policyThresholdOverridesEl.value, {}),
+          proposed_rules: parsePolicyEditorJson(policyRulesProposalEl.value, [])
+        };
+        const response = await fetch("/policy/workbench/apply", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { "X-ScopeBench-Policy-Token": token } : {})
+          },
+          body: JSON.stringify(body)
+        }).then((r) => r.json());
+        policyWorkbenchOutputEl.textContent = JSON.stringify(response, null, 2);
+      }
+
       async function installPluginBundle() {
         const payload = { source_path: pluginSourceEl.value, plugin_dir: pluginTargetDirEl.value };
         const response = await fetch("/plugins/install", {
@@ -1108,6 +1209,10 @@
         renderSessionDashboard(payload);
       }
 
+      async function loadCalibrationDashboard() {
+        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
+        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
+      }
       async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
       async function loadCalibrationDashboard() {
@@ -1270,6 +1375,7 @@ ${body}`;
         streamingEl.textContent = `Error: ${err.message}`;
       }));
       el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => {
+        pluginManagerEl.textContent = `Error: ${err.message}`;
         pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
       }));
       el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => {
@@ -1277,6 +1383,15 @@ ${body}`;
       }));
       el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => {
         pluginManagerEl.textContent = `Uninstall error: ${err.message}`;
+      }));
+      el("policy-refresh").addEventListener("click", () => loadPolicyWorkbenchState().catch((err) => {
+        policyWorkbenchStateEl.textContent = `State error: ${err.message}`;
+      }));
+      el("policy-test").addEventListener("click", () => testPolicyWorkbenchEdits().catch((err) => {
+        policyWorkbenchOutputEl.textContent = `Test error: ${err.message}`;
+      }));
+      el("policy-apply").addEventListener("click", () => applyPolicyWorkbenchEdits().catch((err) => {
+        policyWorkbenchOutputEl.textContent = `Apply error: ${err.message}`;
       }));
       el("refresh-cases").addEventListener("click", () => loadCatalog().catch((err) => {
         catalogEl.textContent = `Catalog load error: ${err.message}`;
@@ -1358,6 +1473,8 @@ ${body}`;
       runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
       loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
       runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
+      loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
+      loadPolicyWorkbenchState().catch((err) => { policyWorkbenchStateEl.textContent = `Policy state load error: ${err.message}`; });
     </script>
   </body>
 </html>

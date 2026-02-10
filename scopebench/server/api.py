@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -272,6 +272,50 @@ class DatasetSuggestResponse(BaseModel):
     case: Dict[str, Any]
 
 
+class PolicyRuleProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    action: str = Field(description="ALLOW|ASK|DENY")
+    axis: Optional[str] = None
+    operator: Optional[str] = None
+    value: Optional[float] = None
+    reason: Optional[str] = None
+
+
+class PolicyWorkbenchStateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    policy_backend: str
+    thresholds: Dict[str, float]
+    escalation: Dict[str, Any]
+    backend_assets: Dict[str, Optional[str]]
+    signed_policy_rules: List[Dict[str, Any]]
+    authorization: Dict[str, Any]
+
+
+class PolicyWorkbenchTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    policy_backend: str = "python"
+    contract: Dict[str, Any]
+    plan: Dict[str, Any]
+    threshold_overrides: Dict[str, float] = Field(default_factory=dict)
+    proposed_rules: List[PolicyRuleProposal] = Field(default_factory=list)
+
+
+class PolicyWorkbenchApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    policy_backend: str = "python"
+    summary: Optional[str] = None
+    contract: Dict[str, Any]
+    plan: Dict[str, Any]
+    threshold_overrides: Dict[str, float] = Field(default_factory=dict)
+    proposed_rules: List[PolicyRuleProposal] = Field(default_factory=list)
+
+
+class PolicyWorkbenchApplyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    saved_to: str
+    proposal_id: str
 class SuggestEffectsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     plan: Dict[str, Any]
@@ -1171,6 +1215,53 @@ def _build_telemetry(
     )
 
 
+
+
+def _policy_backend_assets(policy_backend: str) -> Dict[str, Optional[str]]:
+    base = Path(__file__).resolve().parents[1] / "policy"
+    if policy_backend == "opa":
+        rego = base / "opa" / "policy.rego"
+        return {"rego": str(rego), "cedar": None, "schema": None}
+    if policy_backend == "cedar":
+        cedar = base / "cedar" / "policy.cedar"
+        schema = base / "cedar" / "schema.json"
+        return {"rego": None, "cedar": str(cedar), "schema": str(schema)}
+    return {"rego": None, "cedar": None, "schema": None}
+
+
+def _rule_threshold_overrides(rules: List[PolicyRuleProposal]) -> Dict[str, float]:
+    overrides: Dict[str, float] = {}
+    for rule in rules:
+        axis = (rule.axis or "").strip()
+        op = (rule.operator or "").strip()
+        if axis and axis in SCOPE_AXES and op in {">", ">="} and rule.value is not None:
+            overrides[f"max_{axis}"] = float(rule.value)
+    return overrides
+
+
+def _apply_workbench_overrides(contract_payload: Dict[str, Any], threshold_overrides: Dict[str, float], rules: List[PolicyRuleProposal]) -> TaskContract:
+    patched = json.loads(json.dumps(contract_payload))
+    thresholds = patched.get("thresholds")
+    if not isinstance(thresholds, dict):
+        thresholds = {}
+        patched["thresholds"] = thresholds
+    merged = dict(threshold_overrides)
+    merged.update(_rule_threshold_overrides(rules))
+    for key, value in merged.items():
+        if key.startswith("max_") and isinstance(value, (int, float)):
+            thresholds[key] = float(value)
+    return TaskContract.model_validate(patched)
+
+
+def _authorized_policy_editor(token: Optional[str]) -> tuple[bool, str]:
+    expected = os.getenv("SCOPEBENCH_POLICY_EDITOR_TOKEN", "").strip()
+    if not expected:
+        return False, "SCOPEBENCH_POLICY_EDITOR_TOKEN is not configured"
+    if not token:
+        return False, "missing X-ScopeBench-Policy-Token header"
+    if token.strip() != expected:
+        return False, "invalid policy editor token"
+    return True, "authorized"
 def _effective_decision(policy_decision: str, shadow_mode: bool) -> str:
     if shadow_mode and policy_decision in {"ASK", "DENY"}:
         return "ALLOW"
@@ -1449,6 +1540,82 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             },
             "plugins": plugin_manager.bundles_payload(),
         }
+
+    @app.get("/policy/workbench", response_model=PolicyWorkbenchStateResponse)
+    def policy_workbench_state(policy_backend: str = default_policy_backend, x_scopebench_policy_token: Optional[str] = Header(default=None)):
+        authorized, message = _authorized_policy_editor(x_scopebench_policy_token)
+        baseline_contract = TaskContract(goal="Policy tuning sandbox")
+        assets = _policy_backend_assets(policy_backend)
+        return PolicyWorkbenchStateResponse(
+            policy_backend=policy_backend,
+            thresholds={
+                "max_spatial": baseline_contract.thresholds.max_spatial,
+                "max_temporal": baseline_contract.thresholds.max_temporal,
+                "max_depth": baseline_contract.thresholds.max_depth,
+                "max_irreversibility": baseline_contract.thresholds.max_irreversibility,
+                "max_resource_intensity": baseline_contract.thresholds.max_resource_intensity,
+                "max_legal_exposure": baseline_contract.thresholds.max_legal_exposure,
+                "max_dependency_creation": baseline_contract.thresholds.max_dependency_creation,
+                "max_stakeholder_radius": baseline_contract.thresholds.max_stakeholder_radius,
+                "max_power_concentration": baseline_contract.thresholds.max_power_concentration,
+                "max_uncertainty": baseline_contract.thresholds.max_uncertainty,
+            },
+            escalation={
+                "ask_if_any_axis_over": baseline_contract.escalation.ask_if_any_axis_over,
+                "ask_if_uncertainty_over": baseline_contract.escalation.ask_if_uncertainty_over,
+                "ask_if_tool_category_in": sorted(baseline_contract.escalation.ask_if_tool_category_in),
+            },
+            backend_assets=assets,
+            signed_policy_rules=[dict(rule) for rule in plugin_manager.policy_rules],
+            authorization={"authorized": authorized, "message": message},
+        )
+
+    @app.post("/policy/workbench/test")
+    def policy_workbench_test(req: PolicyWorkbenchTestRequest):
+        contract = _apply_workbench_overrides(req.contract, req.threshold_overrides, req.proposed_rules)
+        plan = PlanDAG.model_validate(req.plan)
+        result = evaluate(contract, plan, policy_backend=req.policy_backend)
+        applied = dict(req.threshold_overrides)
+        applied.update(_rule_threshold_overrides(req.proposed_rules))
+        return {
+            "decision": result.policy.decision.value,
+            "policy_backend": result.policy.policy_backend,
+            "policy_version": result.policy.policy_version,
+            "policy_hash": result.policy.policy_hash,
+            "reasons": result.policy.reasons,
+            "aggregate": result.aggregate.as_dict(),
+            "asked": {key: float(value) for key, value in result.policy.asked.items()},
+            "exceeded": {
+                key: {"value": float(values[0]), "threshold": float(values[1])}
+                for key, values in result.policy.exceeded.items()
+            },
+            "applied_threshold_overrides": applied,
+            "proposed_rules": [rule.model_dump() for rule in req.proposed_rules],
+            "n_steps": len(plan.steps),
+        }
+
+    @app.post("/policy/workbench/apply", response_model=PolicyWorkbenchApplyResponse)
+    def policy_workbench_apply(req: PolicyWorkbenchApplyRequest, x_scopebench_policy_token: Optional[str] = Header(default=None)):
+        authorized, message = _authorized_policy_editor(x_scopebench_policy_token)
+        if not authorized:
+            raise HTTPException(status_code=403, detail=message)
+
+        target_dir = Path(os.getenv("SCOPEBENCH_POLICY_PROPOSALS_DIR", ".scopebench/policy_proposals")).expanduser().resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        proposal_id = datetime.now(timezone.utc).strftime("policy-proposal-%Y%m%dT%H%M%SZ")
+        target_path = target_dir / f"{proposal_id}.json"
+        payload = {
+            "proposal_id": proposal_id,
+            "created_utc": datetime.now(timezone.utc).isoformat(),
+            "summary": req.summary,
+            "policy_backend": req.policy_backend,
+            "contract": req.contract,
+            "plan": req.plan,
+            "threshold_overrides": req.threshold_overrides,
+            "proposed_rules": [rule.model_dump() for rule in req.proposed_rules],
+        }
+        target_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return PolicyWorkbenchApplyResponse(ok=True, saved_to=str(target_path), proposal_id=proposal_id)
 
     @app.get("/cases")
     def cases_endpoint():
