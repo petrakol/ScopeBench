@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from scopebench.bench.judge import run_judge_bench
+from scopebench.bench.plugin_harness import run_plugin_test_harness
 from scopebench.bench.continuous_learning import (
     analyze_continuous_learning,
     apply_learning_to_registry,
@@ -25,6 +26,7 @@ from scopebench.scoring.calibration import (
     calibration_to_dict,
     compute_axis_calibration_from_telemetry,
 )
+from scopebench.scoring.effects_annotator import suggest_effects_for_plan
 from scopebench.scoring.llm_judge import JudgeMode
 from scopebench.tracing.otel import init_tracing
 
@@ -32,6 +34,13 @@ app = typer.Typer(add_completion=False, help="ScopeBench: plan-level proportiona
 template_app = typer.Typer(help="Domain template discovery and generation.")
 app.add_typer(template_app, name="template")
 console = Console()
+
+
+def _load_plan_yaml(path: Path) -> Dict[str, Any]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise typer.BadParameter(f"Plan file {path} must contain a YAML mapping")
+    return raw
 
 
 TEMPLATES_ROOT = Path(__file__).resolve().parent / "templates"
@@ -307,6 +316,60 @@ def run(
     _print_result(res, as_json=json_out, compact_json=compact_json)
 
 
+@app.command("suggest-effects")
+def suggest_effects(
+    plan_path: Path = typer.Argument(..., help="Path to plan YAML."),
+    in_place: bool = typer.Option(
+        False,
+        "--in-place",
+        help="Write suggested effects back into the provided plan file.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Suggest effects_v1 annotations per step using tool defaults and heuristics."""
+    from scopebench.plan import plan_from_dict
+
+    plan_data = _load_plan_yaml(plan_path)
+    plan = plan_from_dict(plan_data)
+    suggestions = suggest_effects_for_plan(plan)
+
+    if in_place:
+        step_lookup = {
+            str(step.get("id")): step
+            for step in plan_data.get("steps", [])
+            if isinstance(step, dict)
+        }
+        for suggestion in suggestions:
+            if suggestion.step_id in step_lookup:
+                step_lookup[suggestion.step_id]["effects"] = suggestion.effects.model_dump(
+                    mode="json", exclude_none=True
+                )
+        plan_path.write_text(yaml.safe_dump(plan_data, sort_keys=False), encoding="utf-8")
+
+    payload = {
+        "plan_path": str(plan_path),
+        "in_place": in_place,
+        "steps": [
+            {
+                "id": item.step_id,
+                "tool": item.tool,
+                "effects": item.effects.model_dump(mode="json", exclude_none=True),
+            }
+            for item in suggestions
+        ],
+    }
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+    else:
+        for item in payload["steps"]:
+            console.print(f"[bold]Step {item['id']}[/bold] tool={item['tool'] or 'unknown'}")
+            console.print(yaml.safe_dump(item["effects"], sort_keys=False).strip())
+            console.print("")
+        if in_place:
+            console.print(f"Updated {plan_path} with suggested effects_v1 annotations.")
+
+
 @app.command()
 def quickstart(
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
@@ -506,3 +569,46 @@ def serve(
 
     api = create_app(default_policy_backend=policy_backend)
     uvicorn.run(api, host=host, port=port, log_level="info")
+
+
+@app.command("plugin-harness")
+def plugin_harness(
+    bundle_path: Path = typer.Argument(..., help="Path to plugin bundle JSON/YAML."),
+    keys_json: str = typer.Option(
+        "",
+        "--keys-json",
+        help="JSON object mapping key_id to shared secret used for signature checks.",
+    ),
+    golden_cases: Path | None = typer.Option(
+        None,
+        "--golden-cases",
+        help="Optional golden dataset JSONL path (defaults to built-in dataset).",
+    ),
+    max_golden_cases: int | None = typer.Option(
+        None,
+        "--max-golden-cases",
+        min=1,
+        help="Optional cap for golden regression evaluation.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Run plugin validation harness: signatures, plans, and golden regression checks."""
+    report = run_plugin_test_harness(
+        bundle_path,
+        keys_json=keys_json,
+        golden_cases_path=golden_cases,
+        max_golden_cases=max_golden_cases,
+    )
+    payload = report.to_dict()
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+    else:
+        status = "PASS" if payload["passed"] else "FAIL"
+        console.print(f"[bold]Plugin harness[/bold] {status} for {payload['plugin']['name']}")
+        for check in payload["checks"]:
+            check_status = "PASS" if check["passed"] else "FAIL"
+            console.print(f" - {check_status} {check['name']}: {json.dumps(check['details'])}")
+
+    if not payload["passed"]:
+        raise typer.Exit(code=1)

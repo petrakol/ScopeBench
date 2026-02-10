@@ -329,3 +329,52 @@ def test_tools_and_cases_include_plugin_extensions(tmp_path: Path, monkeypatch) 
     cases = _endpoint(app, "/cases")()
     case_ids = {item["id"] for item in cases["cases"]}
     assert "robotics_case_001" in case_ids
+
+
+def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
+    app = create_app()
+    marketplace = _endpoint(app, "/plugin_marketplace")()
+    assert marketplace["count"] >= 1
+    plugin_bundles = {item.get("plugin_bundle") for item in marketplace["plugins"] if isinstance(item, dict)}
+    assert "robotics-starter" in plugin_bundles
+
+
+def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "installed_plugins"
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+
+    bundle = {
+        "name": "fintech-pack",
+        "version": "0.1.0",
+        "publisher": "community",
+        "tools": {
+            "risk_scan": {
+                "category": "fintech_risk",
+                "domains": ["fintech"],
+                "risk_class": "moderate",
+                "priors": {"legal_exposure": 0.4, "uncertainty": 0.3},
+            }
+        },
+    }
+    source_path = source_dir / "fintech.json"
+    source_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    monkeypatch.setenv("SCOPEBENCH_PLUGIN_DIRS", str(plugin_dir))
+    app = create_app()
+
+    installed_before = _endpoint(app, "/plugins")()
+    assert installed_before["count"] == 0
+
+    install_result = _endpoint(app, "/plugins/install")({"source_path": str(source_path), "plugin_dir": str(plugin_dir)})
+    assert install_result["ok"] is True
+    target_path = Path(install_result["target_path"])
+    assert target_path.exists()
+
+    app_after_install = create_app()
+    installed_after = _endpoint(app_after_install, "/plugins")()
+    assert any(item["name"] == "fintech-pack" for item in installed_after["plugins"])
+
+    uninstall_result = _endpoint(app_after_install, "/plugins/uninstall")({"source_path": str(target_path)})
+    assert uninstall_result["ok"] is True
+    assert target_path.exists() is False

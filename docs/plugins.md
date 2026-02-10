@@ -140,3 +140,22 @@ ScopeBench maintains a lightweight index at `docs/plugin_marketplace.yaml` with 
 - public-sector
 
 Use PRs to add/refresh listings.
+
+
+## Plugin development test harness
+
+Use the built-in harness to validate a bundle before publishing:
+
+```bash
+scopebench plugin-harness path/to/plugin.yaml   --keys-json '{"community-main":"supersecret"}'   --max-golden-cases 200
+```
+
+The harness runs five checks:
+
+- signature validation for signed bundles
+- policy-rule gating (policy contributions only load when signatures are valid)
+- representative execution of plugin-provided cases
+- representative execution of built-in example plans
+- regression check against the golden benchmark dataset (or a custom `--golden-cases` file)
+
+It exits non-zero if any check fails, so it can be used in CI for external plugin repos.

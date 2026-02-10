@@ -5,126 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScopeBench UI</title>
     <style>
-      :root {
-        color-scheme: light;
-        font-family: Inter, Arial, sans-serif;
-      }
-      body {
-        margin: 0;
-        background: #f3f5f8;
-        color: #111827;
-      }
-      main {
-        max-width: 1200px;
-        margin: 24px auto;
-        padding: 0 16px 32px;
-      }
-      h1, h2, h3 {
-        margin: 0 0 8px;
-      }
-      p {
-        margin: 4px 0 12px;
-      }
-      .grid {
-        display: grid;
-        gap: 16px;
-      }
-      .two-col {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-      .card {
-        background: #fff;
-        border: 1px solid #d1d5db;
-        border-radius: 10px;
-        padding: 14px;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-      }
-      textarea, pre, select {
-        width: 100%;
-        box-sizing: border-box;
-        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      }
-      textarea {
-        min-height: 180px;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        padding: 8px;
-      }
-      pre {
-        margin: 0;
-        background: #0f172a;
-        color: #f8fafc;
-        border-radius: 8px;
-        padding: 10px;
-        overflow-x: auto;
-        min-height: 120px;
-      }
-      .controls {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
-      }
-      button {
-        border: 1px solid #2563eb;
-        background: #2563eb;
-        color: #fff;
-        border-radius: 8px;
-        padding: 8px 12px;
-        cursor: pointer;
-      }
-      button.secondary {
-        border-color: #64748b;
-        background: #64748b;
-      }
-      .badge {
-        display: inline-block;
-        border-radius: 999px;
-        padding: 2px 8px;
-        font-size: 12px;
-        margin-right: 8px;
-      }
+      :root { color-scheme: light; font-family: Inter, Arial, sans-serif; }
+      body { margin: 0; background: #f3f5f8; color: #111827; }
+      main { max-width: 1200px; margin: 24px auto; padding: 0 16px 32px; }
+      h1, h2, h3 { margin: 0 0 8px; }
+      p { margin: 4px 0 12px; }
+      .grid { display: grid; gap: 16px; }
+      .two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .three-col { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .card { background: #fff; border: 1px solid #d1d5db; border-radius: 10px; padding: 14px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+      textarea, pre, select, input[type="text"], input[type="number"] { width: 100%; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      textarea { min-height: 180px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; }
+      pre { margin: 0; background: #0f172a; color: #f8fafc; border-radius: 8px; padding: 10px; overflow-x: auto; min-height: 120px; }
+      .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      button { border: 1px solid #2563eb; background: #2563eb; color: #fff; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+      button.secondary { border-color: #64748b; background: #64748b; }
+      .badge { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 12px; margin-right: 8px; }
       .allow { background: #dcfce7; color: #166534; }
       .ask { background: #fef3c7; color: #92400e; }
       .deny { background: #fee2e2; color: #991b1b; }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 14px;
-      }
+      table { width: 100%; border-collapse: collapse; font-size: 14px; }
       input[type="range"] { width: 100%; }
       .muted { color: #64748b; font-size: 12px; }
-      .step-editor {
-        border: 1px solid #e5e7eb;
-        border-radius: 8px;
-        padding: 10px;
-        margin-bottom: 10px;
-      }
-      .slider-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px 12px;
-      }
-      .slider-row {
-        padding: 6px;
-        border: 1px solid #e5e7eb;
-        border-radius: 6px;
-      }
-      .inline-label {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-      }
-      th, td {
-        border-bottom: 1px solid #e5e7eb;
-        padding: 6px;
-        text-align: left;
-        vertical-align: top;
-      }
-      @media (max-width: 900px) {
-        .two-col { grid-template-columns: 1fr; }
-      }
+      .step-editor, .agent-editor { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+      .slider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+      .slider-row { padding: 6px; border: 1px solid #e5e7eb; border-radius: 6px; }
+      .inline-label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .field-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+      .agent-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+      .agent-header input[type="text"] { flex: 1; }
+      th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
+      @media (max-width: 900px) { .two-col, .three-col, .field-grid { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -137,9 +48,11 @@
           <button id="load-template" class="secondary">Load template</button>
           <select id="template-select"></select>
           <button id="run">Run /evaluate</button>
+          <button id="run-session">Run /evaluate_session</button>
           <button id="replay" class="secondary">Replay telemetry</button>
           <button id="calibration" class="secondary">Calibration dashboard</button>
           <button id="stream" class="secondary">Stream /evaluate_stream</button>
+          <button id="refresh-plugins" class="secondary">Refresh plugins</button>
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
         </div>
       </div>
@@ -170,27 +83,18 @@
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Axis Scores</h3>
-          <table>
-            <thead><tr><th>Axis</th><th>Score</th></tr></thead>
-            <tbody id="axis-table"></tbody>
-          </table>
+          <table><thead><tr><th>Axis</th><th>Score</th></tr></thead><tbody id="axis-table"></tbody></table>
         </div>
         <div class="card">
           <h3>Per-axis Rationales (LLM Judge + rules)</h3>
-          <table>
-            <thead><tr><th>Step</th><th>Axis</th><th>Score</th><th>Confidence</th><th>Rationale</th></tr></thead>
-            <tbody id="rationale-table"></tbody>
-          </table>
+          <table><thead><tr><th>Step</th><th>Axis</th><th>Score</th><th>Confidence</th><th>Rationale</th></tr></thead><tbody id="rationale-table"></tbody></table>
         </div>
       </section>
 
       <section class="card" style="margin-top: 16px">
         <h3>Explainability: Aggregate Risk Contributions</h3>
         <p class="muted">Shows each step's contribution along the dominant risk path per axis.</p>
-        <table>
-          <thead><tr><th>Axis</th><th>Aggregate</th><th>Critical path terminal</th><th>Step contributions</th></tr></thead>
-          <tbody id="contrib-table"></tbody>
-        </table>
+        <table><thead><tr><th>Axis</th><th>Aggregate</th><th>Critical path terminal</th><th>Step contributions</th></tr></thead><tbody id="contrib-table"></tbody></table>
       </section>
 
       <section class="card" style="margin-top: 16px">
@@ -205,21 +109,67 @@
         <div id="whatif-editors"></div>
       </section>
 
+      <section class="card" style="margin-top: 16px">
+        <h3>Multi-agent Session Builder</h3>
+        <p class="muted">Compose per-agent plans, tune team/global budgets, and inspect laundering signals and aggregate budget pressure.</p>
+        <div class="field-grid">
+          <label>Global budget: cost_usd<input id="session-budget-cost" type="number" min="0" step="1" value="150" /></label>
+          <label>Global budget: time_horizon_days<input id="session-budget-time" type="number" min="0" step="1" value="7" /></label>
+          <label>Global budget: max_tool_calls<input id="session-budget-tools" type="number" min="0" step="1" value="6" /></label>
+        </div>
+        <div class="controls" style="margin-bottom:10px">
+          <button id="add-agent" class="secondary">Add agent</button>
+          <button id="sync-from-current-plan" class="secondary">Sync current plan as agent-1</button>
+        </div>
+        <div id="agent-editors"></div>
+      </section>
+
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
-          <h3>Catalog</h3>
-          <pre id="catalog"></pre>
+          <h3>Session payload preview</h3>
+          <pre id="session-payload"></pre>
         </div>
         <div class="card">
-          <h3>Telemetry Replay</h3>
-          <pre id="telemetry"></pre>
+          <h3>Session result</h3>
+          <div id="session-decision"></div>
+          <pre id="session-result"></pre>
         </div>
       </section>
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Plugin Marketplace</h3>
+          <p class="muted">Community plugin listings from <code>docs/plugin_marketplace.yaml</code>.</p>
+          <pre id="plugin-marketplace"></pre>
+        </div>
+        <div class="card">
+          <h3>Plugin Manager</h3>
+          <div class="controls" style="margin-bottom: 8px;">
+            <input id="plugin-source" placeholder="/path/to/plugin-bundle.yaml" style="flex:1; min-width: 220px;" />
+            <input id="plugin-target-dir" placeholder="/path/to/plugins-dir" style="flex:1; min-width: 220px;" />
+          </div>
+          <div class="controls" style="margin-bottom: 8px;">
+            <button id="plugin-install">Install bundle</button>
+            <button id="plugin-uninstall" class="secondary">Uninstall bundle</button>
+          </div>
+          <pre id="plugin-manager"></pre>
+        </div>
+      </section>
+
       <section class="grid" style="margin-top: 16px">
         <div class="card">
-          <h3>Calibration Dashboard</h3>
-          <pre id="calibration-dashboard"></pre>
+          <h3>Global aggregate & laundering detection</h3>
+          <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody id="session-global-table"></tbody></table>
+          <h4 style="margin-top:12px">Laundering signals</h4>
+          <table><thead><tr><th>Axis</th><th>Global</th><th>Max agent</th><th>Delta</th><th>Ask threshold</th></tr></thead><tbody id="session-laundering-table"></tbody></table>
         </div>
+      </section>
+
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card"><h3>Catalog</h3><pre id="catalog"></pre></div>
+        <div class="card"><h3>Telemetry Replay</h3><pre id="telemetry"></pre></div>
+      </section>
+      <section class="grid" style="margin-top: 16px">
+        <div class="card"><h3>Calibration Dashboard</h3><pre id="calibration-dashboard"></pre></div>
       </section>
     </main>
 
@@ -231,6 +181,13 @@
           { id: "1", description: "Inspect failing test", tool: "git_read" },
           { id: "2", description: "Patch timing", tool: "git_patch", depends_on: ["1"] },
           { id: "3", description: "Run pytest", tool: "pytest", depends_on: ["2"] }
+        ]
+      };
+
+      const defaultSessionState = {
+        agents: [
+          { agent_id: "agent-a", task: "Fix parser bug", plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
+          { agent_id: "agent-b", task: "Validate parser patch", plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
         ]
       };
 
@@ -248,304 +205,205 @@
       const telemetryEl = el("telemetry");
       const calibrationDashboardEl = el("calibration-dashboard");
       const streamingEl = el("streaming");
+      const pluginMarketplaceEl = el("plugin-marketplace");
+      const pluginManagerEl = el("plugin-manager");
+      const pluginSourceEl = el("plugin-source");
+      const pluginTargetDirEl = el("plugin-target-dir");
       const templateSelectEl = el("template-select");
       const autoRunEl = el("auto-run");
-      const EFFECT_AXES = [
-        ["resources", "resource_intensity"],
-        ["legal", "legal_exposure"],
-        ["stakeholders", "stakeholder_radius"],
-        ["irreversible_actions", "irreversibility"],
-        ["geo_scope", "spatial"],
-        ["time_horizon", "temporal"]
-      ];
+      const agentEditorsEl = el("agent-editors");
+      const sessionPayloadEl = el("session-payload");
+      const sessionDecisionEl = el("session-decision");
+      const sessionResultEl = el("session-result");
+      const sessionAgentTableEl = el("session-agent-table");
+      const sessionGlobalTableEl = el("session-global-table");
+      const sessionLaunderingTableEl = el("session-laundering-table");
+      const EFFECT_AXES = [["resources", "resource_intensity"], ["legal", "legal_exposure"], ["stakeholders", "stakeholder_radius"], ["irreversible_actions", "irreversibility"], ["geo_scope", "spatial"], ["time_horizon", "temporal"]];
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
+      let sessionState = JSON.parse(JSON.stringify(defaultSessionState));
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
 
+      function decisionBadge(decision) { const n = String(decision || "").toLowerCase(); const cls = n === "allow" ? "allow" : n === "ask" ? "ask" : "deny"; return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`; }
+      function toMagnitude(v) { return MAGNITUDE[Math.max(0, Math.min(MAGNITUDE.length - 1, Math.round(Number(v || 0) * 4)))]; }
       function renderDag(plan) {
         const nodes = (plan.steps || []).map((s) => `${s.id} [${s.tool || "none"}]`).join("\n");
-        const edges = (plan.steps || [])
-          .flatMap((s) => (s.depends_on || []).map((dep) => `${dep} -> ${s.id}`))
-          .join("\n");
+        const edges = (plan.steps || []).flatMap((s) => (s.depends_on || []).map((dep) => `${dep} -> ${s.id}`)).join("\n");
         dagEl.textContent = `nodes:\n${nodes || "(none)"}\n\nedges:\n${edges || "(none)"}`;
       }
 
-      function renderAggregate(aggregate = {}) {
-        axisTableEl.innerHTML = "";
-        Object.entries(aggregate)
-          .sort((a, b) => b[1] - a[1])
-          .forEach(([axis, score]) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `<td>${axis}</td><td>${Number(score).toFixed(3)}</td>`;
-            axisTableEl.appendChild(tr);
-          });
-      }
-
+      function renderAggregate(aggregate = {}) { axisTableEl.innerHTML = ""; Object.entries(aggregate).sort((a, b) => b[1] - a[1]).forEach(([axis, score]) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${axis}</td><td>${Number(score).toFixed(3)}</td>`; axisTableEl.appendChild(tr); }); }
       function renderStepRationales(steps = []) {
         rationaleTableEl.innerHTML = "";
         const rows = [];
-        steps.forEach((step) => {
-          Object.entries(step.axes || {}).forEach(([axis, detail]) => {
-            rows.push({ step: step.step_id || "unknown", axis, ...detail });
-          });
-        });
-        rows
-          .sort((a, b) => b.value - a.value)
-          .forEach((row) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `<td>${row.step}</td><td>${row.axis}</td><td>${Number(row.value).toFixed(3)}</td><td>${Number(row.confidence || 0).toFixed(2)}</td><td>${row.rationale || "n/a"}</td>`;
-            rationaleTableEl.appendChild(tr);
-          });
-      }
-
-      function decisionBadge(decision) {
-        const normalized = String(decision || "").toLowerCase();
-        const cls = normalized === "allow" ? "allow" : normalized === "ask" ? "ask" : "deny";
-        return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`;
-      }
-
-      function toMagnitude(v) {
-        const idx = Math.max(0, Math.min(MAGNITUDE.length - 1, Math.round(Number(v || 0) * 4)));
-        return MAGNITUDE[idx];
+        steps.forEach((step) => Object.entries(step.axes || {}).forEach(([axis, detail]) => rows.push({ step: step.step_id || "unknown", axis, ...detail })));
+        rows.sort((a, b) => b.value - a.value).forEach((row) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${row.step}</td><td>${row.axis}</td><td>${Number(row.value).toFixed(3)}</td><td>${Number(row.confidence || 0).toFixed(2)}</td><td>${row.rationale || "n/a"}</td>`; rationaleTableEl.appendChild(tr); });
       }
 
       function topoOrder(plan) {
-        const remaining = {};
-        (plan.steps || []).forEach((s) => {
-          remaining[s.id] = [...(s.depends_on || [])];
-        });
-        const ready = (plan.steps || []).filter((s) => !(s.depends_on || []).length).map((s) => s.id);
-        const order = [];
-        while (ready.length) {
-          const node = ready.pop();
-          order.push(node);
-          Object.entries(remaining).forEach(([stepId, deps]) => {
-            const idx = deps.indexOf(node);
-            if (idx >= 0) {
-              deps.splice(idx, 1);
-              if (!deps.length && !order.includes(stepId) && !ready.includes(stepId)) ready.push(stepId);
-            }
-          });
-        }
+        const remaining = {}; (plan.steps || []).forEach((s) => { remaining[s.id] = [...(s.depends_on || [])]; });
+        const ready = (plan.steps || []).filter((s) => !(s.depends_on || []).length).map((s) => s.id); const order = [];
+        while (ready.length) { const node = ready.pop(); order.push(node); Object.entries(remaining).forEach(([stepId, deps]) => { const idx = deps.indexOf(node); if (idx >= 0) { deps.splice(idx, 1); if (!deps.length && !order.includes(stepId) && !ready.includes(stepId)) ready.push(stepId); } }); }
         return order;
       }
 
       function computeContributions(plan, steps, aggregate = {}) {
-        const axes = Object.keys(aggregate || {});
-        const vectors = {};
-        (steps || []).forEach((step) => {
-          vectors[step.step_id] = Object.fromEntries(
-            Object.entries(step.axes || {}).map(([axis, detail]) => [axis, Number(detail.value || 0)])
-          );
-        });
+        const axes = Object.keys(aggregate || {}); const vectors = {};
+        (steps || []).forEach((step) => { vectors[step.step_id] = Object.fromEntries(Object.entries(step.axes || {}).map(([axis, detail]) => [axis, Number(detail.value || 0)])); });
         const predecessors = Object.fromEntries((plan.steps || []).map((s) => [s.id, s.depends_on || []]));
-        const order = topoOrder(plan);
-        const pathScope = {};
-        const parentByAxis = {};
-        const deltaByAxis = {};
-        order.forEach((stepId) => {
-          pathScope[stepId] = {};
-          parentByAxis[stepId] = {};
-          deltaByAxis[stepId] = {};
-          axes.forEach((axis) => {
-            let baseline = 0;
-            let winnerPred = null;
-            (predecessors[stepId] || []).forEach((pred) => {
-              const predValue = pathScope[pred]?.[axis] ?? 0;
-              if (predValue >= baseline) {
-                baseline = predValue;
-                winnerPred = pred;
-              }
-            });
-            const stepAxis = vectors[stepId]?.[axis] ?? 0;
-            const updated = Math.max(baseline, stepAxis);
-            pathScope[stepId][axis] = updated;
-            parentByAxis[stepId][axis] = winnerPred;
-            deltaByAxis[stepId][axis] = Math.max(0, updated - baseline);
-          });
-        });
-        return axes.map((axis) => {
-          const agg = Number(aggregate[axis] || 0);
-          let terminal = null;
-          order.forEach((stepId) => {
-            if ((pathScope[stepId]?.[axis] ?? 0) >= (pathScope[terminal]?.[axis] ?? -1)) {
-              terminal = stepId;
-            }
-          });
-          const contributions = [];
-          let cursor = terminal;
-          while (cursor) {
-            const delta = Number(deltaByAxis[cursor]?.[axis] || 0);
-            if (delta > 0 || cursor === terminal) contributions.push({ stepId: cursor, delta });
-            cursor = parentByAxis[cursor]?.[axis] || null;
-          }
-          contributions.reverse();
-          const text = contributions
-            .map((c) => `${c.stepId}: ${(agg > 0 ? (100 * c.delta) / agg : 0).toFixed(1)}% (${c.delta.toFixed(3)})`)
-            .join(" → ");
-          return { axis, aggregate: agg, terminal, text: text || "(none)" };
-        });
+        const order = topoOrder(plan); const pathScope = {}; const parentByAxis = {}; const deltaByAxis = {};
+        order.forEach((stepId) => { pathScope[stepId] = {}; parentByAxis[stepId] = {}; deltaByAxis[stepId] = {}; axes.forEach((axis) => { let baseline = 0; let winnerPred = null; (predecessors[stepId] || []).forEach((pred) => { const predValue = pathScope[pred]?.[axis] ?? 0; if (predValue >= baseline) { baseline = predValue; winnerPred = pred; } }); const stepAxis = vectors[stepId]?.[axis] ?? 0; const updated = Math.max(baseline, stepAxis); pathScope[stepId][axis] = updated; parentByAxis[stepId][axis] = winnerPred; deltaByAxis[stepId][axis] = Math.max(0, updated - baseline); }); });
+        return axes.map((axis) => { const agg = Number(aggregate[axis] || 0); let terminal = null; order.forEach((stepId) => { if ((pathScope[stepId]?.[axis] ?? 0) >= (pathScope[terminal]?.[axis] ?? -1)) terminal = stepId; }); const contributions = []; let cursor = terminal; while (cursor) { const delta = Number(deltaByAxis[cursor]?.[axis] || 0); if (delta > 0 || cursor === terminal) contributions.push({ stepId: cursor, delta }); cursor = parentByAxis[cursor]?.[axis] || null; } contributions.reverse(); const text = contributions.map((c) => `${c.stepId}: ${(agg > 0 ? (100 * c.delta) / agg : 0).toFixed(1)}% (${c.delta.toFixed(3)})`).join(" → "); return { axis, aggregate: agg, terminal, text: text || "(none)" }; });
       }
+      function renderContributions(plan, steps, aggregate) { contribTableEl.innerHTML = ""; computeContributions(plan, steps, aggregate).sort((a, b) => b.aggregate - a.aggregate).forEach((entry) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${entry.axis}</td><td>${entry.aggregate.toFixed(3)}</td><td>${entry.terminal || "n/a"}</td><td>${entry.text}</td>`; contribTableEl.appendChild(tr); }); }
 
-      function renderContributions(plan, steps, aggregate) {
-        contribTableEl.innerHTML = "";
-        computeContributions(plan, steps, aggregate)
-          .sort((a, b) => b.aggregate - a.aggregate)
-          .forEach((entry) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `<td>${entry.axis}</td><td>${entry.aggregate.toFixed(3)}</td><td>${entry.terminal || "n/a"}</td><td>${entry.text}</td>`;
-            contribTableEl.appendChild(tr);
-          });
-      }
-
-      function scheduleAutoEvaluate() {
-        if (!autoRunEl.checked) return;
-        if (autoTimer) clearTimeout(autoTimer);
-        autoTimer = setTimeout(() => runEvaluation().catch((err) => {
-          resultEl.textContent = `Error: ${err.message}`;
-        }), 300);
-      }
-
-      function updatePlanField(stepIndex, field, value) {
-        const plan = JSON.parse(planEl.value);
-        plan.steps[stepIndex][field] = value;
-        planEl.value = JSON.stringify(plan, null, 2);
-        renderDag(plan);
-        scheduleAutoEvaluate();
-      }
-
-      function updateEffectMagnitude(stepIndex, effectKey, value) {
-        const plan = JSON.parse(planEl.value);
-        const step = plan.steps[stepIndex];
-        step.effects = step.effects || { version: "effects_v1", macro_consequences: [] };
-        step.effects[effectKey] = {
-          ...(step.effects[effectKey] || {}),
-          magnitude: toMagnitude(value),
-          rationale: "adjusted in what-if lab"
-        };
-        if (!step.effects.version) step.effects.version = "effects_v1";
-        planEl.value = JSON.stringify(plan, null, 2);
-        scheduleAutoEvaluate();
-      }
-
-      function sliderValueFor(step, effectKey) {
-        const mag = step.effects?.[effectKey]?.magnitude;
-        const idx = MAGNITUDE.indexOf(mag);
-        return idx >= 0 ? idx / 4 : 0;
+      function updatePlanField(stepIndex, field, value) { const plan = JSON.parse(planEl.value); if (!plan.steps?.[stepIndex]) return; plan.steps[stepIndex][field] = value; planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate(); }
+      function updateEffectMagnitude(stepIndex, effectKey, sliderValue) {
+        const plan = JSON.parse(planEl.value); const step = plan.steps?.[stepIndex]; if (!step) return;
+        step.effects = step.effects || {}; step.effects[effectKey] = toMagnitude(sliderValue); planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate();
       }
 
       function renderWhatIfEditors(plan) {
         whatIfEditorsEl.innerHTML = "";
         (plan.steps || []).forEach((step, stepIndex) => {
-          const container = document.createElement("div");
-          container.className = "step-editor";
-          const options = knownTools
-            .map((tool) => `<option value="${tool}" ${step.tool === tool ? "selected" : ""}>${tool}</option>`)
-            .join("");
-          const sliders = EFFECT_AXES.map(([effectKey, axisKey]) => {
-            const value = sliderValueFor(step, effectKey);
-            const id = `${step.id}-${effectKey}`;
-            return `<div class="slider-row"><div class="inline-label"><label for="${id}">${axisKey}</label><span class="muted">${toMagnitude(value)}</span></div><input id="${id}" data-step="${stepIndex}" data-effect="${effectKey}" type="range" min="0" max="1" step="0.25" value="${value}" /></div>`;
-          }).join("");
-          container.innerHTML = `
-            <h4>${step.id}</h4>
-            <label>Description</label>
-            <textarea data-field="description" data-step="${stepIndex}" style="min-height:72px">${step.description || ""}</textarea>
-            <label>Tool</label>
-            <select data-field="tool" data-step="${stepIndex}">${options}</select>
-            <div class="slider-grid" style="margin-top:10px">${sliders}</div>
-          `;
+          const container = document.createElement("div"); container.className = "step-editor";
+          const options = knownTools.map((tool) => `<option value="${tool}" ${step.tool === tool ? "selected" : ""}>${tool}</option>`).join("");
+          const sliders = EFFECT_AXES.map(([effectKey, axisKey]) => { const raw = step.effects?.[effectKey] || "none"; const value = Math.max(0, MAGNITUDE.indexOf(raw)) / (MAGNITUDE.length - 1); return `<div class="slider-row"><div class="inline-label"><strong>${axisKey}</strong><span>${raw}</span></div><input type="range" min="0" max="1" step="0.25" value="${value}" data-step="${stepIndex}" data-effect="${effectKey}" /></div>`; }).join("");
+          container.innerHTML = `<h4>${step.id}</h4><label>Description</label><textarea data-field="description" data-step="${stepIndex}" style="min-height:72px">${step.description || ""}</textarea><label>Tool</label><select data-field="tool" data-step="${stepIndex}">${options}</select><div class="slider-grid" style="margin-top:10px">${sliders}</div>`;
           whatIfEditorsEl.appendChild(container);
         });
-
-        whatIfEditorsEl.querySelectorAll("textarea[data-field], select[data-field]").forEach((node) => {
-          node.addEventListener("input", (ev) => {
-            const stepIndex = Number(ev.target.dataset.step);
-            const field = ev.target.dataset.field;
-            updatePlanField(stepIndex, field, ev.target.value);
-          });
-        });
-        whatIfEditorsEl.querySelectorAll("input[type='range']").forEach((node) => {
-          node.addEventListener("input", (ev) => {
-            const value = Number(ev.target.value);
-            ev.target.previousElementSibling.querySelector("span").textContent = toMagnitude(value);
-            updateEffectMagnitude(Number(ev.target.dataset.step), ev.target.dataset.effect, value);
-          });
-        });
+        whatIfEditorsEl.querySelectorAll("textarea[data-field], select[data-field]").forEach((node) => node.addEventListener("input", (ev) => updatePlanField(Number(ev.target.dataset.step), ev.target.dataset.field, ev.target.value)));
+        whatIfEditorsEl.querySelectorAll("input[type='range']").forEach((node) => node.addEventListener("input", (ev) => { const value = Number(ev.target.value); ev.target.previousElementSibling.querySelector("span").textContent = toMagnitude(value); updateEffectMagnitude(Number(ev.target.dataset.step), ev.target.dataset.effect, value); }));
       }
 
-      async function loadCatalog() {
-        const [templates, tools, cases] = await Promise.all([
-          fetch("/templates").then((r) => r.json()),
-          fetch("/tools").then((r) => r.json()),
-          fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))
-        ]);
+      function sessionPayloadFromState() {
+        const baseContract = JSON.parse(contractEl.value);
+        const budgets = {
+          cost_usd: Number(el("session-budget-cost").value || 0),
+          time_horizon_days: Number(el("session-budget-time").value || 0),
+          max_tool_calls: Number(el("session-budget-tools").value || 0)
+        };
+        const global_contract = { ...baseContract, preset: baseContract.preset || "team", budgets };
+        return {
+          session: {
+            global_contract,
+            agents: sessionState.agents.map((agent) => ({ agent_id: agent.agent_id })),
+            plans: sessionState.agents.map((agent) => ({ agent_id: agent.agent_id, plan: agent.plan }))
+          },
+          include_steps: false,
+          include_telemetry: true
+        };
+      }
 
-        const options = [];
-        (templates.templates || []).forEach((domain) => {
-          Object.entries(domain.variants || {}).forEach(([variant, body]) => {
-            if (body.content?.contract && body.content?.plan) {
-              const key = `${domain.domain}:${variant}`;
-              options.push({ key, contract: body.content.contract, plan: body.content.plan });
-            }
-          });
+      function renderSessionBuilder() {
+        agentEditorsEl.innerHTML = "";
+        sessionState.agents.forEach((agent, idx) => {
+          const node = document.createElement("div");
+          node.className = "agent-editor";
+          node.innerHTML = `<div class="agent-header"><input type="text" value="${agent.agent_id}" data-agent-id="${idx}" /><button class="secondary" data-remove-agent="${idx}">remove</button></div><label>Agent plan (JSON)</label><textarea data-agent-plan="${idx}" style="min-height:130px">${JSON.stringify(agent.plan, null, 2)}</textarea>`;
+          agentEditorsEl.appendChild(node);
         });
-        templateSelectEl.innerHTML = options
-          .map((opt) => `<option value="${opt.key}">${opt.key}</option>`)
-          .join("");
+        sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+
+        agentEditorsEl.querySelectorAll("input[data-agent-id]").forEach((node) => node.addEventListener("input", (ev) => {
+          sessionState.agents[Number(ev.target.dataset.agentId)].agent_id = ev.target.value.trim() || `agent-${Number(ev.target.dataset.agentId) + 1}`;
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("textarea[data-agent-plan]").forEach((node) => node.addEventListener("input", (ev) => {
+          const idx = Number(ev.target.dataset.agentPlan);
+          try { sessionState.agents[idx].plan = JSON.parse(ev.target.value); }
+          catch (_err) { sessionPayloadEl.textContent = "Session payload invalid: fix plan JSON to continue."; return; }
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("button[data-remove-agent]").forEach((node) => node.addEventListener("click", (ev) => {
+          const idx = Number(ev.target.dataset.removeAgent);
+          sessionState.agents.splice(idx, 1);
+          renderSessionBuilder();
+        }));
+      }
+
+      function topAxesText(aggregate = {}) { return Object.entries(aggregate).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([axis, value]) => `${axis}:${Number(value).toFixed(2)}`).join(", "); }
+      function budgetUtilizationText(util = {}) { return Object.entries(util).map(([k, v]) => `${k}:${(100 * Number(v || 0)).toFixed(0)}%`).join(", ") || "n/a"; }
+
+      function renderSessionDashboard(payload = {}) {
+        sessionAgentTableEl.innerHTML = ""; sessionGlobalTableEl.innerHTML = ""; sessionLaunderingTableEl.innerHTML = "";
+        Object.entries(payload.dashboard?.per_agent || {}).forEach(([agentId, entry]) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${agentId}</td><td>${decisionBadge(entry.decision)}</td><td>${topAxesText(entry.aggregate)}</td><td>${budgetUtilizationText(entry.budget_utilization)}</td>`;
+          sessionAgentTableEl.appendChild(tr);
+        });
+        const global = payload.dashboard?.global || {};
+        [["Decision", global.decision || payload.decision || "n/a"], ["Top axes", topAxesText(global.aggregate || {})], ["Budget utilization", budgetUtilizationText(global.budget_utilization || {})], ["Negotiation triggered", payload.negotiation?.triggered ? "yes" : "no"]].forEach(([k, v]) => {
+          const tr = document.createElement("tr"); tr.innerHTML = `<td>${k}</td><td>${v}</td>`; sessionGlobalTableEl.appendChild(tr);
+        });
+        (payload.laundering_signals || []).forEach((signal) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${signal.axis}</td><td>${Number(signal.global_value).toFixed(3)}</td><td>${Number(signal.max_agent_value).toFixed(3)}</td><td>${Number(signal.delta).toFixed(3)}</td><td>${Number(signal.ask_threshold).toFixed(3)}</td>`;
+          sessionLaunderingTableEl.appendChild(tr);
+        });
+        if (!(payload.laundering_signals || []).length) {
+          const tr = document.createElement("tr"); tr.innerHTML = "<td colspan='5'>No cross-agent laundering signals detected.</td>"; sessionLaunderingTableEl.appendChild(tr);
+        }
+      }
+
+      function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
+
+      async function loadCatalog() {
+        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
+        const options = [];
+        (templates.templates || []).forEach((domain) => Object.entries(domain.variants || {}).forEach(([variant, body]) => { if (body.content?.contract && body.content?.plan) { options.push({ key: `${domain.domain}:${variant}`, contract: body.content.contract, plan: body.content.plan }); } }));
+        templateSelectEl.innerHTML = options.map((opt) => `<option value="${opt.key}">${opt.key}</option>`).join("");
         templateSelectEl._options = options;
         knownTools = (tools.tools || []).map((item) => item.tool).filter(Boolean).sort();
-
-        catalogEl.textContent = JSON.stringify(
-          {
-            templates: (templates.templates || []).length,
-            tools: (tools.tools || []).length,
-            cases_count: cases.count || 0,
-            case_domains: cases.domains || []
-          },
-          null,
-          2
-        );
+        catalogEl.textContent = JSON.stringify({ templates: (templates.templates || []).length, tools: (tools.tools || []).length, cases_count: cases.count || 0, case_domains: cases.domains || [] }, null, 2);
         renderWhatIfEditors(JSON.parse(planEl.value));
+      }
+
+      async function loadPlugins() {
+        const [marketplace, installed] = await Promise.all([
+          fetch("/plugin_marketplace").then((r) => r.json()),
+          fetch("/plugins").then((r) => r.json())
+        ]);
+        pluginMarketplaceEl.textContent = JSON.stringify(marketplace, null, 2);
+        pluginManagerEl.textContent = JSON.stringify(installed, null, 2);
+      }
+
+      async function installPluginBundle() {
+        const payload = {
+          source_path: pluginSourceEl.value,
+          plugin_dir: pluginTargetDirEl.value
+        };
+        const response = await fetch("/plugins/install", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        }).then((r) => r.json());
+        pluginManagerEl.textContent = JSON.stringify(response, null, 2);
+        await loadPlugins();
+      }
+
+      async function uninstallPluginBundle() {
+        const response = await fetch("/plugins/uninstall", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ source_path: pluginSourceEl.value })
+        }).then((r) => r.json());
+        pluginManagerEl.textContent = JSON.stringify(response, null, 2);
+        await loadPlugins();
       }
 
       async function runEvaluation() {
         const contract = JSON.parse(contractEl.value);
         const plan = JSON.parse(planEl.value);
         renderDag(plan);
-
-        const res = await fetch("/evaluate", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            contract,
-            plan,
-            include_summary: true,
-            include_steps: true,
-            include_telemetry: true,
-            calibration_domain: contract.domain || null
-          })
-        });
+        const res = await fetch("/evaluate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contract, plan, include_summary: true, include_steps: true, include_telemetry: true, calibration_domain: contract.domain || null }) });
         const payload = await res.json();
-
         decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
-        resultEl.textContent = JSON.stringify(
-          {
-            trace_id: payload.trace_id,
-            span_id: payload.span_id,
-            summary: payload.summary,
-            next_steps: payload.next_steps,
-            telemetry: payload.telemetry
-          },
-          null,
-          2
-        );
-        renderAggregate(payload.aggregate || {});
-        renderStepRationales(payload.steps || []);
-        renderContributions(plan, payload.steps || [], payload.aggregate || {});
+        resultEl.textContent = JSON.stringify({ trace_id: payload.trace_id, span_id: payload.span_id, summary: payload.summary, next_steps: payload.next_steps, telemetry: payload.telemetry }, null, 2);
+        renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
       }
 
       function buildStreamingEvents(plan) {
@@ -645,12 +503,18 @@
       async function replayTelemetry() {
         const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json());
         telemetryEl.textContent = JSON.stringify(replay, null, 2);
+      async function runSessionEvaluation() {
+        const body = sessionPayloadFromState();
+        sessionPayloadEl.textContent = JSON.stringify(body, null, 2);
+        const res = await fetch("/evaluate_session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        const payload = await res.json();
+        sessionDecisionEl.innerHTML = `${decisionBadge(payload.decision)} multi-agent governance result`;
+        sessionResultEl.textContent = JSON.stringify({ decision: payload.decision, trace_id: payload.trace_id, negotiation: payload.negotiation }, null, 2);
+        renderSessionDashboard(payload);
       }
 
-      async function loadCalibrationDashboard() {
-        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
-        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
-      }
+      async function replayTelemetry() { const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json()); telemetryEl.textContent = JSON.stringify(replay, null, 2); }
+      async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
       el("load-template").addEventListener("click", () => {
         const picked = (templateSelectEl._options || []).find((opt) => opt.key === templateSelectEl.value);
@@ -673,15 +537,26 @@
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
       }));
+      el("run").addEventListener("click", () => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }));
+      el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
+      el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
+      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Error: ${err.message}`; }));
+      el("add-agent").addEventListener("click", () => {
+        const idx = sessionState.agents.length + 1;
+        sessionState.agents.push({ agent_id: `agent-${idx}`, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
+        renderSessionBuilder();
+      });
+      el("sync-from-current-plan").addEventListener("click", () => {
+        const parsedPlan = JSON.parse(planEl.value);
+        if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", plan: parsedPlan });
+        else sessionState.agents[0].plan = parsedPlan;
+        renderSessionBuilder();
+      });
+      ["session-budget-cost", "session-budget-time", "session-budget-tools"].forEach((id) => el(id).addEventListener("input", () => { sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2); }));
+
       planEl.addEventListener("input", () => {
-        try {
-          const plan = JSON.parse(planEl.value);
-          renderDag(plan);
-          renderWhatIfEditors(plan);
-          scheduleAutoEvaluate();
-        } catch (_err) {
-          // continue editing invalid JSON
-        }
+        try { const plan = JSON.parse(planEl.value); renderDag(plan); renderWhatIfEditors(plan); scheduleAutoEvaluate(); }
+        catch (_err) { /* continue editing invalid JSON */ }
       });
 
       renderDag(defaultPlan);
@@ -698,6 +573,11 @@
       runEvaluation().catch((err) => {
         resultEl.textContent = `Error: ${err.message}`;
       });
+      renderSessionBuilder();
+      loadCatalog().catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
+      loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });
+      runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; });
+      runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
     </script>
   </body>
 </html>
