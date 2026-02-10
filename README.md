@@ -12,6 +12,21 @@ It is designed for a specific failure mode:
 
 Instead of only asking *"is this intent safe?"*, ScopeBench asks *"is this plan proportionate to the task contract?"*.
 
+## Table of Contents
+
+- [Why ScopeBench](#why-scopebench)
+- [Features](#features)
+- [Installation](#installation)
+- [Quickstart](#quickstart)
+- [CLI Reference](#cli-reference)
+- [API Usage](#api-usage)
+- [Examples Included](#examples-included)
+- [Testing](#testing)
+- [Integrations SDK (Python)](#integrations-sdk-python)
+- [Project Structure](#project-structure)
+- [Development](#development)
+- [License](#license)
+
 ---
 
 ## Why ScopeBench
@@ -59,6 +74,16 @@ pip install -U pip
 pip install -e ".[dev]"
 ```
 
+### Optional policy backends
+
+ScopeBench supports multiple policy backends:
+
+- `python` (default): no extra runtime dependency.
+- `opa`: requires a running OPA server (see [Run with OPA backend](#4-run-with-opa-backend)).
+- `cedar`: available through CLI/API backend selection for Cedar-based policy evaluation.
+
+If you do not explicitly set a backend, ScopeBench uses `python`.
+
 ---
 
 ## Quickstart
@@ -70,6 +95,12 @@ scopebench run examples/phone_charge.contract.yaml examples/phone_charge.plan.ya
 ```
 
 Expected result: a `DENY` decision with axis-specific reasons.
+
+For machine-readable output:
+
+```bash
+scopebench run examples/phone_charge.contract.yaml examples/phone_charge.plan.yaml --json
+```
 
 ### 2) Try built-in shortcuts
 
@@ -88,6 +119,14 @@ Health check:
 
 ```bash
 curl -s http://localhost:8080/health
+```
+
+Discover available templates/tools/cases from the API:
+
+```bash
+curl -s http://localhost:8080/templates | jq '.count'
+curl -s http://localhost:8080/tools | jq '.count'
+curl -s http://localhost:8080/cases | jq '.count'
 ```
 
 ---
@@ -166,6 +205,16 @@ Response includes:
 - optional `summary`, `next_steps`, `plan_patch_suggestion`, and `telemetry`
 - trace context fields (`trace_id`, `span_id`) for observability
 
+### Useful request toggles
+
+When calling `POST /evaluate`, these flags are especially useful during integration:
+
+- `include_summary`: include a concise natural-language explanation.
+- `include_next_steps`: include suggested proportionate follow-up actions.
+- `include_patch`: include a patch-style plan transformation suggestion.
+- `include_telemetry`: include telemetry payload fields for logging/replay.
+- `shadow_mode`: run checks in shadow mode while preserving production behavior.
+
 ### Additional catalog endpoints
 
 - `GET /templates` returns template metadata and full content for each domain, grouped by variants (default + named domain presets).
@@ -214,6 +263,12 @@ The `examples/` folder includes scenarios such as:
 
 These are useful for demos, CI checks, and policy tuning.
 
+You can also list generated benchmark cases via API:
+
+```bash
+curl -s http://localhost:8080/cases | jq '.cases[0]'
+```
+
 ---
 
 ## Testing
@@ -222,6 +277,12 @@ Run the test suite:
 
 ```bash
 pytest
+```
+
+Run a narrower, faster loop while iterating:
+
+```bash
+pytest tests/test_cli.py -q
 ```
 
 ---
