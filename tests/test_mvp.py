@@ -575,6 +575,10 @@ def test_compute_axis_calibration_from_telemetry_and_roundtrip_file(tmp_path: Pa
     loaded = load_calibration_file(out_path)
     assert loaded.resolved_axis_scale() == calibration.resolved_axis_scale()
     assert loaded.resolved_axis_bias() == calibration.resolved_axis_bias()
+    assert loaded.resolved_axis_threshold_factor() == calibration.resolved_axis_threshold_factor()
+    assert loaded.abstain_uncertainty_threshold == pytest.approx(
+        calibration.abstain_uncertainty_threshold
+    )
 
 
 def test_abstain_uncertainty_threshold_forces_ask_with_reason():
@@ -601,6 +605,53 @@ def test_abstain_uncertainty_threshold_forces_ask_with_reason():
     assert policy.decision.value == "ASK"
     assert policy.asked["uncertainty"] == pytest.approx(0.25)
     assert "abstain_due_to_uncertainty" in policy.reasons
+
+
+def test_contract_thresholds_are_calibrated_per_axis_from_telemetry(tmp_path: Path):
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    rows = [
+        {
+            "asked": {"depth": 0.8},
+            "exceeded": {"depth": {"value": 0.9, "threshold": 0.5}},
+            "outcome": "tests_fail",
+        },
+        {
+            "asked": {"depth": 0.7},
+            "exceeded": {},
+            "outcome": "tests_fail",
+        },
+    ]
+    telemetry_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    calibration, _ = compute_axis_calibration_from_telemetry(telemetry_path)
+
+    contract = TaskContract.model_validate(
+        {
+            "goal": "Conservative depth gate",
+            "thresholds": {"max_depth": 0.3, "max_uncertainty": 1.0},
+            "escalation": {"abstain_uncertainty_threshold": 1.01},
+        }
+    )
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Conservative depth gate",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Perform a structural rewrite across modules.",
+                    "tool": "git_patch",
+                }
+            ],
+        }
+    )
+
+    baseline = evaluate(contract, plan)
+    calibrated = evaluate(contract, plan, calibration=calibration)
+
+    assert calibrated.contract.thresholds.max_depth < baseline.contract.thresholds.max_depth
+    assert calibrated.contract.escalation.abstain_uncertainty_threshold == pytest.approx(
+        calibration.abstain_uncertainty_threshold
+    )
 
 def test_backend_selection_from_env(monkeypatch):
     monkeypatch.setenv("SCOPEBENCH_POLICY_BACKEND", "opa")

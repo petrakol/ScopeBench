@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from scopebench.runtime.guard import evaluate_from_files
+from scopebench.scoring.calibration import (
+    CalibratedDecisionThresholds,
+    compute_axis_calibration_from_telemetry,
+    write_calibration_file,
+)
 
 
 @dataclass
@@ -107,3 +112,13 @@ def replay_benchmark_slice(
             )
         )
     return results
+
+
+def refresh_weekly_calibration(
+    telemetry_path: Path, output_path: Path
+) -> tuple[CalibratedDecisionThresholds, WeeklyCalibrationReport]:
+    """Compute and persist latest calibration factors from weekly telemetry."""
+    calibration, _ = compute_axis_calibration_from_telemetry(telemetry_path)
+    write_calibration_file(output_path, calibration)
+    report = summarize_weekly_telemetry(telemetry_path)
+    return calibration, report

@@ -16,16 +16,24 @@ def _default_axis_biases() -> Dict[str, float]:
     return {axis: 0.0 for axis in SCOPE_AXES}
 
 
+def _default_axis_threshold_factors() -> Dict[str, float]:
+    return {axis: 1.0 for axis in SCOPE_AXES}
+
+
 @dataclass(frozen=True)
 class CalibratedDecisionThresholds:
-    """A small hook to tune thresholding based on observed evals.
+    """Calibration knobs derived from production telemetry.
 
-    MVP: simple affine adjustments; later: learned calibration, selective prediction.
+    `axis_scale/axis_bias` calibrate aggregate axis values.
+    `axis_threshold_factor` calibrates contract thresholds per axis.
+    `abstain_uncertainty_threshold` can tighten/loosen selective abstention.
     """
 
-    global_scale: float = 1.0  # multiply all axis values by this (clipped)
+    global_scale: float = 1.0
     axis_scale: Dict[str, float] | None = None
     axis_bias: Dict[str, float] | None = None
+    axis_threshold_factor: Dict[str, float] | None = None
+    abstain_uncertainty_threshold: float | None = None
 
     def resolved_axis_scale(self) -> Dict[str, float]:
         values = _default_axis_scales()
@@ -37,6 +45,18 @@ class CalibratedDecisionThresholds:
         values = _default_axis_biases()
         if self.axis_bias:
             values.update({axis: float(bias) for axis, bias in self.axis_bias.items() if axis in values})
+        return values
+
+    def resolved_axis_threshold_factor(self) -> Dict[str, float]:
+        values = _default_axis_threshold_factors()
+        if self.axis_threshold_factor:
+            values.update(
+                {
+                    axis: float(factor)
+                    for axis, factor in self.axis_threshold_factor.items()
+                    if axis in values
+                }
+            )
         return values
 
 
@@ -101,16 +121,27 @@ def compute_axis_calibration_from_telemetry(path: Path) -> Tuple[CalibratedDecis
 
     axis_scale: Dict[str, float] = {}
     axis_bias: Dict[str, float] = {}
+    axis_threshold_factor: Dict[str, float] = {}
+    uncertainty_pressures: list[float] = []
     for axis in SCOPE_AXES:
         denom = max(1, triggered[axis])
         pressure = (failures[axis] - false_alarms[axis] - overrides[axis]) / denom
+        if axis == "uncertainty":
+            uncertainty_pressures.append(pressure)
         axis_scale[axis] = _clamp(1.0 + 0.25 * pressure, 0.6, 1.4)
         axis_bias[axis] = _clamp(0.08 * pressure, -0.2, 0.2)
+        # Failure pressure tightens thresholds; false alarms/overrides relax them.
+        axis_threshold_factor[axis] = _clamp(1.0 - 0.2 * pressure, 0.7, 1.25)
+
+    uncertainty_pressure = uncertainty_pressures[0] if uncertainty_pressures else 0.0
+    abstain_threshold = _clamp(0.7 - 0.25 * uncertainty_pressure, 0.35, 0.95)
 
     calibration = CalibratedDecisionThresholds(
         global_scale=1.0,
         axis_scale=axis_scale,
         axis_bias=axis_bias,
+        axis_threshold_factor=axis_threshold_factor,
+        abstain_uncertainty_threshold=abstain_threshold,
     )
     stats = AxisCalibrationStats(
         triggered=triggered,
@@ -123,10 +154,12 @@ def compute_axis_calibration_from_telemetry(path: Path) -> Tuple[CalibratedDecis
 
 def calibration_to_dict(calibration: CalibratedDecisionThresholds) -> dict:
     return {
-        "schema_version": "axis_calibration_v1",
+        "schema_version": "axis_calibration_v2",
         "global_scale": calibration.global_scale,
         "axis_scale": calibration.resolved_axis_scale(),
         "axis_bias": calibration.resolved_axis_bias(),
+        "axis_threshold_factor": calibration.resolved_axis_threshold_factor(),
+        "abstain_uncertainty_threshold": calibration.abstain_uncertainty_threshold,
     }
 
 
@@ -140,6 +173,14 @@ def load_calibration_file(path: Path) -> CalibratedDecisionThresholds:
         global_scale=float(payload.get("global_scale", 1.0)),
         axis_scale={axis: float(v) for axis, v in payload.get("axis_scale", {}).items()},
         axis_bias={axis: float(v) for axis, v in payload.get("axis_bias", {}).items()},
+        axis_threshold_factor={
+            axis: float(v) for axis, v in payload.get("axis_threshold_factor", {}).items()
+        },
+        abstain_uncertainty_threshold=(
+            float(payload["abstain_uncertainty_threshold"])
+            if payload.get("abstain_uncertainty_threshold") is not None
+            else None
+        ),
     )
 
 

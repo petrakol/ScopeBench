@@ -10,13 +10,15 @@ from rich.console import Console
 from rich.table import Table
 
 from scopebench.bench.judge import run_judge_bench
-from scopebench.bench.weekly import replay_benchmark_slice, summarize_weekly_telemetry
+from scopebench.bench.weekly import (
+    refresh_weekly_calibration,
+    replay_benchmark_slice,
+)
 from scopebench.runtime.guard import evaluate, evaluate_from_files
 from scopebench.scoring.calibration import (
     CalibratedDecisionThresholds,
     calibration_to_dict,
     compute_axis_calibration_from_telemetry,
-    write_calibration_file,
 )
 from scopebench.scoring.llm_judge import JudgeMode
 from scopebench.tracing.otel import init_tracing
@@ -296,9 +298,8 @@ def weekly_calibrate(
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON report."),
 ):
     """Summarize telemetry, replay benchmark slice, and generate per-axis calibration."""
-    report = summarize_weekly_telemetry(telemetry_jsonl)
+    calibration, report = refresh_weekly_calibration(telemetry_jsonl, output_path)
     calibration, calibration_stats = compute_axis_calibration_from_telemetry(telemetry_jsonl)
-    write_calibration_file(output_path, calibration)
     root = Path(__file__).resolve().parents[1]
     replay = replay_benchmark_slice(root)
 

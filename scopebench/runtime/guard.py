@@ -24,6 +24,49 @@ class EvaluationResult:
     policy: PolicyResult
 
 
+_AXIS_TO_THRESHOLD_FIELD = {
+    "spatial": "max_spatial",
+    "temporal": "max_temporal",
+    "depth": "max_depth",
+    "irreversibility": "max_irreversibility",
+    "resource_intensity": "max_resource_intensity",
+    "legal_exposure": "max_legal_exposure",
+    "dependency_creation": "max_dependency_creation",
+    "stakeholder_radius": "max_stakeholder_radius",
+    "power_concentration": "max_power_concentration",
+    "uncertainty": "max_uncertainty",
+}
+
+
+def _apply_contract_calibration(
+    contract: TaskContract, calibration: CalibratedDecisionThresholds
+) -> TaskContract:
+    threshold_updates: Dict[str, float] = {}
+    for axis, factor in calibration.resolved_axis_threshold_factor().items():
+        field = _AXIS_TO_THRESHOLD_FIELD.get(axis)
+        if field is None:
+            continue
+        current = float(getattr(contract.thresholds, field))
+        threshold_updates[field] = min(1.0, max(0.0, current * float(factor)))
+
+    escalation_updates: Dict[str, float] = {}
+    if calibration.abstain_uncertainty_threshold is not None:
+        escalation_updates["abstain_uncertainty_threshold"] = float(
+            calibration.abstain_uncertainty_threshold
+        )
+
+    updated = contract
+    if threshold_updates:
+        updated = updated.model_copy(
+            update={"thresholds": updated.thresholds.model_copy(update=threshold_updates)}
+        )
+    if escalation_updates:
+        updated = updated.model_copy(
+            update={"escalation": updated.escalation.model_copy(update=escalation_updates)}
+        )
+    return updated
+
+
 def load_yaml(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -108,8 +151,10 @@ def evaluate(
                 vectors.append(v)
 
         agg = aggregate_scope(vectors, plan=plan)
+        effective_contract = contract
         if calibration is not None:
             agg = apply_calibration(agg, calibration)
+            effective_contract = _apply_contract_calibration(contract, calibration)
             span.set_attribute(
                 "scopebench.calibration.global_scale", float(calibration.global_scale)
             )
@@ -117,12 +162,19 @@ def evaluate(
                 span.set_attribute(f"scopebench.calibration.axis_scale.{axis}", float(value))
             for axis, value in calibration.resolved_axis_bias().items():
                 span.set_attribute(f"scopebench.calibration.axis_bias.{axis}", float(value))
+            for axis, value in calibration.resolved_axis_threshold_factor().items():
+                span.set_attribute(f"scopebench.calibration.axis_threshold_factor.{axis}", float(value))
+            if calibration.abstain_uncertainty_threshold is not None:
+                span.set_attribute(
+                    "scopebench.calibration.abstain_uncertainty_threshold",
+                    float(calibration.abstain_uncertainty_threshold),
+                )
         for axis, val in agg.as_dict().items():
             span.set_attribute(f"scopebench.aggregate.{axis}", float(val))
         span.set_attribute("scopebench.n_steps", agg.n_steps)
 
         policy = evaluate_policy(
-            contract,
+            effective_contract,
             agg,
             step_vectors=vectors,
             plan=plan,
@@ -131,7 +183,7 @@ def evaluate(
         span.set_attribute("scopebench.decision", policy.decision.value)
 
         return EvaluationResult(
-            contract=contract,
+            contract=effective_contract,
             plan=plan,
             vectors=vectors,
             aggregate=agg,
