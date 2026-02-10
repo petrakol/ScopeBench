@@ -4,7 +4,11 @@ import hashlib
 import hmac
 import json
 import sys
+
+import pytest
 from pathlib import Path
+
+from fastapi import HTTPException
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -14,6 +18,9 @@ from scopebench.server.api import (
     CalibrationAdjustmentRequest,
     EvaluateRequest,
     EvaluateStreamRequest,
+    PolicyWorkbenchApplyRequest,
+    PolicyWorkbenchTestRequest,
+    SuggestEffectsRequest,
     _suggest_plan_patch,
     create_app,
 )
@@ -75,6 +82,10 @@ def test_templates_tools_cases_endpoints() -> None:
     assert "count" in cases
     if cases["count"] > 0:
         assert len(cases["domains"]) >= 1
+        first = cases["cases"][0]
+        assert "plan" in first
+        assert "expected_rationale" in first
+        assert "expected_step_vectors" in first
     else:
         assert "error" in cases
 
@@ -206,9 +217,32 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     assert "Replay telemetry" in html
     assert "Calibration Dashboard" in html
     assert "What-if Lab" in html
+    assert "Suggest effects" in html
     assert "Explainability: Aggregate Risk Contributions" in html
     assert "Stream /evaluate_stream" in html
     assert "Streaming Evaluation Timeline" in html
+
+
+def test_suggest_effects_endpoint_populates_effects_v1() -> None:
+    app = create_app()
+    suggest_effects = _endpoint(app, "/suggest_effects")
+    response = suggest_effects(
+        SuggestEffectsRequest.model_validate(
+            {
+                "plan": {
+                    "task": "Fix failing unit test",
+                    "steps": [
+                        {"id": "1", "description": "Read failing test", "tool": "git_read"},
+                        {"id": "2", "description": "Apply patch", "tool": "git_patch", "depends_on": ["1"]},
+                    ],
+                }
+            }
+        )
+    )
+
+    assert len(response.suggestions) == 2
+    assert response.suggestions[0].effects["version"] == "effects_v1"
+    assert response.plan["steps"][0]["effects"]["version"] == "effects_v1"
 
 
 def test_telemetry_replay_endpoint_without_configuration() -> None:
@@ -383,3 +417,71 @@ def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) ->
     uninstall_result = _endpoint(app_after_install, "/plugins/uninstall")({"source_path": str(target_path)})
     assert uninstall_result["ok"] is True
     assert target_path.exists() is False
+
+def test_policy_workbench_state_exposes_backend_assets_and_authorization(monkeypatch) -> None:
+    monkeypatch.setenv("SCOPEBENCH_POLICY_EDITOR_TOKEN", "secret-token")
+    app = create_app()
+    endpoint = _endpoint(app, "/policy/workbench")
+
+    denied = endpoint(policy_backend="cedar", x_scopebench_policy_token=None)
+    assert denied.authorization["authorized"] is False
+    assert denied.backend_assets["cedar"].endswith("scopebench/policy/cedar/policy.cedar")
+
+    allowed = endpoint(policy_backend="opa", x_scopebench_policy_token="secret-token")
+    assert allowed.authorization["authorized"] is True
+    assert allowed.backend_assets["rego"].endswith("scopebench/policy/opa/policy.rego")
+
+
+def test_policy_workbench_test_and_apply(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SCOPEBENCH_POLICY_EDITOR_TOKEN", "editor-token")
+    monkeypatch.setenv("SCOPEBENCH_POLICY_PROPOSALS_DIR", str(tmp_path))
+    app = create_app()
+
+    test_endpoint = _endpoint(app, "/policy/workbench/test")
+    tested = test_endpoint(
+        req=PolicyWorkbenchTestRequest.model_validate(
+            {
+                "policy_backend": "python",
+                "contract": {"goal": "sandbox", "preset": "team"},
+                "plan": {
+                    "task": "sandbox",
+                    "steps": [
+                        {"id": "1", "description": "inspect", "tool": "git_read"},
+                        {"id": "2", "description": "patch", "tool": "git_patch", "depends_on": ["1"]},
+                    ],
+                },
+                "threshold_overrides": {"max_depth": 0.1},
+                "proposed_rules": [
+                    {"id": "tighten-temporal", "action": "ASK", "axis": "temporal", "operator": ">=", "value": 0.2}
+                ],
+            }
+        )
+    )
+    assert "decision" in tested
+    assert tested["applied_threshold_overrides"]["max_depth"] == 0.1
+    assert tested["applied_threshold_overrides"]["max_temporal"] == 0.2
+
+    apply_endpoint = _endpoint(app, "/policy/workbench/apply")
+    apply_req = PolicyWorkbenchApplyRequest.model_validate(
+        {
+            "policy_backend": "python",
+            "summary": "tighten temporal limits",
+            "contract": {"goal": "sandbox", "preset": "team"},
+            "plan": {
+                "task": "sandbox",
+                "steps": [{"id": "1", "description": "inspect", "tool": "git_read"}],
+            },
+            "threshold_overrides": {"max_depth": 0.2},
+            "proposed_rules": [{"id": "r1", "action": "ASK", "axis": "depth", "operator": ">", "value": 0.2}],
+        }
+    )
+
+    with pytest.raises(HTTPException):
+        apply_endpoint(req=apply_req, x_scopebench_policy_token=None)
+
+    applied = apply_endpoint(req=apply_req, x_scopebench_policy_token="editor-token")
+    assert applied.ok is True
+    saved = Path(applied.saved_to)
+    assert saved.exists()
+    payload = json.loads(saved.read_text(encoding="utf-8"))
+    assert payload["summary"] == "tighten temporal limits"

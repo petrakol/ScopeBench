@@ -43,6 +43,31 @@ messages = [
 plan_from_messages = from_autogen_messages(messages, task="incident mitigation")
 ```
 
+
+### Workflow orchestrator adapters
+
+You can also normalize workflow orchestration objects into ScopeBench plans:
+
+```python
+from scopebench.integrations import from_airflow_dag, from_prefect_tasks, from_dagster_ops
+
+airflow_plan = from_airflow_dag(dag)
+prefect_plan = from_prefect_tasks(flow_tasks, task="daily pipeline")
+dagster_plan = from_dagster_ops(job_ops, task="asset materialization")
+```
+
+For runtime enforcement, decorate workflow task functions so ScopeBench runs before execution:
+
+```python
+from scopebench.integrations import airflow_task, prefect_task, dagster_op
+
+@prefect_task(contract={"goal": "Run ETL task", "preset": "team"})
+def transform_records():
+    ...
+```
+
+If a task is blocked, the decorator raises `ScopeBenchGuardRejected`.
+
 ## Mock agent loop
 
 ```python
