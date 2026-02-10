@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
@@ -57,6 +61,7 @@ class StepDetail(BaseModel):
 
 
 class TelemetryDetail(BaseModel):
+    schema_version: str = "telemetry_v1"
     preset: str
     policy_input_version: str
     task_type: str
@@ -219,9 +224,39 @@ def _effective_decision(policy_decision: str, shadow_mode: bool) -> str:
     return policy_decision
 
 
-def create_app(default_policy_backend: str = "python") -> FastAPI:
+def _append_jsonl(path: Path, row: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _telemetry_row(
+    telemetry: TelemetryDetail,
+    policy_input: Optional[Dict[str, Any]],
+    aggregate: Dict[str, float],
+    asked: Dict[str, float],
+    exceeded: Dict[str, Dict[str, float]],
+) -> Dict[str, Any]:
+    return {
+        "schema_version": "telemetry_v1",
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "policy_input": policy_input or {},
+        "decision": telemetry.decision,
+        "aggregate": aggregate,
+        "asked": asked,
+        "exceeded": exceeded,
+        "feedback": {
+            "ask_action": telemetry.ask_action,
+            "outcome": telemetry.outcome,
+        },
+        "telemetry": telemetry.model_dump(),
+    }
+
+
+def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Optional[str] = None) -> FastAPI:
     init_tracing(enable_console=False)
     app = FastAPI(title="ScopeBench", version="0.1.0")
+    configured_telemetry_path = telemetry_jsonl_path or os.getenv("SCOPEBENCH_TELEMETRY_JSONL_PATH")
 
     @app.get("/health")
     def health():
@@ -286,6 +321,24 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
                 "Shadow mode enabled: returning effective_decision=ALLOW while preserving policy decision for analysis"
             )
 
+        exceeded_payload = {
+            k: {"value": float(v[0]), "threshold": float(v[1])} for k, v in pol.exceeded.items()
+        }
+        asked_payload = {k: float(v) for k, v in pol.asked.items()}
+        policy_input_payload = pol.policy_input.__dict__ if (req.include_telemetry and pol.policy_input) else None
+
+        if req.include_telemetry and telemetry and configured_telemetry_path:
+            _append_jsonl(
+                Path(configured_telemetry_path),
+                _telemetry_row(
+                    telemetry=telemetry,
+                    policy_input=policy_input_payload,
+                    aggregate=res.aggregate.as_dict(),
+                    asked=asked_payload,
+                    exceeded=exceeded_payload,
+                ),
+            )
+
         return EvaluateResponse(
             decision=decision,
             policy_backend=pol.policy_backend,
@@ -294,10 +347,8 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
             effective_decision=effective_decision,
             shadow_mode=req.shadow_mode,
             reasons=reasons,
-            exceeded={
-                k: {"value": float(v[0]), "threshold": float(v[1])} for k, v in pol.exceeded.items()
-            },
-            asked={k: float(v) for k, v in pol.asked.items()},
+            exceeded=exceeded_payload,
+            asked=asked_payload,
             aggregate=res.aggregate.as_dict(),
             n_steps=res.aggregate.n_steps,
             steps=steps,
@@ -305,7 +356,7 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
             next_steps=next_steps,
             plan_patch_suggestion=patch_suggestion,
             telemetry=telemetry,
-            policy_input=(pol.policy_input.__dict__ if (req.include_telemetry and pol.policy_input) else None),
+            policy_input=policy_input_payload,
         )
 
     return app

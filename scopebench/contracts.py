@@ -47,6 +47,7 @@ class EscalationRules(BaseModel):
 
     ask_if_any_axis_over: float = Field(default=0.55, ge=0, le=1)
     ask_if_uncertainty_over: float = Field(default=0.45, ge=0, le=1)
+    abstain_uncertainty_threshold: float = Field(default=1.01, ge=0, le=1.01)
     ask_if_tool_category_in: Set[str] = Field(default_factory=set)
 
 
