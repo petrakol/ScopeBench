@@ -11,6 +11,7 @@ from scopebench.plan import PlanDAG
 from scopebench.server.api import (
     CalibrationAdjustmentRequest,
     EvaluateRequest,
+    EvaluateStreamRequest,
     _suggest_plan_patch,
     create_app,
 )
@@ -109,6 +110,90 @@ def test_plan_patch_suggestions_cover_new_rules() -> None:
     assert "replace" in patch_ops
     assert "split_plan" in patch_ops
 
+
+
+def test_evaluate_stream_endpoint_reacts_to_threshold_crossings_and_step_updates() -> None:
+    app = create_app()
+    evaluate_stream = _endpoint(app, "/evaluate_stream")
+    request = EvaluateStreamRequest.model_validate(
+        {
+            "contract": {"goal": "Maintain training pipeline", "preset": "team"},
+            "plan": {
+                "task": "Maintain training pipeline",
+                "steps": [
+                    {"id": "1", "description": "Inspect current jobs", "tool": "git_read"},
+                    {"id": "2", "description": "Run a small eval", "tool": "analysis", "depends_on": ["1"]},
+                ],
+            },
+            "events": [
+                {
+                    "event_id": "evt-1",
+                    "operation": "update_step",
+                    "step_id": "2",
+                    "step": {
+                        "description": "Launch long-running multi-region retraining with new serving dependency",
+                        "tool": "analysis",
+                        "tool_category": "prod",
+                    },
+                },
+                {
+                    "event_id": "evt-2",
+                    "operation": "add_step",
+                    "step_id": "3",
+                    "step": {
+                        "id": "3",
+                        "description": "Rollback check and safety validation",
+                        "tool": "pytest",
+                        "depends_on": ["2"],
+                    },
+                },
+            ],
+            "judge": "llm",
+            "include_steps": False,
+        }
+    )
+    response = evaluate_stream(request)
+
+    assert response.initial.event_id == "initial"
+    assert len(response.updates) == 2
+
+    first = response.updates[0]
+    assert first.event_id == "evt-1"
+    trigger_kinds = {trigger.kind for trigger in first.triggers}
+    assert "judge_output_changed" in trigger_kinds or "threshold_crossed" in trigger_kinds
+    assert isinstance(first.judge_output_deltas, list)
+
+    second = response.updates[1]
+    assert second.event_id == "evt-2"
+    assert second.operation == "add_step"
+
+
+def test_evaluate_stream_remove_step_updates_dependencies() -> None:
+    app = create_app()
+    evaluate_stream = _endpoint(app, "/evaluate_stream")
+    response = evaluate_stream(
+        EvaluateStreamRequest.model_validate(
+            {
+                "contract": {"goal": "Operate safely", "preset": "team"},
+                "plan": {
+                    "task": "Operate safely",
+                    "steps": [
+                        {"id": "1", "description": "Read", "tool": "git_read"},
+                        {"id": "2", "description": "Patch", "tool": "git_patch", "depends_on": ["1"]},
+                        {"id": "3", "description": "Validate", "tool": "pytest", "depends_on": ["2"]},
+                    ],
+                },
+                "events": [
+                    {"event_id": "drop-2", "operation": "remove_step", "step_id": "2"},
+                ],
+            }
+        )
+    )
+
+    assert len(response.updates) == 1
+    update = response.updates[0]
+    assert update.event_id == "drop-2"
+    assert update.operation == "remove_step"
 
 def test_ui_endpoint_serves_interactive_page() -> None:
     app = create_app()

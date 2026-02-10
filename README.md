@@ -216,6 +216,28 @@ When calling `POST /evaluate`, these flags are especially useful during integrat
 - `include_telemetry`: include telemetry payload fields for logging/replay.
 - `shadow_mode`: run checks in shadow mode while preserving production behavior.
 
+### `POST /evaluate_stream`
+
+Evaluate long-running plans that evolve over time. Submit an initial plan plus ordered `events` (`add_step`, `update_step`, `remove_step`, `replace_plan`). ScopeBench re-evaluates after each event and returns snapshots with:
+
+- updated aggregate risk and policy decision
+- `triggers` when cumulative risk crosses thresholds
+- `judge_output_deltas` when per-step judge outputs shift because context changed
+
+Minimal request shape:
+
+```json
+{
+  "contract": {"goal": "Maintain ML training pipeline", "preset": "team"},
+  "plan": {"task": "Maintain pipeline", "steps": [{"id": "1", "description": "Inspect jobs", "tool": "git_read"}]},
+  "events": [
+    {"event_id": "evt-1", "operation": "add_step", "step_id": "2", "step": {"id": "2", "description": "Launch retraining", "tool": "analysis", "depends_on": ["1"]}},
+    {"event_id": "evt-2", "operation": "update_step", "step_id": "2", "step": {"description": "Launch multi-region retraining with new serving dependency"}}
+  ],
+  "judge": "llm"
+}
+```
+
 ### Additional catalog endpoints
 
 - `GET /templates` returns template metadata and full content for each domain, grouped by variants (default + named domain presets).
