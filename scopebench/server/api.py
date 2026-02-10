@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from scopebench.contracts import TaskContract
+from scopebench.contracts import Preset, TaskContract
 from scopebench.plan import PlanDAG, RealtimeEstimate
 from scopebench.runtime.guard import evaluate
 from scopebench.scoring.axes import SCOPE_AXES, combine_aggregates
@@ -442,6 +442,71 @@ class CalibrationDashboardResponse(BaseModel):
     source: Optional[str] = None
     count: int
     domains: List[CalibrationDashboardEntry]
+
+
+_AXIS_TO_THRESHOLD_FIELD = {
+    "spatial": "max_spatial",
+    "temporal": "max_temporal",
+    "depth": "max_depth",
+    "irreversibility": "max_irreversibility",
+    "resource_intensity": "max_resource_intensity",
+    "legal_exposure": "max_legal_exposure",
+    "dependency_creation": "max_dependency_creation",
+    "stakeholder_radius": "max_stakeholder_radius",
+    "power_concentration": "max_power_concentration",
+    "uncertainty": "max_uncertainty",
+}
+
+
+def _dashboard_row_domain(row: Dict[str, Any]) -> str:
+    for key in ("domain", "task_type"):
+        value = row.get(key)
+        if isinstance(value, str) and value:
+            return value
+    telemetry = row.get("telemetry")
+    if isinstance(telemetry, dict):
+        task_type = telemetry.get("task_type")
+        if isinstance(task_type, str) and task_type:
+            return task_type
+    policy_input = row.get("policy_input")
+    if isinstance(policy_input, dict):
+        task_type = policy_input.get("task_type")
+        if isinstance(task_type, str) and task_type:
+            return task_type
+    return DEFAULT_DOMAIN
+
+
+def _dashboard_axis_signal(row: Dict[str, Any], axis: str) -> float:
+    values: List[float] = []
+    for container_name in ("asked", "aggregate"):
+        container = row.get(container_name)
+        if isinstance(container, dict):
+            value = container.get(axis)
+            if isinstance(value, (int, float)):
+                values.append(float(value))
+    exceeded = row.get("exceeded")
+    if isinstance(exceeded, dict):
+        value = exceeded.get(axis)
+        if isinstance(value, dict):
+            raw = value.get("value")
+            if isinstance(raw, (int, float)):
+                values.append(float(raw))
+        elif isinstance(value, (int, float)):
+            values.append(float(value))
+    if not values:
+        return 0.0
+    return max(0.0, min(1.0, max(values)))
+
+
+def _preset_thresholds() -> Dict[str, Dict[str, float]]:
+    presets: Dict[str, Dict[str, float]] = {}
+    for preset in Preset:
+        contract = TaskContract(goal="calibration dashboard", preset=preset)
+        thresholds: Dict[str, float] = {}
+        for axis, field in _AXIS_TO_THRESHOLD_FIELD.items():
+            thresholds[axis] = float(getattr(contract.thresholds, field))
+        presets[preset.value] = thresholds
+    return presets
 
 
 class EvaluateSessionResponse(BaseModel):
@@ -1208,13 +1273,82 @@ def _load_telemetry_rows(path: Path, limit: int = 200) -> List[Dict[str, Any]]:
 
 def _build_calibration_dashboard(path: Path) -> CalibrationDashboardResponse:
     domain_payload = compute_domain_calibration_from_telemetry(path)
+    rows = _load_telemetry_rows(path, limit=0)
+    rows_by_domain: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        rows_by_domain.setdefault(_dashboard_row_domain(row), []).append(row)
+
+    preset_thresholds = _preset_thresholds()
+
     entries: List[CalibrationDashboardEntry] = []
     for domain, (calibration, stats) in sorted(domain_payload.items()):
+        domain_rows = rows_by_domain.get(domain, [])
+        distributions: Dict[str, Dict[str, Any]] = {}
+        telemetry_delta: Dict[str, Dict[str, Any]] = {}
+        rates: Dict[str, Dict[str, float]] = {}
+        for axis in SCOPE_AXES:
+            values = [_dashboard_axis_signal(row, axis) for row in domain_rows]
+            values = [value for value in values if value > 0]
+            histogram = [0] * 10
+            for value in values:
+                bucket = min(9, int(value * 10))
+                histogram[bucket] += 1
+            quantiles = {"p50": 0.0, "p90": 0.0, "p95": 0.0}
+            if values:
+                sorted_values = sorted(values)
+
+                def percentile(p: float) -> float:
+                    index = max(0, min(len(sorted_values) - 1, int(round((len(sorted_values) - 1) * p))))
+                    return float(sorted_values[index])
+
+                quantiles = {
+                    "p50": percentile(0.5),
+                    "p90": percentile(0.9),
+                    "p95": percentile(0.95),
+                }
+
+            distributions[axis] = {
+                "samples": len(values),
+                "histogram": histogram,
+                "quantiles": quantiles,
+            }
+
+            false_alarms = stats.false_alarms.get(axis, 0)
+            overrides = stats.overrides.get(axis, 0)
+            triggered = max(1, stats.triggered.get(axis, 0))
+            rates[axis] = {
+                "false_alarm_rate": float(false_alarms) / float(triggered),
+                "override_rate": float(overrides) / float(triggered),
+            }
+
+            telemetry_delta[axis] = {
+                "axis_scale_delta": calibration.resolved_axis_scale()[axis] - 1.0,
+                "threshold_factor_delta": calibration.resolved_axis_threshold_factor()[axis] - 1.0,
+                "axis_bias": calibration.resolved_axis_bias()[axis],
+            }
+
+        calibrated_thresholds: Dict[str, Dict[str, float]] = {}
+        threshold_factors = calibration.resolved_axis_threshold_factor()
+        for preset, thresholds in preset_thresholds.items():
+            calibrated_thresholds[preset] = {
+                axis: max(0.0, min(1.0, threshold * threshold_factors.get(axis, 1.0)))
+                for axis, threshold in thresholds.items()
+            }
+
+        entry_calibration = calibration_to_dict(calibration)
+        entry_calibration["preset_thresholds"] = {
+            "base": preset_thresholds,
+            "calibrated": calibrated_thresholds,
+        }
+        entry_calibration["axis_distributions"] = distributions
+        entry_calibration["rates"] = rates
+        entry_calibration["telemetry_delta"] = telemetry_delta
+
         entries.append(
             CalibrationDashboardEntry(
                 domain=domain,
                 runs=stats.runs,
-                calibration=calibration_to_dict(calibration),
+                calibration=entry_calibration,
                 stats={
                     "triggered": stats.triggered,
                     "false_alarms": stats.false_alarms,
