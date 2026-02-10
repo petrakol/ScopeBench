@@ -11,9 +11,14 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from scopebench.contracts import TaskContract
-from scopebench.plan import PlanDAG, RealtimeEstimate
+from scopebench.plan import PlanDAG, RealtimeEstimate, plan_from_dict
 from scopebench.runtime.guard import evaluate
-from scopebench.scoring.axes import SCOPE_AXES, combine_aggregates
+from scopebench.scoring.axes import (
+    AxisScore,
+    SCOPE_AXES,
+    ScopeVector,
+    combine_aggregates,
+)
 from scopebench.scoring.calibration import (
     DEFAULT_DOMAIN,
     CalibratedDecisionThresholds,
@@ -21,7 +26,7 @@ from scopebench.scoring.calibration import (
     calibration_to_dict,
     compute_domain_calibration_from_telemetry,
 )
-from scopebench.scoring.rules import build_budget_ledger
+from scopebench.scoring.rules import aggregate_scope, build_budget_ledger
 from scopebench.plugins import PluginManager
 from scopebench.session import MultiAgentSession
 from scopebench.bench.community import suggest_case
@@ -76,13 +81,18 @@ class EvaluateRequest(BaseModel):
     )
     contract: Dict[str, Any] = Field(..., description="TaskContract as dict")
     plan: Dict[str, Any] = Field(..., description="PlanDAG as dict")
-    include_steps: bool = Field(False, description="Include step-level vectors and rationales.")
-    include_summary: bool = Field(False, description="Include summary and next-step guidance.")
+    include_steps: bool = Field(
+        False, description="Include step-level vectors and rationales."
+    )
+    include_summary: bool = Field(
+        False, description="Include summary and next-step guidance."
+    )
     include_telemetry: bool = Field(
         True, description="Include lightweight evaluation telemetry fields."
     )
     shadow_mode: bool = Field(
-        False, description="If true, never block execution; return what enforcement would decide."
+        False,
+        description="If true, never block execution; return what enforcement would decide.",
     )
     ask_action: Optional[str] = Field(
         None, description="Optional feedback: accepted/replanned/ignored."
@@ -233,7 +243,9 @@ class EvaluateResponse(BaseModel):
 
 class EvaluateSessionRequest(BaseModel):
     session: Dict[str, Any] = Field(..., description="MultiAgentSession as dict")
-    include_steps: bool = Field(False, description="Include step-level vectors and rationales.")
+    include_steps: bool = Field(
+        False, description="Include step-level vectors and rationales."
+    )
     include_telemetry: bool = Field(
         True, description="Include lightweight evaluation telemetry fields."
     )
@@ -274,7 +286,9 @@ class DatasetSuggestResponse(BaseModel):
 class StreamingPlanEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event_id: str = Field(..., min_length=1)
-    operation: str = Field(..., pattern=r"^(add_step|update_step|remove_step|replace_plan)$")
+    operation: str = Field(
+        ..., pattern=r"^(add_step|update_step|remove_step|replace_plan)$"
+    )
     step_id: Optional[str] = None
     step: Optional[Dict[str, Any]] = None
     index: Optional[int] = Field(
@@ -296,7 +310,9 @@ class EvaluateStreamRequest(BaseModel):
         default_factory=list,
         description="Ordered stream of plan evolution events.",
     )
-    include_steps: bool = Field(False, description="Include step-level vectors for each snapshot.")
+    include_steps: bool = Field(
+        False, description="Include step-level vectors for each snapshot."
+    )
     policy_backend: Optional[str] = Field(
         None, description="Policy backend override: python|opa|cedar."
     )
@@ -444,6 +460,36 @@ class CalibrationDashboardResponse(BaseModel):
     domains: List[CalibrationDashboardEntry]
 
 
+class DomainDecisionAnalytics(BaseModel):
+    domain: str
+    total_cases: int
+    decision_counts: Dict[str, int]
+    decision_rates: Dict[str, float]
+
+
+class AxisTriggerAnalytics(BaseModel):
+    axis: str
+    ask_count: int
+    deny_count: int
+
+
+class EffectThresholdAnalytics(BaseModel):
+    axis: str
+    average_effect: float
+    average_threshold: float
+    average_margin: float
+    over_threshold_cases: int
+    over_threshold_rate: float
+
+
+class CasesAnalyticsResponse(BaseModel):
+    source: str
+    count: int
+    decision_distribution_by_domain: List[DomainDecisionAnalytics]
+    trigger_axes: List[AxisTriggerAnalytics]
+    effect_magnitude_vs_threshold: List[EffectThresholdAnalytics]
+
+
 class EvaluateSessionResponse(BaseModel):
     trace_id: Optional[str] = None
     span_id: Optional[str] = None
@@ -455,8 +501,6 @@ class EvaluateSessionResponse(BaseModel):
     negotiation: SessionNegotiation
 
     model_config = {"populate_by_name": True}
-
-
 
 
 def _step_detail_payload(vectors, plan: PlanDAG) -> List[StepDetail]:
@@ -485,9 +529,15 @@ def _step_detail_payload(vectors, plan: PlanDAG) -> List[StepDetail]:
                 est_time_days=plan_step.est_time_days if plan_step else None,
                 est_labor_hours=plan_step.est_labor_hours if plan_step else None,
                 resolved_cost_usd=plan_step.resolved_cost_usd() if plan_step else None,
-                resolved_time_days=plan_step.resolved_time_days() if plan_step else None,
-                resolved_labor_hours=plan_step.resolved_labor_hours() if plan_step else None,
-                realtime_estimates=list(plan_step.realtime_estimates) if plan_step else [],
+                resolved_time_days=(
+                    plan_step.resolved_time_days() if plan_step else None
+                ),
+                resolved_labor_hours=(
+                    plan_step.resolved_labor_hours() if plan_step else None
+                ),
+                realtime_estimates=(
+                    list(plan_step.realtime_estimates) if plan_step else []
+                ),
                 est_benefit=plan_step.est_benefit if plan_step else None,
                 benefit_unit=plan_step.benefit_unit if plan_step else None,
                 axes=axes,
@@ -532,8 +582,13 @@ def _judge_output_deltas(
             axis
             for axis, detail in current_axes.items()
             if (
-                abs(float(detail.get("value", 0.0)) - float(previous_axes.get(axis, {}).get("value", 0.0))) > 1e-6
-                or str(detail.get("rationale", "")) != str(previous_axes.get(axis, {}).get("rationale", ""))
+                abs(
+                    float(detail.get("value", 0.0))
+                    - float(previous_axes.get(axis, {}).get("value", 0.0))
+                )
+                > 1e-6
+                or str(detail.get("rationale", ""))
+                != str(previous_axes.get(axis, {}).get("rationale", ""))
             )
         ]
         for axis in changed_axes:
@@ -553,7 +608,9 @@ def _judge_output_deltas(
                 StreamStepDelta(
                     step_id=step_id,
                     changed_axes=sorted(changed_axes),
-                    axis_deltas=sorted(axis_deltas, key=lambda item: str(item.get("axis", ""))),
+                    axis_deltas=sorted(
+                        axis_deltas, key=lambda item: str(item.get("axis", ""))
+                    ),
                 )
             )
     return sorted(deltas, key=lambda item: item.step_id)
@@ -601,17 +658,25 @@ def _triggered_reevaluations(
     return triggers
 
 
-def _apply_streaming_event(plan_data: Dict[str, Any], event: StreamingPlanEvent) -> Dict[str, Any]:
+def _apply_streaming_event(
+    plan_data: Dict[str, Any], event: StreamingPlanEvent
+) -> Dict[str, Any]:
     updated = dict(plan_data)
     steps = list(updated.get("steps", []))
     operation = event.operation
 
     if operation == "replace_plan":
         if not isinstance(event.step, dict):
-            raise HTTPException(status_code=400, detail="replace_plan requires 'step' with full plan payload")
+            raise HTTPException(
+                status_code=400,
+                detail="replace_plan requires 'step' with full plan payload",
+            )
         replacement = dict(event.step)
         if "task" not in replacement or "steps" not in replacement:
-            raise HTTPException(status_code=400, detail="replace_plan payload must include task and steps")
+            raise HTTPException(
+                status_code=400,
+                detail="replace_plan payload must include task and steps",
+            )
         return replacement
 
     if not event.step_id:
@@ -621,25 +686,37 @@ def _apply_streaming_event(plan_data: Dict[str, Any], event: StreamingPlanEvent)
 
     if operation == "add_step":
         if not isinstance(event.step, dict):
-            raise HTTPException(status_code=400, detail="add_step requires step payload")
+            raise HTTPException(
+                status_code=400, detail="add_step requires step payload"
+            )
         if str(event.step.get("id")) != event.step_id:
-            raise HTTPException(status_code=400, detail="add_step step.id must match step_id")
+            raise HTTPException(
+                status_code=400, detail="add_step step.id must match step_id"
+            )
         if event.step_id in index_by_id:
-            raise HTTPException(status_code=400, detail=f"step '{event.step_id}' already exists")
+            raise HTTPException(
+                status_code=400, detail=f"step '{event.step_id}' already exists"
+            )
         insertion = len(steps) if event.index is None else min(event.index, len(steps))
         steps.insert(insertion, event.step)
     elif operation == "update_step":
         if event.step_id not in index_by_id:
-            raise HTTPException(status_code=400, detail=f"step '{event.step_id}' not found")
+            raise HTTPException(
+                status_code=400, detail=f"step '{event.step_id}' not found"
+            )
         if not isinstance(event.step, dict):
-            raise HTTPException(status_code=400, detail="update_step requires step payload")
+            raise HTTPException(
+                status_code=400, detail="update_step requires step payload"
+            )
         existing = dict(steps[index_by_id[event.step_id]])
         existing.update(event.step)
         existing["id"] = event.step_id
         steps[index_by_id[event.step_id]] = existing
     elif operation == "remove_step":
         if event.step_id not in index_by_id:
-            raise HTTPException(status_code=400, detail=f"step '{event.step_id}' not found")
+            raise HTTPException(
+                status_code=400, detail=f"step '{event.step_id}' not found"
+            )
         removed_idx = index_by_id[event.step_id]
         steps.pop(removed_idx)
         for idx, step in enumerate(steps):
@@ -649,7 +726,9 @@ def _apply_streaming_event(plan_data: Dict[str, Any], event: StreamingPlanEvent)
                 refreshed["depends_on"] = deps
                 steps[idx] = refreshed
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported operation '{operation}'")
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported operation '{operation}'"
+        )
 
     updated["steps"] = steps
     return updated
@@ -679,7 +758,9 @@ def _snapshot_from_result(
         current_aggregate=aggregate_payload,
         judge_deltas=judge_deltas,
     )
-    steps_payload = _step_detail_payload(result.vectors, result.plan) if include_steps else None
+    steps_payload = (
+        _step_detail_payload(result.vectors, result.plan) if include_steps else None
+    )
     return StreamingEvaluationSnapshot(
         event_id=event_id,
         event_index=event_index,
@@ -695,11 +776,15 @@ def _snapshot_from_result(
     )
 
 
-def _budget_consumption_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+def _budget_consumption_from_ledger(
+    ledger: Dict[str, Dict[str, float]],
+) -> Dict[str, float]:
     return {key: float(values.get("consumed", 0.0)) for key, values in ledger.items()}
 
 
-def _budget_utilization_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+def _budget_utilization_from_ledger(
+    ledger: Dict[str, Dict[str, float]],
+) -> Dict[str, float]:
     utilization: Dict[str, float] = {}
     for key, values in ledger.items():
         budget = float(values.get("budget", 0.0))
@@ -708,16 +793,18 @@ def _budget_utilization_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict
     return utilization
 
 
-
-
-def _budget_projection_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+def _budget_projection_from_ledger(
+    ledger: Dict[str, Dict[str, float]],
+) -> Dict[str, float]:
     projection: Dict[str, float] = {}
     for key, values in ledger.items():
         projection[key] = float(values.get("projected", values.get("consumed", 0.0)))
     return projection
 
 
-def _budget_projection_utilization_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+def _budget_projection_utilization_from_ledger(
+    ledger: Dict[str, Dict[str, float]],
+) -> Dict[str, float]:
     utilization: Dict[str, float] = {}
     for key, values in ledger.items():
         budget = float(values.get("budget", 0.0))
@@ -725,7 +812,10 @@ def _budget_projection_utilization_from_ledger(ledger: Dict[str, Dict[str, float
         utilization[key] = 0.0 if budget <= 0.0 else projected / budget
     return utilization
 
-def _aggregate_session_risk(per_agent_aggregates: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+
+def _aggregate_session_risk(
+    per_agent_aggregates: Dict[str, Dict[str, float]],
+) -> Dict[str, float]:
     aggregated: Dict[str, float] = {}
     for axis in SCOPE_AXES:
         aggregated[axis] = min(
@@ -735,14 +825,18 @@ def _aggregate_session_risk(per_agent_aggregates: Dict[str, Dict[str, float]]) -
     return aggregated
 
 
-def _proportional_allocations(requests: Dict[str, float], available: float) -> Dict[str, float]:
+def _proportional_allocations(
+    requests: Dict[str, float], available: float
+) -> Dict[str, float]:
     if available <= 0:
         return {agent_id: 0.0 for agent_id in requests}
     total_requested = sum(max(0.0, value) for value in requests.values())
     if total_requested <= 0:
         return {agent_id: 0.0 for agent_id in requests}
     return {
-        agent_id: min(max(0.0, requested), available * (max(0.0, requested) / total_requested))
+        agent_id: min(
+            max(0.0, requested), available * (max(0.0, requested) / total_requested)
+        )
         for agent_id, requested in requests.items()
     }
 
@@ -756,36 +850,44 @@ def _build_session_negotiation(
     recommendations: List[NegotiationBudgetRecommendation] = []
 
     all_budget_keys = sorted(
-        {
-            key
-            for detail in per_agent.values()
-            for key in detail.ledger.keys()
-        }
+        {key for detail in per_agent.values() for key in detail.ledger.keys()}
         | set(global_ledger.keys())
     )
 
     for budget_key in all_budget_keys:
         requests = {
-            agent_id: max(0.0, float(detail.ledger.get(budget_key, {}).get("exceeded", 0.0)))
+            agent_id: max(
+                0.0, float(detail.ledger.get(budget_key, {}).get("exceeded", 0.0))
+            )
             for agent_id, detail in per_agent.items()
         }
-        requests = {agent_id: value for agent_id, value in requests.items() if value > 0.0}
+        requests = {
+            agent_id: value for agent_id, value in requests.items() if value > 0.0
+        }
         if not requests:
             continue
 
         reason_codes.append(f"agent_over_budget:{budget_key}")
         total_requested = sum(requests.values())
-        global_headroom = max(0.0, float(global_ledger.get(budget_key, {}).get("remaining", 0.0)))
+        global_headroom = max(
+            0.0, float(global_ledger.get(budget_key, {}).get("remaining", 0.0))
+        )
 
-        headroom_allocations = _proportional_allocations(requests, min(global_headroom, total_requested))
+        headroom_allocations = _proportional_allocations(
+            requests, min(global_headroom, total_requested)
+        )
         unmet = {
-            agent_id: max(0.0, requests[agent_id] - headroom_allocations.get(agent_id, 0.0))
+            agent_id: max(
+                0.0, requests[agent_id] - headroom_allocations.get(agent_id, 0.0)
+            )
             for agent_id in requests
         }
         remaining_unmet = sum(unmet.values())
 
         donors = {
-            agent_id: max(0.0, float(detail.ledger.get(budget_key, {}).get("remaining", 0.0)))
+            agent_id: max(
+                0.0, float(detail.ledger.get(budget_key, {}).get("remaining", 0.0))
+            )
             for agent_id, detail in per_agent.items()
             if float(detail.ledger.get(budget_key, {}).get("remaining", 0.0)) > 0.0
         }
@@ -805,14 +907,18 @@ def _build_session_negotiation(
                     continue
                 amount = min(available, needed)
                 transfer_records.append(
-                    NegotiationTransfer(from_agent=donor, to_agent=recipient, amount=amount)
+                    NegotiationTransfer(
+                        from_agent=donor, to_agent=recipient, amount=amount
+                    )
                 )
                 donor_remaining[donor] -= amount
                 needed -= amount
 
         allocated_from_headroom = sum(headroom_allocations.values())
         allocated_from_transfers = sum(record.amount for record in transfer_records)
-        still_unmet = max(0.0, total_requested - allocated_from_headroom - allocated_from_transfers)
+        still_unmet = max(
+            0.0, total_requested - allocated_from_headroom - allocated_from_transfers
+        )
         if still_unmet > 0.0:
             reason_codes.append(f"tight_envelope:{budget_key}")
 
@@ -828,7 +934,9 @@ def _build_session_negotiation(
         minimum_budget = consumption
         flex_pool = max(0.0, total_budget - sum(minimum_budget.values()))
         deficit_weights = {
-            agent_id: max(0.0, unmet.get(agent_id, 0.0) - transfer_targets.get(agent_id, 0.0))
+            agent_id: max(
+                0.0, unmet.get(agent_id, 0.0) - transfer_targets.get(agent_id, 0.0)
+            )
             for agent_id in current_budgets
         }
         rebalance = _proportional_allocations(deficit_weights, flex_pool)
@@ -847,7 +955,9 @@ def _build_session_negotiation(
         ]
 
         participant_count = len(per_agent)
-        approvals = sum(1 for delta in (entry.delta for entry in reallocation) if delta >= 0.0)
+        approvals = sum(
+            1 for delta in (entry.delta for entry in reallocation) if delta >= 0.0
+        )
         quorum_ratio = 0.67
         needed_approvals = max(1, int(participant_count * quorum_ratio + 0.999999))
         consensus_status = "reached" if approvals >= needed_approvals else "pending"
@@ -874,7 +984,9 @@ def _build_session_negotiation(
                     participants=participant_count,
                     status=consensus_status,
                     note=(
-                        "Consensus reached" if consensus_status == "reached" else "Awaiting more approvals"
+                        "Consensus reached"
+                        if consensus_status == "reached"
+                        else "Awaiting more approvals"
                     ),
                 ),
             )
@@ -897,7 +1009,10 @@ def _detect_cross_agent_scope_laundering(
     for axis in SCOPE_AXES:
         global_value = float(global_aggregate.get(axis, 0.0))
         max_agent_value = max(
-            (float(aggregate.get(axis, 0.0)) for aggregate in per_agent_aggregates.values()),
+            (
+                float(aggregate.get(axis, 0.0))
+                for aggregate in per_agent_aggregates.values()
+            ),
             default=0.0,
         )
         if global_value >= ask_threshold and max_agent_value < ask_threshold:
@@ -939,7 +1054,9 @@ def _next_steps_from_policy(policy) -> List[str]:
     for axis, threshold in policy.asked.items():
         if axis in {"read_before_write", "validation_after_write"}:
             continue
-        suggestions.append(f"Consider approval or mitigating {axis} below {float(threshold):.2f}.")
+        suggestions.append(
+            f"Consider approval or mitigating {axis} below {float(threshold):.2f}."
+        )
 
     if any("Tool category" in reason for reason in policy.reasons):
         suggestions.append("Remove high-risk tool categories or get explicit approval.")
@@ -952,7 +1069,11 @@ def _next_steps_from_policy(policy) -> List[str]:
             else []
         )
     for recommendation in knee_recommendations:
-        rationale = recommendation.get("rationale") if isinstance(recommendation, dict) else None
+        rationale = (
+            recommendation.get("rationale")
+            if isinstance(recommendation, dict)
+            else None
+        )
         if rationale:
             suggestions.append(f"Knee recommendation: {rationale}")
 
@@ -965,8 +1086,12 @@ def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
     patches: List[Dict[str, Any]] = []
 
     knee_recommendations = []
-    if getattr(policy, "policy_input", None) is not None and isinstance(policy.policy_input.metadata, dict):
-        knee_recommendations = policy.policy_input.metadata.get("knee_plan_patch_recommendations", [])
+    if getattr(policy, "policy_input", None) is not None and isinstance(
+        policy.policy_input.metadata, dict
+    ):
+        knee_recommendations = policy.policy_input.metadata.get(
+            "knee_plan_patch_recommendations", []
+        )
     for recommendation in knee_recommendations:
         if isinstance(recommendation, dict):
             patch = recommendation.get("patch")
@@ -975,7 +1100,9 @@ def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
 
     triggered = set(policy.exceeded.keys()) | set(policy.asked.keys())
     if "read_before_write" in policy.asked:
-        first_write = next((step for step in plan.steps if step.tool in SWE_WRITE_TOOLS), None)
+        first_write = next(
+            (step for step in plan.steps if step.tool in SWE_WRITE_TOOLS), None
+        )
         if first_write is not None:
             patches.append(
                 {
@@ -989,7 +1116,9 @@ def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
                 }
             )
     if "validation_after_write" in policy.asked:
-        first_write = next((step for step in plan.steps if step.tool in SWE_WRITE_TOOLS), None)
+        first_write = next(
+            (step for step in plan.steps if step.tool in SWE_WRITE_TOOLS), None
+        )
         if first_write is not None:
             patches.append(
                 {
@@ -1008,7 +1137,8 @@ def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
             (
                 step
                 for step in plan.steps
-                if (step.tool_category or "") in {"infra", "payments", "finance", "health"}
+                if (step.tool_category or "")
+                in {"infra", "payments", "finance", "health"}
             ),
             None,
         )
@@ -1075,7 +1205,10 @@ def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
                 step
                 for step in plan.steps
                 if (step.tool_category or "") in {"infra", "iam", "payments", "health"}
-                or any(keyword in step.description.lower() for keyword in ("delete", "destroy", "drop", "rotate"))
+                or any(
+                    keyword in step.description.lower()
+                    for keyword in ("delete", "destroy", "drop", "rotate")
+                )
             ),
             None,
         )
@@ -1135,7 +1268,11 @@ def _infer_task_type(contract: TaskContract, plan: PlanDAG) -> str:
 
 
 def _build_telemetry(
-    contract: TaskContract, plan: PlanDAG, policy, ask_action: Optional[str], outcome: Optional[str]
+    contract: TaskContract,
+    plan: PlanDAG,
+    policy,
+    ask_action: Optional[str],
+    outcome: Optional[str],
 ) -> TelemetryDetail:
     triggered = sorted(set(policy.exceeded.keys()) | set(policy.asked.keys()))
     return TelemetryDetail(
@@ -1205,6 +1342,144 @@ def _load_telemetry_rows(path: Path, limit: int = 200) -> List[Dict[str, Any]]:
     return rows[-limit:]
 
 
+def _scope_vector_from_expected_payload(payload: Dict[str, Any]) -> ScopeVector:
+    return ScopeVector(
+        step_id=str(payload.get("step_id", "")) or None,
+        spatial=AxisScore(value=float(payload["spatial"])),
+        temporal=AxisScore(value=float(payload["temporal"])),
+        depth=AxisScore(value=float(payload["depth"])),
+        irreversibility=AxisScore(value=float(payload["irreversibility"])),
+        resource_intensity=AxisScore(value=float(payload["resource_intensity"])),
+        legal_exposure=AxisScore(value=float(payload["legal_exposure"])),
+        dependency_creation=AxisScore(value=float(payload["dependency_creation"])),
+        stakeholder_radius=AxisScore(value=float(payload["stakeholder_radius"])),
+        power_concentration=AxisScore(value=float(payload["power_concentration"])),
+        uncertainty=AxisScore(value=float(payload["uncertainty"])),
+    )
+
+
+def _build_cases_analytics(
+    path: Path, plugin_cases: List[Any]
+) -> CasesAnalyticsResponse:
+    from collections import Counter, defaultdict
+
+    from scopebench.bench.dataset import load_cases
+
+    builtin_cases = load_cases(path)
+    all_cases = list(builtin_cases) + list(plugin_cases)
+
+    decision_by_domain: Dict[str, Counter] = defaultdict(Counter)
+    axis_trigger_counts: Dict[str, Counter] = {
+        axis: Counter({"ASK": 0, "DENY": 0}) for axis in SCOPE_AXES
+    }
+    axis_effect_total = {axis: 0.0 for axis in SCOPE_AXES}
+    axis_threshold_total = {axis: 0.0 for axis in SCOPE_AXES}
+    axis_margin_total = {axis: 0.0 for axis in SCOPE_AXES}
+    axis_over_threshold = Counter({axis: 0 for axis in SCOPE_AXES})
+
+    for case in all_cases:
+        decision = str(case.expected_decision)
+        decision_by_domain[case.domain][decision] += 1
+
+        contract = TaskContract.model_validate(case.contract)
+        plan = plan_from_dict(case.plan)
+        vectors = [
+            _scope_vector_from_expected_payload(row)
+            for row in case.expected_step_vectors
+        ]
+        aggregate_dict = aggregate_scope(vectors, plan).as_dict()
+
+        thresholds = {
+            "spatial": contract.thresholds.max_spatial,
+            "temporal": contract.thresholds.max_temporal,
+            "depth": contract.thresholds.max_depth,
+            "irreversibility": contract.thresholds.max_irreversibility,
+            "resource_intensity": contract.thresholds.max_resource_intensity,
+            "legal_exposure": contract.thresholds.max_legal_exposure,
+            "dependency_creation": contract.thresholds.max_dependency_creation,
+            "stakeholder_radius": contract.thresholds.max_stakeholder_radius,
+            "power_concentration": contract.thresholds.max_power_concentration,
+            "uncertainty": contract.thresholds.max_uncertainty,
+        }
+
+        ask_threshold = float(contract.escalation.ask_if_any_axis_over)
+        ask_uncertainty = float(contract.escalation.ask_if_uncertainty_over)
+        for axis in SCOPE_AXES:
+            effect = float(aggregate_dict[axis])
+            threshold = float(thresholds[axis])
+            margin = effect - threshold
+
+            axis_effect_total[axis] += effect
+            axis_threshold_total[axis] += threshold
+            axis_margin_total[axis] += margin
+            if margin > 0:
+                axis_over_threshold[axis] += 1
+
+            if decision == "DENY" and margin > 0:
+                axis_trigger_counts[axis]["DENY"] += 1
+            if decision == "ASK" and (
+                effect > ask_threshold
+                or (axis == "uncertainty" and effect > ask_uncertainty)
+            ):
+                axis_trigger_counts[axis]["ASK"] += 1
+
+    domain_entries: List[DomainDecisionAnalytics] = []
+    for domain, counts in sorted(decision_by_domain.items()):
+        total = sum(counts.values())
+        decision_counts = {
+            label: int(counts.get(label, 0)) for label in ("ALLOW", "ASK", "DENY")
+        }
+        decision_rates = {
+            label: (decision_counts[label] / total if total else 0.0)
+            for label in decision_counts
+        }
+        domain_entries.append(
+            DomainDecisionAnalytics(
+                domain=domain,
+                total_cases=total,
+                decision_counts=decision_counts,
+                decision_rates=decision_rates,
+            )
+        )
+
+    trigger_axes = [
+        AxisTriggerAnalytics(
+            axis=axis,
+            ask_count=int(axis_trigger_counts[axis]["ASK"]),
+            deny_count=int(axis_trigger_counts[axis]["DENY"]),
+        )
+        for axis in SCOPE_AXES
+    ]
+
+    total_cases = len(all_cases)
+    effect_entries = [
+        EffectThresholdAnalytics(
+            axis=axis,
+            average_effect=(
+                axis_effect_total[axis] / total_cases if total_cases else 0.0
+            ),
+            average_threshold=(
+                axis_threshold_total[axis] / total_cases if total_cases else 0.0
+            ),
+            average_margin=(
+                axis_margin_total[axis] / total_cases if total_cases else 0.0
+            ),
+            over_threshold_cases=int(axis_over_threshold[axis]),
+            over_threshold_rate=(
+                axis_over_threshold[axis] / total_cases if total_cases else 0.0
+            ),
+        )
+        for axis in SCOPE_AXES
+    ]
+
+    return CasesAnalyticsResponse(
+        source=str(path),
+        count=total_cases,
+        decision_distribution_by_domain=domain_entries,
+        trigger_axes=trigger_axes,
+        effect_magnitude_vs_threshold=effect_entries,
+    )
+
 
 def _build_calibration_dashboard(path: Path) -> CalibrationDashboardResponse:
     domain_payload = compute_domain_calibration_from_telemetry(path)
@@ -1257,15 +1532,23 @@ def _resolve_adaptive_calibration(
                 )
             calibration = domain_calibration
 
-    calibration = apply_manual_adjustments(calibration, req.calibration_manual_adjustments) if calibration else calibration
+    calibration = (
+        apply_manual_adjustments(calibration, req.calibration_manual_adjustments)
+        if calibration
+        else calibration
+    )
     return calibration
 
 
-def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Optional[str] = None) -> FastAPI:
+def create_app(
+    default_policy_backend: str = "python", telemetry_jsonl_path: Optional[str] = None
+) -> FastAPI:
     init_tracing(enable_console=False)
     tracer = get_tracer("scopebench")
     app = FastAPI(title="ScopeBench", version="0.1.0")
-    configured_telemetry_path = telemetry_jsonl_path or os.getenv("SCOPEBENCH_TELEMETRY_JSONL_PATH")
+    configured_telemetry_path = telemetry_jsonl_path or os.getenv(
+        "SCOPEBENCH_TELEMETRY_JSONL_PATH"
+    )
     plugin_manager = PluginManager.from_environment()
 
     @app.get("/health")
@@ -1279,28 +1562,51 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         ui_path = Path(__file__).resolve().parents[1] / "ui" / "index.html"
         return ui_path.read_text(encoding="utf-8")
 
-
     @app.get("/plugin_marketplace")
     def plugin_marketplace_endpoint():
         from pathlib import Path
         import yaml
 
-        marketplace_path = Path(__file__).resolve().parents[2] / "docs" / "plugin_marketplace.yaml"
+        marketplace_path = (
+            Path(__file__).resolve().parents[2] / "docs" / "plugin_marketplace.yaml"
+        )
         if not marketplace_path.exists():
-            return {"plugins": [], "count": 0, "source": str(marketplace_path), "error": "marketplace file not found"}
+            return {
+                "plugins": [],
+                "count": 0,
+                "source": str(marketplace_path),
+                "error": "marketplace file not found",
+            }
         payload = yaml.safe_load(marketplace_path.read_text(encoding="utf-8")) or {}
         if not isinstance(payload, dict):
-            return {"plugins": [], "count": 0, "source": str(marketplace_path), "error": "invalid marketplace format"}
-        domains = payload.get("domains") if isinstance(payload.get("domains"), list) else []
+            return {
+                "plugins": [],
+                "count": 0,
+                "source": str(marketplace_path),
+                "error": "invalid marketplace format",
+            }
+        domains = (
+            payload.get("domains") if isinstance(payload.get("domains"), list) else []
+        )
         rows = [row for row in domains if isinstance(row, dict)]
-        return {"plugins": rows, "count": len(rows), "source": str(marketplace_path), "version": payload.get("version"), "updated_utc": payload.get("updated_utc")}
+        return {
+            "plugins": rows,
+            "count": len(rows),
+            "source": str(marketplace_path),
+            "version": payload.get("version"),
+            "updated_utc": payload.get("updated_utc"),
+        }
 
     @app.get("/plugins")
     def plugins_endpoint():
         return {
             "plugins": plugin_manager.bundles_payload(),
             "count": len(plugin_manager.bundles_payload()),
-            "configured_plugin_dirs": [p.strip() for p in os.getenv("SCOPEBENCH_PLUGIN_DIRS", "").split(os.pathsep) if p.strip()],
+            "configured_plugin_dirs": [
+                p.strip()
+                for p in os.getenv("SCOPEBENCH_PLUGIN_DIRS", "").split(os.pathsep)
+                if p.strip()
+            ],
         }
 
     @app.post("/plugins/install")
@@ -1321,8 +1627,18 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         target = target_dir / src.name
         target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
-        check = PluginManager.from_dirs([str(target_dir)], PluginManager._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", "")))
-        installed = next((item for item in check.bundles_payload() if Path(item.get("source_path", "")).name == src.name), None)
+        check = PluginManager.from_dirs(
+            [str(target_dir)],
+            PluginManager._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", "")),
+        )
+        installed = next(
+            (
+                item
+                for item in check.bundles_payload()
+                if Path(item.get("source_path", "")).name == src.name
+            ),
+            None,
+        )
         if installed is None:
             target.unlink(missing_ok=True)
             return {"ok": False, "error": "bundle failed to load"}
@@ -1349,7 +1665,12 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         for domain_dir in sorted(p for p in templates_root.iterdir() if p.is_dir()):
             variants: Dict[str, Dict[str, Any]] = {}
 
-            def load_variant(variant_name: str, contract_path: Path, plan_path: Path, notes_path: Path) -> None:
+            def load_variant(
+                variant_name: str,
+                contract_path: Path,
+                plan_path: Path,
+                notes_path: Path,
+            ) -> None:
                 variants[variant_name] = {
                     "metadata": {
                         "has_contract": contract_path.exists(),
@@ -1357,9 +1678,21 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                         "has_notes": notes_path.exists(),
                     },
                     "content": {
-                        "contract": yaml.safe_load(contract_path.read_text(encoding="utf-8")) if contract_path.exists() else None,
-                        "plan": yaml.safe_load(plan_path.read_text(encoding="utf-8")) if plan_path.exists() else None,
-                        "notes": notes_path.read_text(encoding="utf-8") if notes_path.exists() else None,
+                        "contract": (
+                            yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+                            if contract_path.exists()
+                            else None
+                        ),
+                        "plan": (
+                            yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+                            if plan_path.exists()
+                            else None
+                        ),
+                        "notes": (
+                            notes_path.read_text(encoding="utf-8")
+                            if notes_path.exists()
+                            else None
+                        ),
                     },
                 }
 
@@ -1407,13 +1740,30 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
 
         schema = {
             "type": "object",
-            "required": ["tool", "category", "domains", "risk_class", "priors", "default_effects"],
+            "required": [
+                "tool",
+                "category",
+                "domains",
+                "risk_class",
+                "priors",
+                "default_effects",
+            ],
             "properties": {
                 "tool": {"type": "string"},
                 "category": {"type": "string"},
                 "domains": {"type": "array", "items": {"type": "string"}},
-                "risk_class": {"type": "string", "enum": ["low", "moderate", "high", "critical"]},
-                "priors": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0.0, "maximum": 1.0}},
+                "risk_class": {
+                    "type": "string",
+                    "enum": ["low", "moderate", "high", "critical"],
+                },
+                "priors": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                    },
+                },
                 "default_effects": {"type": "object"},
             },
             "additionalProperties": False,
@@ -1465,6 +1815,16 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             "plugins": plugin_manager.bundles_payload(),
         }
 
+    @app.get("/cases/analytics", response_model=CasesAnalyticsResponse)
+    def cases_analytics_endpoint():
+        from scopebench.bench.dataset import default_cases_path
+
+        path = default_cases_path()
+        try:
+            return _build_cases_analytics(path, plugin_manager.cases)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/telemetry/replay")
     def telemetry_replay(limit: int = 50):
         if not configured_telemetry_path:
@@ -1481,7 +1841,6 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             "count": len(rows),
             "rows": rows,
         }
-
 
     @app.get("/calibration/dashboard", response_model=CalibrationDashboardResponse)
     def calibration_dashboard_endpoint():
@@ -1508,7 +1867,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         domain_payload = compute_domain_calibration_from_telemetry(path)
         picked = domain_payload.get(req.domain)
         if picked is None:
-            raise HTTPException(status_code=404, detail=f"Domain '{req.domain}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Domain '{req.domain}' not found"
+            )
         calibration, _ = picked
         adjusted = apply_manual_adjustments(
             calibration,
@@ -1557,8 +1918,12 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             plan_path = tmp_dir / "plan.yaml"
             import yaml
 
-            contract_path.write_text(yaml.safe_dump(req.contract, sort_keys=False), encoding="utf-8")
-            plan_path.write_text(yaml.safe_dump(req.plan, sort_keys=False), encoding="utf-8")
+            contract_path.write_text(
+                yaml.safe_dump(req.contract, sort_keys=False), encoding="utf-8"
+            )
+            plan_path.write_text(
+                yaml.safe_dump(req.plan, sort_keys=False), encoding="utf-8"
+            )
             case = suggest_case(
                 case_id=req.id,
                 domain=req.domain,
@@ -1580,7 +1945,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             "requestBody": {
                 "content": {
                     "application/json": {
-                        "example": EvaluateRequest.model_config["json_schema_extra"]["example"]
+                        "example": EvaluateRequest.model_config["json_schema_extra"][
+                            "example"
+                        ]
                     }
                 }
             },
@@ -1588,7 +1955,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 "200": {
                     "content": {
                         "application/json": {
-                            "example": EvaluateResponse.model_config["json_schema_extra"]["example"]
+                            "example": EvaluateResponse.model_config[
+                                "json_schema_extra"
+                            ]["example"]
                         }
                     }
                 }
@@ -1616,11 +1985,19 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                     "temporal": AxisDetail(**vec.temporal.model_dump()),
                     "depth": AxisDetail(**vec.depth.model_dump()),
                     "irreversibility": AxisDetail(**vec.irreversibility.model_dump()),
-                    "resource_intensity": AxisDetail(**vec.resource_intensity.model_dump()),
+                    "resource_intensity": AxisDetail(
+                        **vec.resource_intensity.model_dump()
+                    ),
                     "legal_exposure": AxisDetail(**vec.legal_exposure.model_dump()),
-                    "dependency_creation": AxisDetail(**vec.dependency_creation.model_dump()),
-                    "stakeholder_radius": AxisDetail(**vec.stakeholder_radius.model_dump()),
-                    "power_concentration": AxisDetail(**vec.power_concentration.model_dump()),
+                    "dependency_creation": AxisDetail(
+                        **vec.dependency_creation.model_dump()
+                    ),
+                    "stakeholder_radius": AxisDetail(
+                        **vec.stakeholder_radius.model_dump()
+                    ),
+                    "power_concentration": AxisDetail(
+                        **vec.power_concentration.model_dump()
+                    ),
                     "uncertainty": AxisDetail(**vec.uncertainty.model_dump()),
                 }
                 plan_step = plan_steps_by_id.get(vec.step_id or "")
@@ -1631,11 +2008,21 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                         tool_category=vec.tool_category,
                         est_cost_usd=plan_step.est_cost_usd if plan_step else None,
                         est_time_days=plan_step.est_time_days if plan_step else None,
-                        est_labor_hours=plan_step.est_labor_hours if plan_step else None,
-                        resolved_cost_usd=plan_step.resolved_cost_usd() if plan_step else None,
-                        resolved_time_days=plan_step.resolved_time_days() if plan_step else None,
-                        resolved_labor_hours=plan_step.resolved_labor_hours() if plan_step else None,
-                        realtime_estimates=list(plan_step.realtime_estimates) if plan_step else [],
+                        est_labor_hours=(
+                            plan_step.est_labor_hours if plan_step else None
+                        ),
+                        resolved_cost_usd=(
+                            plan_step.resolved_cost_usd() if plan_step else None
+                        ),
+                        resolved_time_days=(
+                            plan_step.resolved_time_days() if plan_step else None
+                        ),
+                        resolved_labor_hours=(
+                            plan_step.resolved_labor_hours() if plan_step else None
+                        ),
+                        realtime_estimates=(
+                            list(plan_step.realtime_estimates) if plan_step else []
+                        ),
                         est_benefit=plan_step.est_benefit if plan_step else None,
                         benefit_unit=plan_step.benefit_unit if plan_step else None,
                         axes=axes,
@@ -1646,7 +2033,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         next_steps = None
         patch_suggestion = None
         if req.include_summary:
-            summary = _summarize_response(pol, res.aggregate.as_dict(), effective_decision)
+            summary = _summarize_response(
+                pol, res.aggregate.as_dict(), effective_decision
+            )
             next_steps = _next_steps_from_policy(pol)
             patch_suggestion = _suggest_plan_patch(pol, plan)
 
@@ -1665,10 +2054,15 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         with tracer.start_as_current_span("scopebench.evaluate.response"):
             trace_context = current_trace_context()
         exceeded_payload = {
-            k: {"value": float(v[0]), "threshold": float(v[1])} for k, v in pol.exceeded.items()
+            k: {"value": float(v[0]), "threshold": float(v[1])}
+            for k, v in pol.exceeded.items()
         }
         asked_payload = {k: float(v) for k, v in pol.asked.items()}
-        policy_input_payload = pol.policy_input.__dict__ if (req.include_telemetry and pol.policy_input) else None
+        policy_input_payload = (
+            pol.policy_input.__dict__
+            if (req.include_telemetry and pol.policy_input)
+            else None
+        )
 
         if req.include_telemetry and telemetry and configured_telemetry_path:
             _append_jsonl(
@@ -1714,7 +2108,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         previous_aggregate = None
 
         initial_plan = PlanDAG.model_validate(plan_data)
-        initial_result = evaluate(contract, initial_plan, policy_backend=backend, judge=req.judge)
+        initial_result = evaluate(
+            contract, initial_plan, policy_backend=backend, judge=req.judge
+        )
         initial_snapshot = _snapshot_from_result(
             contract=contract,
             event_id="initial",
@@ -1733,7 +2129,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         for index, event in enumerate(req.events, start=1):
             plan_data = _apply_streaming_event(plan_data, event)
             plan_model = PlanDAG.model_validate(plan_data)
-            result = evaluate(contract, plan_model, policy_backend=backend, judge=req.judge)
+            result = evaluate(
+                contract, plan_model, policy_backend=backend, judge=req.judge
+            )
             judge_deltas = _judge_output_deltas(previous_vectors, result.vectors)
             snapshot = _snapshot_from_result(
                 contract=contract,
@@ -1769,11 +2167,18 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             contract = session.contract_for(agent.agent_id)
             global_plans.extend(agent_plans)
 
-            with tracer.start_as_current_span("scopebench.evaluate_session.agent") as span:
+            with tracer.start_as_current_span(
+                "scopebench.evaluate_session.agent"
+            ) as span:
                 span.set_attribute("scopebench.agent_id", agent.agent_id)
                 span.set_attribute("scopebench.agent_plan_count", len(agent_plans))
-                agent_results = [evaluate(contract, plan, policy_backend=backend) for plan in agent_plans]
-            agent_aggregate = combine_aggregates([result.aggregate for result in agent_results])
+                agent_results = [
+                    evaluate(contract, plan, policy_backend=backend)
+                    for plan in agent_plans
+                ]
+            agent_aggregate = combine_aggregates(
+                [result.aggregate for result in agent_results]
+            )
             agent_decision = "ALLOW"
             for result in agent_results:
                 if result.policy.decision.value == "DENY":
@@ -1783,7 +2188,10 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                     agent_decision = "ASK"
 
             agent_ledger = build_budget_ledger(contract, agent_plans)
-            if any(entry["exceeded"] > 0 for entry in agent_ledger.values()) and agent_decision != "DENY":
+            if (
+                any(entry["exceeded"] > 0 for entry in agent_ledger.values())
+                and agent_decision != "DENY"
+            ):
                 agent_decision = "ASK"
 
             aggregate_dict = agent_aggregate.as_dict()
@@ -1798,7 +2206,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 budget_consumption=_budget_consumption_from_ledger(agent_ledger),
                 budget_utilization=_budget_utilization_from_ledger(agent_ledger),
                 budget_projection=_budget_projection_from_ledger(agent_ledger),
-                budget_projection_utilization=_budget_projection_utilization_from_ledger(agent_ledger),
+                budget_projection_utilization=_budget_projection_utilization_from_ledger(
+                    agent_ledger
+                ),
                 decision=agent_decision,
             )
             agent_aggregates.append(agent_aggregate)
@@ -1810,10 +2220,15 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
 
         global_aggregate_dict = _aggregate_session_risk(per_agent_aggregates)
         global_ledger = build_budget_ledger(session.global_contract, global_plans)
-        if any(entry["exceeded"] > 0 for entry in global_ledger.values()) and global_decision != "DENY":
+        if (
+            any(entry["exceeded"] > 0 for entry in global_ledger.values())
+            and global_decision != "DENY"
+        ):
             global_decision = "ASK"
 
-        global_threshold = float(session.global_contract.escalation.ask_if_any_axis_over)
+        global_threshold = float(
+            session.global_contract.escalation.ask_if_any_axis_over
+        )
         laundering_signals = _detect_cross_agent_scope_laundering(
             global_aggregate=global_aggregate_dict,
             per_agent_aggregates=per_agent_aggregates,
@@ -1836,7 +2251,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 budget_consumption=_budget_consumption_from_ledger(global_ledger),
                 budget_utilization=_budget_utilization_from_ledger(global_ledger),
                 budget_projection=_budget_projection_from_ledger(global_ledger),
-                budget_projection_utilization=_budget_projection_utilization_from_ledger(global_ledger),
+                budget_projection_utilization=_budget_projection_utilization_from_ledger(
+                    global_ledger
+                ),
                 decision=global_decision,
             ),
         )
