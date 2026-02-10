@@ -884,6 +884,132 @@ def test_evaluate_session_global_budget_can_trigger_ask():
     assert body["decision"] in {"ASK", "DENY"}
 
 
+
+
+def test_evaluate_session_detects_cross_agent_scope_laundering():
+    pytest.importorskip("httpx")
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "session": {
+            "global_contract": {
+                "goal": "Coordinate deployment rollout",
+                "preset": "team",
+                "escalation": {"ask_if_any_axis_over": 0.55},
+                "budgets": {"cost_usd": 200.0, "time_horizon_days": 10.0, "max_tool_calls": 20},
+            },
+            "agents": [
+                {
+                    "agent_id": "agent-a",
+                    "contract": {
+                        "goal": "Create dependency part 1",
+                        "preset": "team",
+                        "escalation": {"ask_if_any_axis_over": 0.8},
+                        "thresholds": {
+                            "max_spatial": 1.0,
+                            "max_temporal": 1.0,
+                            "max_depth": 1.0,
+                            "max_irreversibility": 1.0,
+                            "max_resource_intensity": 1.0,
+                            "max_legal_exposure": 1.0,
+                            "max_dependency_creation": 1.0,
+                            "max_stakeholder_radius": 1.0,
+                            "max_power_concentration": 1.0,
+                            "max_uncertainty": 1.0,
+                        },
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "contract": {
+                        "goal": "Create dependency part 2",
+                        "preset": "team",
+                        "escalation": {"ask_if_any_axis_over": 0.8},
+                        "thresholds": {
+                            "max_spatial": 1.0,
+                            "max_temporal": 1.0,
+                            "max_depth": 1.0,
+                            "max_irreversibility": 1.0,
+                            "max_resource_intensity": 1.0,
+                            "max_legal_exposure": 1.0,
+                            "max_dependency_creation": 1.0,
+                            "max_stakeholder_radius": 1.0,
+                            "max_power_concentration": 1.0,
+                            "max_uncertainty": 1.0,
+                        },
+                    },
+                },
+            ],
+            "plans": [
+                {
+                    "agent_id": "agent-a",
+                    "plan": {
+                        "task": "Dependency chain segment A",
+                        "steps": [
+                            {"id": "1", "description": "Create service A for caching.", "tool": "analysis"}
+                        ],
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "plan": {
+                        "task": "Dependency chain segment B",
+                        "steps": [
+                            {"id": "1", "description": "Create service B to orchestrate service A.", "tool": "analysis"}
+                        ],
+                    },
+                },
+            ],
+        }
+    }
+
+    response = client.post("/evaluate_session", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["per_agent"]["agent-a"]["decision"] == "ALLOW"
+    assert body["per_agent"]["agent-b"]["decision"] == "ALLOW"
+    assert any(signal["axis"] == "dependency_creation" for signal in body["laundering_signals"])
+    assert body["decision"] == "ASK"
+
+
+def test_evaluate_session_dashboard_reports_budget_consumption():
+    pytest.importorskip("httpx")
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "session": {
+            "global_contract": {
+                "goal": "Coordinate fixes",
+                "preset": "team",
+                "budgets": {"cost_usd": 100.0, "time_horizon_days": 5.0, "max_tool_calls": 10},
+            },
+            "agents": [{"agent_id": "agent-a"}],
+            "plans": [
+                {
+                    "agent_id": "agent-a",
+                    "plan": {
+                        "task": "Fix parser bug",
+                        "steps": [
+                            {"id": "1", "description": "Read failing test", "tool": "git_read", "est_cost_usd": 2.0},
+                            {"id": "2", "description": "Apply patch", "tool": "git_patch", "depends_on": ["1"], "est_cost_usd": 3.0},
+                        ],
+                    },
+                }
+            ],
+        }
+    }
+
+    response = client.post("/evaluate_session", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    dashboard = body["dashboard"]
+    assert dashboard["per_agent"]["agent-a"]["budget_consumption"]["cost_usd"] == pytest.approx(5.0)
+    assert dashboard["global"]["budget_utilization"]["cost_usd"] == pytest.approx(0.05)
+
 def test_evaluate_session_is_deterministic_for_same_input():
     pytest.importorskip("httpx")
     app = create_app(default_policy_backend="python")
