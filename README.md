@@ -19,6 +19,7 @@ Instead of only asking *"is this intent safe?"*, ScopeBench asks *"is this plan 
 - [Installation](#installation)
 - [Quickstart](#quickstart)
 - [Interactive tutorials](#interactive-tutorials)
+- [Documentation map](#documentation-map)
 - [CLI Reference](#cli-reference)
 - [API Usage](#api-usage)
 - [Examples Included](#examples-included)
@@ -124,6 +125,48 @@ Both tutorials walk through:
 2. plan editing,
 3. effect annotation (`scopebench suggest-effects`), and
 4. API evaluation with `POST /evaluate`.
+
+### Documentation map
+
+If you are new to ScopeBench or returning after a while, use this map to jump to the right guide:
+
+- `docs/tutorials/interactive_quickstart_walkthrough.md` — end-to-end tutorial from template selection to API evaluation.
+- `docs/integrations/python_sdk.md` — embed ScopeBench checks directly inside Python agent orchestration code.
+- `docs/effects.md` — model structured step effects and precedence rules.
+- `docs/templates.md` — browse available domain templates and naming conventions.
+- `docs/policy/README.md` — understand policy backend architecture and backend selection.
+- `docs/plugins.md` — build, sign, and publish plugin bundles.
+- `docs/rubric_v1.md` — dataset annotation rubric and evaluator expectations.
+- `docs/multi_agent_session.md` — global-contract evaluation across multiple cooperating agents.
+
+For an overview of the whole documentation set, see `docs/README.md`.
+
+### Common workflows
+
+#### Evaluate a new plan from template defaults
+
+```bash
+scopebench template generate swe > /tmp/swe_bundle.yaml
+scopebench template show swe/plan > /tmp/swe.plan.yaml
+scopebench template show swe/contract > /tmp/swe.contract.yaml
+scopebench run /tmp/swe.contract.yaml /tmp/swe.plan.yaml --json
+```
+
+#### Add effect hints before running policy
+
+```bash
+scopebench suggest-effects /tmp/swe.plan.yaml --in-place
+scopebench run /tmp/swe.contract.yaml /tmp/swe.plan.yaml --json
+```
+
+#### Evaluate a live multi-agent session
+
+```bash
+scopebench serve --host 0.0.0.0 --port 8080
+curl -s http://localhost:8080/evaluate_session \
+  -H 'content-type: application/json' \
+  -d @examples/multi_agent_session.json | jq '.decision'
+```
 
 ### 3) Start the API server
 

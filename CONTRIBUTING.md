@@ -72,6 +72,12 @@ pytest -q -m "not slow"
 - Dependabot is configured for Python and GitHub Actions updates.
 - PRs use a template that captures problem, approach, validation, risk, and rollback.
 
+## Documentation
+
+- Start from `docs/README.md` for a map of all guides.
+- Keep documentation updates alongside behavior changes when possible (CLI flags, API payloads, templates, or policy semantics).
+- For architecture-impacting changes, add or update an ADR in `docs/adr/`.
+
 ## ADRs
 
 Use `docs/adr/template.md` for changes that affect architecture, policy thresholds,
