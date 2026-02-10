@@ -18,7 +18,7 @@ from scopebench.policy.backends.factory import get_policy_backend  # noqa: E402
 from scopebench.policy.engine import evaluate_policy  # noqa: E402
 from scopebench.runtime.guard import evaluate  # noqa: E402
 from scopebench.scoring.axes import SCOPE_AXES, AxisScore, ScopeAggregate, ScopeVector  # noqa: E402
-from scopebench.scoring.rules import aggregate_scope  # noqa: E402
+from scopebench.scoring.rules import ToolRegistry, aggregate_scope, score_step  # noqa: E402
 from scopebench.scoring.calibration import (  # noqa: E402
     CalibratedDecisionThresholds,
     apply_calibration,
@@ -685,7 +685,6 @@ def test_multi_agent_session_schema_requires_bound_agent_ids():
         )
 
 
-def test_evaluate_session_returns_per_agent_and_global_aggregates():
 def test_plan_step_accepts_optional_benefit_fields():
     plan = PlanDAG.model_validate(
         {
@@ -706,7 +705,8 @@ def test_plan_step_accepts_optional_benefit_fields():
     assert plan.steps[0].benefit_unit == "quality"
 
 
-def test_api_include_steps_serializes_benefit_fields():
+def test_evaluate_session_returns_per_agent_and_global_aggregates():
+    pytest.importorskip("httpx")
     app = create_app(default_policy_backend="python")
     from fastapi.testclient import TestClient
 
@@ -764,6 +764,7 @@ def test_api_include_steps_serializes_benefit_fields():
 
 
 def test_evaluate_session_global_budget_can_trigger_ask():
+    pytest.importorskip("httpx")
     app = create_app(default_policy_backend="python")
     from fastapi.testclient import TestClient
 
@@ -833,6 +834,7 @@ def test_evaluate_session_global_budget_can_trigger_ask():
 
 
 def test_evaluate_session_is_deterministic_for_same_input():
+    pytest.importorskip("httpx")
     app = create_app(default_policy_backend="python")
     from fastapi.testclient import TestClient
 
@@ -864,6 +866,15 @@ def test_evaluate_session_is_deterministic_for_same_input():
     first = client.post("/evaluate_session", json=payload).json()
     second = client.post("/evaluate_session", json=payload).json()
     assert first == second
+
+
+def test_api_include_steps_serializes_benefit_fields():
+    pytest.importorskip("httpx")
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
         "contract": {"goal": "Fix bug", "preset": "team"},
         "plan": {
             "task": "Fix bug",
@@ -880,6 +891,7 @@ def test_evaluate_session_is_deterministic_for_same_input():
         },
         "include_steps": True,
     }
+
     response = client.post("/evaluate", json=payload)
     assert response.status_code == 200
     first_step = response.json()["steps"][0]
