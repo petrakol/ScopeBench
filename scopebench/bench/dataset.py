@@ -6,6 +6,18 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 SUPPORTED_CASE_SCHEMA_VERSIONS = {"1.0"}
+_SCOPE_AXES = (
+    "spatial",
+    "temporal",
+    "depth",
+    "irreversibility",
+    "resource_intensity",
+    "legal_exposure",
+    "dependency_creation",
+    "stakeholder_radius",
+    "power_concentration",
+    "uncertainty",
+)
 _REQUIRED_FIELDS = (
     "case_schema_version",
     "id",
@@ -14,6 +26,8 @@ _REQUIRED_FIELDS = (
     "contract",
     "plan",
     "expected_decision",
+    "expected_rationale",
+    "expected_step_vectors",
 )
 _VALID_DECISIONS = {"ALLOW", "ASK", "DENY"}
 
@@ -27,6 +41,8 @@ class ScopeBenchCase:
     contract: dict[str, Any]
     plan: dict[str, Any]
     expected_decision: str  # ALLOW / ASK / DENY
+    expected_rationale: str
+    expected_step_vectors: list[dict[str, Any]]
     notes: Optional[str] = None
 
 
@@ -71,6 +87,10 @@ def _validate_case(obj: Any, *, line_no: int) -> ScopeBenchCase:
         allowed = ", ".join(sorted(_VALID_DECISIONS))
         raise _case_error(case_id, "expected_decision", f"must be one of: {allowed}")
 
+    expected_rationale = obj["expected_rationale"]
+    if not isinstance(expected_rationale, str) or not expected_rationale.strip():
+        raise _case_error(case_id, "expected_rationale", "must be a non-empty string")
+
     steps = obj["plan"].get("steps")
     if not isinstance(steps, list) or not steps:
         raise _case_error(case_id, "plan.steps", "must be a non-empty array")
@@ -91,7 +111,9 @@ def _validate_case(obj: Any, *, line_no: int) -> ScopeBenchCase:
         if depends_on is None:
             depends_on = []
         if not isinstance(depends_on, list) or not all(isinstance(dep, str) for dep in depends_on):
-            raise _case_error(case_id, f"plan.steps[{idx}].depends_on", "must be an array of step ids")
+            raise _case_error(
+                case_id, f"plan.steps[{idx}].depends_on", "must be an array of step ids"
+            )
         missing = sorted(dep for dep in depends_on if dep not in step_ids)
         if missing:
             raise _case_error(
@@ -99,6 +121,62 @@ def _validate_case(obj: Any, *, line_no: int) -> ScopeBenchCase:
                 f"plan.steps[{idx}].depends_on",
                 f"references unknown step ids: {', '.join(missing)}",
             )
+
+    expected_step_vectors = obj["expected_step_vectors"]
+    if not isinstance(expected_step_vectors, list) or not expected_step_vectors:
+        raise _case_error(case_id, "expected_step_vectors", "must be a non-empty array")
+    if len(expected_step_vectors) != len(steps):
+        raise _case_error(
+            case_id,
+            "expected_step_vectors",
+            "must contain exactly one vector per plan step",
+        )
+
+    vector_step_ids: set[str] = set()
+    for idx, vector in enumerate(expected_step_vectors):
+        if not isinstance(vector, dict):
+            raise _case_error(case_id, f"expected_step_vectors[{idx}]", "must be an object")
+        step_id = vector.get("step_id")
+        if not isinstance(step_id, str) or not step_id.strip():
+            raise _case_error(
+                case_id,
+                f"expected_step_vectors[{idx}].step_id",
+                "must be a non-empty string",
+            )
+        if step_id not in step_ids:
+            raise _case_error(
+                case_id,
+                f"expected_step_vectors[{idx}].step_id",
+                "must reference a plan step id",
+            )
+        if step_id in vector_step_ids:
+            raise _case_error(
+                case_id, "expected_step_vectors", f"duplicate vector for step id: {step_id!r}"
+            )
+        vector_step_ids.add(step_id)
+
+        for axis in _SCOPE_AXES:
+            value = vector.get(axis)
+            if not isinstance(value, (int, float)):
+                raise _case_error(
+                    case_id,
+                    f"expected_step_vectors[{idx}].{axis}",
+                    "must be a number in [0, 1]",
+                )
+            if float(value) < 0.0 or float(value) > 1.0:
+                raise _case_error(
+                    case_id,
+                    f"expected_step_vectors[{idx}].{axis}",
+                    "must be in [0, 1]",
+                )
+
+    missing_vectors = sorted(step_ids - vector_step_ids)
+    if missing_vectors:
+        raise _case_error(
+            case_id,
+            "expected_step_vectors",
+            f"missing vectors for step ids: {', '.join(missing_vectors)}",
+        )
 
     notes = obj.get("notes")
     if notes is not None and not isinstance(notes, str):
@@ -112,6 +190,8 @@ def _validate_case(obj: Any, *, line_no: int) -> ScopeBenchCase:
         contract=obj["contract"],
         plan=obj["plan"],
         expected_decision=expected_decision,
+        expected_rationale=expected_rationale,
+        expected_step_vectors=expected_step_vectors,
         notes=notes,
     )
 

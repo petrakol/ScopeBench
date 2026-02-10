@@ -59,6 +59,22 @@ def test_loader_rejects_invalid_case_with_actionable_error(tmp_path: Path) -> No
             "steps": [{"id": "1", "description": "Oops", "tool": "analysis", "depends_on": ["9"]}],
         },
         "expected_decision": "ALLOW",
+        "expected_rationale": "Broken rationale",
+        "expected_step_vectors": [
+            {
+                "step_id": "1",
+                "spatial": 0.1,
+                "temporal": 0.1,
+                "depth": 0.1,
+                "irreversibility": 0.1,
+                "resource_intensity": 0.1,
+                "legal_exposure": 0.1,
+                "dependency_creation": 0.1,
+                "stakeholder_radius": 0.1,
+                "power_concentration": 0.1,
+                "uncertainty": 0.1,
+            }
+        ],
     }
 
     path = tmp_path / "bad_cases.jsonl"
