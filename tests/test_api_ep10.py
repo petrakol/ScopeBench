@@ -14,6 +14,7 @@ from scopebench.server.api import (
     CalibrationAdjustmentRequest,
     EvaluateRequest,
     EvaluateStreamRequest,
+    SuggestEffectsRequest,
     _suggest_plan_patch,
     create_app,
 )
@@ -75,6 +76,10 @@ def test_templates_tools_cases_endpoints() -> None:
     assert "count" in cases
     if cases["count"] > 0:
         assert len(cases["domains"]) >= 1
+        first = cases["cases"][0]
+        assert "plan" in first
+        assert "expected_rationale" in first
+        assert "expected_step_vectors" in first
     else:
         assert "error" in cases
 
@@ -206,9 +211,32 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     assert "Replay telemetry" in html
     assert "Calibration Dashboard" in html
     assert "What-if Lab" in html
+    assert "Suggest effects" in html
     assert "Explainability: Aggregate Risk Contributions" in html
     assert "Stream /evaluate_stream" in html
     assert "Streaming Evaluation Timeline" in html
+
+
+def test_suggest_effects_endpoint_populates_effects_v1() -> None:
+    app = create_app()
+    suggest_effects = _endpoint(app, "/suggest_effects")
+    response = suggest_effects(
+        SuggestEffectsRequest.model_validate(
+            {
+                "plan": {
+                    "task": "Fix failing unit test",
+                    "steps": [
+                        {"id": "1", "description": "Read failing test", "tool": "git_read"},
+                        {"id": "2", "description": "Apply patch", "tool": "git_patch", "depends_on": ["1"]},
+                    ],
+                }
+            }
+        )
+    )
+
+    assert len(response.suggestions) == 2
+    assert response.suggestions[0].effects["version"] == "effects_v1"
+    assert response.plan["steps"][0]["effects"]["version"] == "effects_v1"
 
 
 def test_telemetry_replay_endpoint_without_configuration() -> None:

@@ -82,6 +82,26 @@
         gap: 8px;
         align-items: center;
       }
+      .case-explorer-controls {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .case-list {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        max-height: 360px;
+        overflow: auto;
+      }
+      .case-item {
+        padding: 10px;
+        border-bottom: 1px solid #e5e7eb;
+        cursor: pointer;
+      }
+      .case-item:last-child { border-bottom: none; }
+      .case-item.active { background: #eff6ff; }
+      .case-item:hover { background: #f8fafc; }
       @media (max-width: 900px) {
         .two-col { grid-template-columns: 1fr; }
       }
@@ -92,8 +112,13 @@
       .field-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
       .agent-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
       .agent-header input[type="text"] { flex: 1; }
+      .ledger-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .ledger-card { border: 1px solid #dbeafe; background: #eff6ff; border-radius: 8px; padding: 8px; }
+      .meter { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 4px; }
+      .meter > span { display: block; height: 100%; background: #2563eb; }
+      .signal-chip { display: inline-block; margin-right: 6px; margin-bottom: 6px; padding: 3px 8px; border-radius: 999px; font-size: 12px; background: #fee2e2; color: #991b1b; }
       th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
-      @media (max-width: 900px) { .two-col, .three-col, .field-grid { grid-template-columns: 1fr; } }
+      @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -219,6 +244,7 @@
       <section class="card" style="margin-top: 16px">
         <h3>What-if Lab</h3>
         <p class="muted">Adjust descriptions, tools, and effect magnitudes. Updates flow into plan JSON and re-evaluate automatically.</p>
+        <div class="controls" style="margin-bottom:10px"><button id="suggest-effects" class="secondary">Suggest effects</button></div>
         <div id="whatif-editors"></div>
       </section>
 
@@ -268,9 +294,16 @@
         </div>
       </section>
 
-      <section class="grid" style="margin-top: 16px">
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Per-agent aggregates</h3>
+          <table><thead><tr><th>Agent</th><th>Decision</th><th>Top axes</th><th>Budget utilization</th></tr></thead><tbody id="session-agent-table"></tbody></table>
+        </div>
         <div class="card">
           <h3>Global aggregate & laundering detection</h3>
+          <h4>Per-agent aggregate</h4>
+          <table><thead><tr><th>Agent</th><th>Decision</th><th>Aggregate</th></tr></thead><tbody id="session-agent-table"></tbody></table>
+          <h4 style="margin-top:12px">Global aggregate</h4>
           <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody id="session-global-table"></tbody></table>
           <h4 style="margin-top:12px">Laundering signals</h4>
           <table><thead><tr><th>Axis</th><th>Global</th><th>Max agent</th><th>Delta</th><th>Ask threshold</th></tr></thead><tbody id="session-laundering-table"></tbody></table>
@@ -278,8 +311,53 @@
       </section>
 
       <section class="card" style="margin-top: 16px">
+        <h3>Dataset Case Explorer</h3>
+        <p class="muted">Browse benchmark cases by domain, expected decision, and instruction. Select a case to inspect full contract, plan, rationale, and step vectors.</p>
+        <div class="case-explorer-controls">
+          <input id="case-search" type="text" placeholder="Search by instruction, id, or rationale" />
+          <select id="case-domain-filter"></select>
+          <select id="case-decision-filter"></select>
+        </div>
+        <div class="controls" style="margin-bottom: 10px">
+          <button id="refresh-cases" class="secondary">Refresh cases</button>
+          <span id="case-summary" class="muted"></span>
+        </div>
+        <section class="grid two-col">
+          <div>
+            <div id="case-list" class="case-list"></div>
+          </div>
+          <div>
+            <pre id="case-detail"></pre>
+          </div>
+        </section>
+        <h3>Budget consumption ledger</h3>
+        <p class="muted">Tracks consumed budget vs limits for each agent and globally, plus laundering pressure chips.</p>
+        <div id="session-ledger" class="ledger-grid"></div>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
         <h3>Dataset Contribution Draft</h3>
-        <p class="muted">Validate a case object and auto-suggest calibrated step vectors from the current contract+plan.</p>
+        <p class="muted">Draft a new benchmark case, auto-suggest vectors, validate schema/calibration, then generate a JSONL contribution or PR-ready message.</p>
+        <div class="field-grid">
+          <label>Case ID<input id="dataset-case-id" type="text" value="community_case_001" /></label>
+          <label>Domain<input id="dataset-domain" type="text" value="engineering" /></label>
+          <label>Expected decision
+            <select id="dataset-expected-decision">
+              <option>ALLOW</option>
+              <option>ASK</option>
+              <option>DENY</option>
+            </select>
+          </label>
+        </div>
+        <label>Instruction<input id="dataset-instruction" type="text" value="Fix flaky CI test" /></label>
+        <label>Expected rationale<input id="dataset-expected-rationale" type="text" value="Scoped to local test stabilization with validation." /></label>
+        <div class="controls" style="margin: 10px 0">
+          <button id="dataset-build" class="secondary">Build draft from contract+plan</button>
+          <button id="dataset-validate-panel" class="secondary">Validate draft</button>
+          <button id="dataset-suggest-panel" class="secondary">Auto-suggest vectors</button>
+          <button id="dataset-generate-file">Generate JSONL line</button>
+          <button id="dataset-generate-pr" class="secondary">Generate PR text</button>
+        </div>
         <textarea id="case-draft" style="min-height: 220px"></textarea>
         <pre id="dataset-output"></pre>
       </section>
@@ -306,8 +384,8 @@
 
       const defaultSessionState = {
         agents: [
-          { agent_id: "agent-a", task: "Fix parser bug", plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
-          { agent_id: "agent-b", task: "Validate parser patch", plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
+          { agent_id: "agent-a", budgets: { cost_usd: 70, time_horizon_days: 4, max_tool_calls: 4 }, plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
+          { agent_id: "agent-b", budgets: { cost_usd: 45, time_horizon_days: 3, max_tool_calls: 3 }, plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
         ]
       };
 
@@ -345,6 +423,18 @@
       const effectLabWeightsEl = el("effect-lab-weights");
       const effectLabSummaryEl = el("effect-lab-summary");
       const effectLabTableEl = el("effect-lab-table");
+      const caseSearchEl = el("case-search");
+      const caseDomainFilterEl = el("case-domain-filter");
+      const caseDecisionFilterEl = el("case-decision-filter");
+      const caseListEl = el("case-list");
+      const caseDetailEl = el("case-detail");
+      const caseSummaryEl = el("case-summary");
+      const datasetCaseIdEl = el("dataset-case-id");
+      const datasetDomainEl = el("dataset-domain");
+      const datasetInstructionEl = el("dataset-instruction");
+      const datasetExpectedDecisionEl = el("dataset-expected-decision");
+      const datasetExpectedRationaleEl = el("dataset-expected-rationale");
+      const suggestEffectsEl = el("suggest-effects");
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
         ["legal", "legal_exposure"],
@@ -360,6 +450,7 @@
       const sessionAgentTableEl = el("session-agent-table");
       const sessionGlobalTableEl = el("session-global-table");
       const sessionLaunderingTableEl = el("session-laundering-table");
+      const sessionLedgerEl = el("session-ledger");
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
@@ -367,6 +458,8 @@
       let wizardDraft = null;
       let sessionState = JSON.parse(JSON.stringify(defaultSessionState));
       let latestEvaluation = null;
+      let allCases = [];
+      let selectedCaseId = null;
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -397,6 +490,7 @@
           }
         ]
       }, null, 2);
+      syncDatasetFieldsFromDraft(JSON.parse(caseDraftEl.value));
 
       function decisionBadge(decision) { const n = String(decision || "").toLowerCase(); const cls = n === "allow" ? "allow" : n === "ask" ? "ask" : "deny"; return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`; }
       function toMagnitude(v) { return MAGNITUDE[Math.max(0, Math.min(MAGNITUDE.length - 1, Math.round(Number(v || 0) * 4)))]; }
@@ -544,10 +638,27 @@
       }
       function renderContributions(plan, steps, aggregate) { contribTableEl.innerHTML = ""; computeContributions(plan, steps, aggregate).sort((a, b) => b.aggregate - a.aggregate).forEach((entry) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${entry.axis}</td><td>${entry.aggregate.toFixed(3)}</td><td>${entry.terminal || "n/a"}</td><td>${entry.text}</td>`; contribTableEl.appendChild(tr); }); }
 
+      function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
+
       function updatePlanField(stepIndex, field, value) { const plan = JSON.parse(planEl.value); if (!plan.steps?.[stepIndex]) return; plan.steps[stepIndex][field] = value; planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate(); }
       function updateEffectMagnitude(stepIndex, effectKey, sliderValue) {
         const plan = JSON.parse(planEl.value); const step = plan.steps?.[stepIndex]; if (!step) return;
         step.effects = step.effects || {}; step.effects[effectKey] = toMagnitude(sliderValue); planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate();
+      }
+
+      async function suggestEffectsForPlan() {
+        const plan = JSON.parse(planEl.value);
+        const res = await fetch("/suggest_effects", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ plan })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        planEl.value = JSON.stringify(data.plan, null, 2);
+        renderDag(data.plan);
+        renderWhatIfEditors(data.plan);
+        scheduleAutoEvaluate();
       }
 
       function renderWhatIfEditors(plan) {
@@ -563,18 +674,37 @@
         whatIfEditorsEl.querySelectorAll("input[type='range']").forEach((node) => node.addEventListener("input", (ev) => { const value = Number(ev.target.value); ev.target.previousElementSibling.querySelector("span").textContent = toMagnitude(value); updateEffectMagnitude(Number(ev.target.dataset.step), ev.target.dataset.effect, value); }));
       }
 
+      function parsePlanJson(text) {
+        try {
+          const parsed = JSON.parse(text || "{}");
+          return parsed && typeof parsed === "object" ? parsed : { task: "", steps: [] };
+        } catch (_err) {
+          return { task: "", steps: [] };
+        }
+      }
+
       function sessionPayloadFromState() {
         const baseContract = JSON.parse(contractEl.value);
-        const budgets = {
+        const globalBudgets = {
           cost_usd: Number(el("session-budget-cost").value || 0),
           time_horizon_days: Number(el("session-budget-time").value || 0),
           max_tool_calls: Number(el("session-budget-tools").value || 0)
         };
-        const global_contract = { ...baseContract, preset: baseContract.preset || "team", budgets };
+        const global_contract = { ...baseContract, preset: baseContract.preset || "team", budgets: globalBudgets };
         return {
           session: {
             global_contract,
-            agents: sessionState.agents.map((agent) => ({ agent_id: agent.agent_id })),
+            agents: sessionState.agents.map((agent) => ({
+              agent_id: agent.agent_id,
+              contract: {
+                ...global_contract,
+                budgets: {
+                  cost_usd: Number(agent.budgets?.cost_usd || 0),
+                  time_horizon_days: Number(agent.budgets?.time_horizon_days || 0),
+                  max_tool_calls: Number(agent.budgets?.max_tool_calls || 0)
+                }
+              }
+            })),
             plans: sessionState.agents.map((agent) => ({ agent_id: agent.agent_id, plan: agent.plan }))
           },
           include_steps: false,
@@ -587,13 +717,20 @@
         sessionState.agents.forEach((agent, idx) => {
           const node = document.createElement("div");
           node.className = "agent-editor";
-          node.innerHTML = `<div class="agent-header"><input type="text" value="${agent.agent_id}" data-agent-id="${idx}" /><button class="secondary" data-remove-agent="${idx}">remove</button></div><label>Agent plan (JSON)</label><textarea data-agent-plan="${idx}" style="min-height:130px">${JSON.stringify(agent.plan, null, 2)}</textarea>`;
+          node.innerHTML = `<div class="agent-header"><input type="text" value="${agent.agent_id}" data-agent-id="${idx}" /><button class="secondary" data-remove-agent="${idx}">remove</button></div><div class="field-grid"><label>Budget: cost_usd<input data-agent-budget="cost_usd" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.cost_usd || 0)}" /></label><label>Budget: time_horizon_days<input data-agent-budget="time_horizon_days" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.time_horizon_days || 0)}" /></label><label>Budget: max_tool_calls<input data-agent-budget="max_tool_calls" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.max_tool_calls || 0)}" /></label></div><label>Agent plan (JSON)</label><textarea data-agent-plan="${idx}" style="min-height:130px">${JSON.stringify(agent.plan, null, 2)}</textarea>`;
           agentEditorsEl.appendChild(node);
         });
         sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
 
         agentEditorsEl.querySelectorAll("input[data-agent-id]").forEach((node) => node.addEventListener("input", (ev) => {
           sessionState.agents[Number(ev.target.dataset.agentId)].agent_id = ev.target.value.trim() || `agent-${Number(ev.target.dataset.agentId) + 1}`;
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("input[data-agent-budget]").forEach((node) => node.addEventListener("input", (ev) => {
+          const idx = Number(ev.target.dataset.agentIndex);
+          const budgetKey = ev.target.dataset.agentBudget;
+          sessionState.agents[idx].budgets = sessionState.agents[idx].budgets || {};
+          sessionState.agents[idx].budgets[budgetKey] = Number(ev.target.value || 0);
           sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
         }));
         agentEditorsEl.querySelectorAll("textarea[data-agent-plan]").forEach((node) => node.addEventListener("input", (ev) => {
@@ -612,25 +749,63 @@
       function topAxesText(aggregate = {}) { return Object.entries(aggregate).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([axis, value]) => `${axis}:${Number(value).toFixed(2)}`).join(", "); }
       function budgetUtilizationText(util = {}) { return Object.entries(util).map(([k, v]) => `${k}:${(100 * Number(v || 0)).toFixed(0)}%`).join(", ") || "n/a"; }
 
+      function utilizationMeter(label, used, limit) {
+        const safeLimit = Number(limit || 0);
+        const safeUsed = Number(used || 0);
+        const ratio = safeLimit > 0 ? safeUsed / safeLimit : 0;
+        const percent = (100 * ratio).toFixed(0);
+        return `<div><div class="inline-label"><span>${label}</span><strong>${safeUsed.toFixed(1)} / ${safeLimit.toFixed(1)}</strong></div><div class="meter"><span style="width:${Math.min(100, Math.max(0, ratio * 100))}%"></span></div><div class="muted">${percent}% consumed</div></div>`;
+      }
+
       function renderSessionDashboard(payload = {}) {
-        sessionAgentTableEl.innerHTML = ""; sessionGlobalTableEl.innerHTML = ""; sessionLaunderingTableEl.innerHTML = "";
+        sessionAgentTableEl.innerHTML = "";
+        sessionGlobalTableEl.innerHTML = "";
+        sessionLaunderingTableEl.innerHTML = "";
+        sessionLedgerEl.innerHTML = "";
+
         Object.entries(payload.dashboard?.per_agent || {}).forEach(([agentId, entry]) => {
           const tr = document.createElement("tr");
           tr.innerHTML = `<td>${agentId}</td><td>${decisionBadge(entry.decision)}</td><td>${topAxesText(entry.aggregate)}</td><td>${budgetUtilizationText(entry.budget_utilization)}</td>`;
           sessionAgentTableEl.appendChild(tr);
+
+          const source = sessionState.agents.find((agent) => agent.agent_id === agentId) || {};
+          const consumption = entry.budget_consumption || {};
+          const budgets = source.budgets || {};
+          const card = document.createElement("div");
+          card.className = "ledger-card";
+          card.innerHTML = `<h4 style="margin:0 0 6px">${agentId}</h4>${utilizationMeter("cost_usd", consumption.cost_usd, budgets.cost_usd)}${utilizationMeter("time_horizon_days", consumption.time_horizon_days, budgets.time_horizon_days)}${utilizationMeter("max_tool_calls", consumption.max_tool_calls, budgets.max_tool_calls)}`;
+          sessionLedgerEl.appendChild(card);
         });
+
         const global = payload.dashboard?.global || {};
         [["Decision", global.decision || payload.decision || "n/a"], ["Top axes", topAxesText(global.aggregate || {})], ["Budget utilization", budgetUtilizationText(global.budget_utilization || {})], ["Negotiation triggered", payload.negotiation?.triggered ? "yes" : "no"]].forEach(([k, v]) => {
-          const tr = document.createElement("tr"); tr.innerHTML = `<td>${k}</td><td>${v}</td>`; sessionGlobalTableEl.appendChild(tr);
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+          sessionGlobalTableEl.appendChild(tr);
         });
+
         (payload.laundering_signals || []).forEach((signal) => {
           const tr = document.createElement("tr");
           tr.innerHTML = `<td>${signal.axis}</td><td>${Number(signal.global_value).toFixed(3)}</td><td>${Number(signal.max_agent_value).toFixed(3)}</td><td>${Number(signal.delta).toFixed(3)}</td><td>${Number(signal.ask_threshold).toFixed(3)}</td>`;
           sessionLaunderingTableEl.appendChild(tr);
         });
         if (!(payload.laundering_signals || []).length) {
-          const tr = document.createElement("tr"); tr.innerHTML = "<td colspan='5'>No cross-agent laundering signals detected.</td>"; sessionLaunderingTableEl.appendChild(tr);
+          const tr = document.createElement("tr");
+          tr.innerHTML = "<td colspan='5'>No cross-agent laundering signals detected.</td>";
+          sessionLaunderingTableEl.appendChild(tr);
         }
+
+        const globalCard = document.createElement("div");
+        globalCard.className = "ledger-card";
+        const globalConsumption = global.budget_consumption || {};
+        const globalBudget = {
+          cost_usd: Number(el("session-budget-cost").value || 0),
+          time_horizon_days: Number(el("session-budget-time").value || 0),
+          max_tool_calls: Number(el("session-budget-tools").value || 0)
+        };
+        const launderingChips = (payload.laundering_signals || []).map((signal) => `<span class="signal-chip">${signal.axis} Δ${Number(signal.delta).toFixed(2)}</span>`).join("") || '<span class="muted">No laundering signals.</span>';
+        globalCard.innerHTML = `<h4 style="margin:0 0 6px">Global</h4>${utilizationMeter("cost_usd", globalConsumption.cost_usd, globalBudget.cost_usd)}${utilizationMeter("time_horizon_days", globalConsumption.time_horizon_days, globalBudget.time_horizon_days)}${utilizationMeter("max_tool_calls", globalConsumption.max_tool_calls, globalBudget.max_tool_calls)}<div style="margin-top:8px"><strong>Laundering pressure</strong><div style="margin-top:4px">${launderingChips}</div></div>`;
+        sessionLedgerEl.appendChild(globalCard);
       }
 
 
@@ -693,19 +868,87 @@
 
       async function loadCatalog() {
         const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
+      function renderCaseExplorer() {
+        const query = (caseSearchEl.value || "").trim().toLowerCase();
+        const domain = caseDomainFilterEl.value || "all";
+        const decision = caseDecisionFilterEl.value || "all";
+        const filtered = allCases.filter((item) => {
+          if (domain !== "all" && item.domain !== domain) return false;
+          if (decision !== "all" && item.expected_decision !== decision) return false;
+          if (!query) return true;
+          const haystack = [item.id, item.domain, item.instruction, item.expected_rationale]
+            .map((value) => String(value || "").toLowerCase())
+            .join(" ");
+          return haystack.includes(query);
+        });
+
+        caseSummaryEl.textContent = `${filtered.length} / ${allCases.length} cases`;
+        caseListEl.innerHTML = "";
+        if (!filtered.length) {
+          caseListEl.innerHTML = '<div class="case-item">No matching cases.</div>';
+          caseDetailEl.textContent = "";
+          return;
+        }
+
+        if (!selectedCaseId || !filtered.some((item) => item.id === selectedCaseId)) {
+          selectedCaseId = filtered[0].id;
+        }
+
+        filtered.forEach((item) => {
+          const row = document.createElement("div");
+          row.className = `case-item ${item.id === selectedCaseId ? "active" : ""}`;
+          row.innerHTML = `<strong>${item.id}</strong><div class="muted">${item.domain} • ${item.expected_decision}</div><div>${item.instruction}</div>`;
+          row.addEventListener("click", () => {
+            selectedCaseId = item.id;
+            renderCaseExplorer();
+          });
+          caseListEl.appendChild(row);
+        });
+
+        const selected = filtered.find((item) => item.id === selectedCaseId) || filtered[0];
+        caseDetailEl.textContent = JSON.stringify(selected, null, 2);
+      }
+
+      function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
+
+      async function loadCatalog() {
+        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
+      async function loadCatalog() {
+        const [templates, tools, cases] = await Promise.all([
+          fetch("/templates").then((r) => r.json()),
+          fetch("/tools").then((r) => r.json()),
+          fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [], cases: [] }))
+        ]);
+
+        wizardTemplates = templates.templates || [];
         const options = [];
-        (templates.templates || []).forEach((domain) => Object.entries(domain.variants || {}).forEach(([variant, body]) => { if (body.content?.contract && body.content?.plan) { options.push({ key: `${domain.domain}:${variant}`, contract: body.content.contract, plan: body.content.plan }); } }));
+        (templates.templates || []).forEach((domain) => {
+          Object.entries(domain.variants || {}).forEach(([variant, body]) => {
+            if (body.content?.contract && body.content?.plan) {
+              options.push({ key: `${domain.domain}:${variant}`, contract: body.content.contract, plan: body.content.plan });
+            }
+          });
+        });
         templateSelectEl.innerHTML = options.map((opt) => `<option value="${opt.key}">${opt.key}</option>`).join("");
         templateSelectEl._options = options;
 
-        wizardDomainEl.innerHTML = wizardTemplates
-          .map((item) => `<option value="${item.domain}">${item.domain}</option>`)
-          .join("");
+        wizardDomainEl.innerHTML = wizardTemplates.map((item) => `<option value="${item.domain}">${item.domain}</option>`).join("");
         if (!wizardDomainEl.value && wizardTemplates.length) wizardDomainEl.value = wizardTemplates[0].domain;
         renderWizardVariantOptions();
         generateWizardDraft();
+
         knownTools = (tools.tools || []).map((item) => item.tool).filter(Boolean).sort();
-        catalogEl.textContent = JSON.stringify({ templates: (templates.templates || []).length, tools: (tools.tools || []).length, cases_count: cases.count || 0, case_domains: cases.domains || [] }, null, 2);
+        allCases = cases.cases || [];
+        caseDomainFilterEl.innerHTML = ['<option value="all">All domains</option>', ...(cases.domains || []).map((d) => `<option value="${d}">${d}</option>`)].join("");
+        caseDecisionFilterEl.innerHTML = ['<option value="all">All decisions</option>', '<option value="ALLOW">ALLOW</option>', '<option value="ASK">ASK</option>', '<option value="DENY">DENY</option>'].join("");
+        renderCaseExplorer();
+
+        catalogEl.textContent = JSON.stringify({
+          templates: (templates.templates || []).length,
+          tools: (tools.tools || []).length,
+          cases_count: cases.count || 0,
+          case_domains: cases.domains || []
+        }, null, 2);
         renderWhatIfEditors(JSON.parse(planEl.value));
       }
 
@@ -719,10 +962,7 @@
       }
 
       async function installPluginBundle() {
-        const payload = {
-          source_path: pluginSourceEl.value,
-          plugin_dir: pluginTargetDirEl.value
-        };
+        const payload = { source_path: pluginSourceEl.value, plugin_dir: pluginTargetDirEl.value };
         const response = await fetch("/plugins/install", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -847,8 +1087,12 @@
         }).then((r) => r.json());
 
         streamingEl.textContent = summarizeStreaming(payload);
+        renderAggregate(payload.aggregate || {});
+        renderStepRationales(payload.steps || []);
+        renderContributions(plan, payload.steps || [], payload.aggregate || {});
       }
 
+      async function replayTelemetry() { const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json()); telemetryEl.textContent = JSON.stringify(replay, null, 2); }
       async function replayTelemetry() {
         const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json());
         telemetryEl.textContent = JSON.stringify(replay, null, 2);
@@ -866,6 +1110,10 @@
 
       async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
+      async function loadCalibrationDashboard() {
+        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
+        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
+      }
 
       async function validateCaseDraft() {
         const payload = { case: JSON.parse(caseDraftEl.value) };
@@ -901,7 +1149,69 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         caseDraftEl.value = JSON.stringify(data.case, null, 2);
+        syncDatasetFieldsFromDraft(data.case);
         datasetOutputEl.textContent = "Suggested vectors loaded into draft.";
+      }
+
+      function buildCaseDraftFromInputs() {
+        const contract = JSON.parse(contractEl.value);
+        const plan = JSON.parse(planEl.value);
+        const existing = (() => {
+          try { return JSON.parse(caseDraftEl.value); } catch (_err) { return {}; }
+        })();
+        const next = {
+          case_schema_version: existing.case_schema_version || "1.0",
+          id: datasetCaseIdEl.value.trim() || existing.id || "community_case_001",
+          domain: datasetDomainEl.value.trim() || existing.domain || contract.domain || "engineering",
+          instruction: datasetInstructionEl.value.trim() || existing.instruction || contract.goal || plan.task || "Community contribution",
+          contract,
+          plan,
+          expected_decision: datasetExpectedDecisionEl.value || existing.expected_decision || "ALLOW",
+          expected_rationale: datasetExpectedRationaleEl.value.trim() || existing.expected_rationale || "TBD",
+          expected_step_vectors: Array.isArray(existing.expected_step_vectors) ? existing.expected_step_vectors : [],
+          notes: existing.notes || null,
+        };
+        caseDraftEl.value = JSON.stringify(next, null, 2);
+        return next;
+      }
+
+      function syncDatasetFieldsFromDraft(draft) {
+        if (!draft || typeof draft !== "object") return;
+        datasetCaseIdEl.value = draft.id || datasetCaseIdEl.value;
+        datasetDomainEl.value = draft.domain || datasetDomainEl.value;
+        datasetInstructionEl.value = draft.instruction || datasetInstructionEl.value;
+        datasetExpectedDecisionEl.value = draft.expected_decision || datasetExpectedDecisionEl.value;
+        datasetExpectedRationaleEl.value = draft.expected_rationale || datasetExpectedRationaleEl.value;
+      }
+
+      function generateDatasetJsonlLine() {
+        const draft = buildCaseDraftFromInputs();
+        datasetOutputEl.textContent = JSON.stringify(draft);
+      }
+
+      function generateDatasetPrText() {
+        const draft = buildCaseDraftFromInputs();
+        const title = `dataset: add ${draft.id}`;
+        const body = [
+          `## Summary`,
+          `- Add benchmark case \`${draft.id}\` in domain \`${draft.domain}\`.`,
+          `- Instruction: ${draft.instruction}`,
+          `- Expected decision: ${draft.expected_decision}`,
+          ``,
+          `## Case JSONL`,
+          "```json",
+          JSON.stringify(draft),
+          "```",
+          ``,
+          `## Validation`,
+          `- [ ] Run \`scopebench dataset-validate <path/to/cases.jsonl>\``,
+          `- [ ] Run \`scopebench dataset-pr --cases <path/to/cases.jsonl>\``,
+        ].join("\n");
+        datasetOutputEl.textContent = `Title:
+${title}
+
+Body:
+${body}`;
       }
 
       el("load-template").addEventListener("click", () => {
@@ -916,6 +1226,9 @@
       el("run").addEventListener("click", () => runEvaluation().catch((err) => {
         resultEl.textContent = `Error: ${err.message}`;
       }));
+      el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => {
+        sessionResultEl.textContent = `Error: ${err.message}`;
+      }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => {
         telemetryEl.textContent = `Error: ${err.message}`;
       }));
@@ -928,25 +1241,68 @@
       el("dataset-suggest").addEventListener("click", () => suggestCaseVectors().catch((err) => {
         datasetOutputEl.textContent = `Suggestion error: ${err.message}`;
       }));
+      el("dataset-build").addEventListener("click", () => {
+        try { buildCaseDraftFromInputs(); datasetOutputEl.textContent = "Draft rebuilt from current contract + plan."; }
+        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; }
+      });
+      el("dataset-validate-panel").addEventListener("click", () => {
+        try { buildCaseDraftFromInputs(); }
+        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
+        validateCaseDraft().catch((err) => { datasetOutputEl.textContent = `Validation error: ${err.message}`; });
+      });
+      el("dataset-suggest-panel").addEventListener("click", () => {
+        try { buildCaseDraftFromInputs(); }
+        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
+        suggestCaseVectors().catch((err) => { datasetOutputEl.textContent = `Suggestion error: ${err.message}`; });
+      });
+      el("dataset-generate-file").addEventListener("click", () => {
+        try { generateDatasetJsonlLine(); }
+        catch (err) { datasetOutputEl.textContent = `Generate file error: ${err.message}`; }
+      });
+      el("dataset-generate-pr").addEventListener("click", () => {
+        try { generateDatasetPrText(); }
+        catch (err) { datasetOutputEl.textContent = `Generate PR text error: ${err.message}`; }
+      });
+      suggestEffectsEl.addEventListener("click", () => suggestEffectsForPlan().catch((err) => {
+        resultEl.textContent = `Suggest effects error: ${err.message}`;
+      }));
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
       }));
+      el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => {
+        pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
+      }));
+      el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Install error: ${err.message}`;
+      }));
+      el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Uninstall error: ${err.message}`;
+      }));
+      el("refresh-cases").addEventListener("click", () => loadCatalog().catch((err) => {
+        catalogEl.textContent = `Catalog load error: ${err.message}`;
+      }));
+      [caseSearchEl, caseDomainFilterEl, caseDecisionFilterEl].forEach((node) => node.addEventListener("input", renderCaseExplorer));
       el("run").addEventListener("click", () => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }));
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Error: ${err.message}`; }));
+      el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; }));
+      el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
+      el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => { pluginManagerEl.textContent = `Uninstall error: ${err.message}`; }));
       el("add-agent").addEventListener("click", () => {
         const idx = sessionState.agents.length + 1;
-        sessionState.agents.push({ agent_id: `agent-${idx}`, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
+        sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
         renderSessionBuilder();
       });
       el("sync-from-current-plan").addEventListener("click", () => {
         const parsedPlan = JSON.parse(planEl.value);
-        if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", plan: parsedPlan });
+        if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, plan: parsedPlan });
         else sessionState.agents[0].plan = parsedPlan;
         renderSessionBuilder();
       });
-      ["session-budget-cost", "session-budget-time", "session-budget-tools"].forEach((id) => el(id).addEventListener("input", () => { sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2); }));
+      ["session-budget-cost", "session-budget-time", "session-budget-tools"].forEach((id) => el(id).addEventListener("input", () => {
+        sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+      }));
 
       [effectLabModeEl, effectLabExplicitEl, effectLabPriorsEl, effectLabHeuristicsEl].forEach((node) => {
         node.addEventListener("input", () => renderEffectLabComparison());
@@ -955,6 +1311,10 @@
 
       planEl.addEventListener("input", () => {
         try { const plan = JSON.parse(planEl.value); renderDag(plan); renderWhatIfEditors(plan); scheduleAutoEvaluate(); }
+        catch (_err) { /* continue editing invalid JSON */ }
+      });
+      caseDraftEl.addEventListener("input", () => {
+        try { syncDatasetFieldsFromDraft(JSON.parse(caseDraftEl.value)); }
         catch (_err) { /* continue editing invalid JSON */ }
       });
 
@@ -982,19 +1342,21 @@
       loadCatalog().then(() => runEvaluation()).catch((err) => {
         catalogEl.textContent = `Catalog load error: ${err.message}`;
       });
+      loadPlugins().catch((err) => {
+        pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
+      });
       loadCalibrationDashboard().catch((err) => {
         calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
       });
       runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Streaming load error: ${err.message}`;
       });
-      runEvaluation().catch((err) => {
-        resultEl.textContent = `Error: ${err.message}`;
-      });
       renderSessionBuilder();
-      loadCatalog().catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
+      renderSessionBuilder();
+      loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
       loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });
-      runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; });
+      runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
+      loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
       runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
     </script>
   </body>
