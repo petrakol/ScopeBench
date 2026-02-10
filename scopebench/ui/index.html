@@ -92,8 +92,13 @@
       .field-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
       .agent-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
       .agent-header input[type="text"] { flex: 1; }
+      .ledger-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+      .ledger-card { border: 1px solid #dbeafe; background: #eff6ff; border-radius: 8px; padding: 8px; }
+      .meter { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 4px; }
+      .meter > span { display: block; height: 100%; background: #2563eb; }
+      .signal-chip { display: inline-block; margin-right: 6px; margin-bottom: 6px; padding: 3px 8px; border-radius: 999px; font-size: 12px; background: #fee2e2; color: #991b1b; }
       th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
-      @media (max-width: 900px) { .two-col, .three-col, .field-grid { grid-template-columns: 1fr; } }
+      @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -237,13 +242,23 @@
         </div>
       </section>
 
-      <section class="grid" style="margin-top: 16px">
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Per-agent aggregates</h3>
+          <table><thead><tr><th>Agent</th><th>Decision</th><th>Top axes</th><th>Budget utilization</th></tr></thead><tbody id="session-agent-table"></tbody></table>
+        </div>
         <div class="card">
           <h3>Global aggregate & laundering detection</h3>
           <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody id="session-global-table"></tbody></table>
           <h4 style="margin-top:12px">Laundering signals</h4>
           <table><thead><tr><th>Axis</th><th>Global</th><th>Max agent</th><th>Delta</th><th>Ask threshold</th></tr></thead><tbody id="session-laundering-table"></tbody></table>
         </div>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
+        <h3>Budget consumption ledger</h3>
+        <p class="muted">Tracks consumed budget vs limits for each agent and globally, plus laundering pressure chips.</p>
+        <div id="session-ledger" class="ledger-grid"></div>
       </section>
 
       <section class="card" style="margin-top: 16px">
@@ -275,8 +290,8 @@
 
       const defaultSessionState = {
         agents: [
-          { agent_id: "agent-a", task: "Fix parser bug", plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
-          { agent_id: "agent-b", task: "Validate parser patch", plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
+          { agent_id: "agent-a", budgets: { cost_usd: 70, time_horizon_days: 4, max_tool_calls: 4 }, plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
+          { agent_id: "agent-b", budgets: { cost_usd: 45, time_horizon_days: 3, max_tool_calls: 3 }, plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
         ]
       };
 
@@ -323,7 +338,7 @@
       const sessionAgentTableEl = el("session-agent-table");
       const sessionGlobalTableEl = el("session-global-table");
       const sessionLaunderingTableEl = el("session-laundering-table");
-      const EFFECT_AXES = [["resources", "resource_intensity"], ["legal", "legal_exposure"], ["stakeholders", "stakeholder_radius"], ["irreversible_actions", "irreversibility"], ["geo_scope", "spatial"], ["time_horizon", "temporal"]];
+      const sessionLedgerEl = el("session-ledger");
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
@@ -394,6 +409,8 @@
       }
       function renderContributions(plan, steps, aggregate) { contribTableEl.innerHTML = ""; computeContributions(plan, steps, aggregate).sort((a, b) => b.aggregate - a.aggregate).forEach((entry) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${entry.axis}</td><td>${entry.aggregate.toFixed(3)}</td><td>${entry.terminal || "n/a"}</td><td>${entry.text}</td>`; contribTableEl.appendChild(tr); }); }
 
+      function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
+
       function updatePlanField(stepIndex, field, value) { const plan = JSON.parse(planEl.value); if (!plan.steps?.[stepIndex]) return; plan.steps[stepIndex][field] = value; planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate(); }
       function updateEffectMagnitude(stepIndex, effectKey, sliderValue) {
         const plan = JSON.parse(planEl.value); const step = plan.steps?.[stepIndex]; if (!step) return;
@@ -428,18 +445,37 @@
         whatIfEditorsEl.querySelectorAll("input[type='range']").forEach((node) => node.addEventListener("input", (ev) => { const value = Number(ev.target.value); ev.target.previousElementSibling.querySelector("span").textContent = toMagnitude(value); updateEffectMagnitude(Number(ev.target.dataset.step), ev.target.dataset.effect, value); }));
       }
 
+      function parsePlanJson(text) {
+        try {
+          const parsed = JSON.parse(text || "{}");
+          return parsed && typeof parsed === "object" ? parsed : { task: "", steps: [] };
+        } catch (_err) {
+          return { task: "", steps: [] };
+        }
+      }
+
       function sessionPayloadFromState() {
         const baseContract = JSON.parse(contractEl.value);
-        const budgets = {
+        const globalBudgets = {
           cost_usd: Number(el("session-budget-cost").value || 0),
           time_horizon_days: Number(el("session-budget-time").value || 0),
           max_tool_calls: Number(el("session-budget-tools").value || 0)
         };
-        const global_contract = { ...baseContract, preset: baseContract.preset || "team", budgets };
+        const global_contract = { ...baseContract, preset: baseContract.preset || "team", budgets: globalBudgets };
         return {
           session: {
             global_contract,
-            agents: sessionState.agents.map((agent) => ({ agent_id: agent.agent_id })),
+            agents: sessionState.agents.map((agent) => ({
+              agent_id: agent.agent_id,
+              contract: {
+                ...global_contract,
+                budgets: {
+                  cost_usd: Number(agent.budgets?.cost_usd || 0),
+                  time_horizon_days: Number(agent.budgets?.time_horizon_days || 0),
+                  max_tool_calls: Number(agent.budgets?.max_tool_calls || 0)
+                }
+              }
+            })),
             plans: sessionState.agents.map((agent) => ({ agent_id: agent.agent_id, plan: agent.plan }))
           },
           include_steps: false,
@@ -452,13 +488,20 @@
         sessionState.agents.forEach((agent, idx) => {
           const node = document.createElement("div");
           node.className = "agent-editor";
-          node.innerHTML = `<div class="agent-header"><input type="text" value="${agent.agent_id}" data-agent-id="${idx}" /><button class="secondary" data-remove-agent="${idx}">remove</button></div><label>Agent plan (JSON)</label><textarea data-agent-plan="${idx}" style="min-height:130px">${JSON.stringify(agent.plan, null, 2)}</textarea>`;
+          node.innerHTML = `<div class="agent-header"><input type="text" value="${agent.agent_id}" data-agent-id="${idx}" /><button class="secondary" data-remove-agent="${idx}">remove</button></div><div class="field-grid"><label>Budget: cost_usd<input data-agent-budget="cost_usd" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.cost_usd || 0)}" /></label><label>Budget: time_horizon_days<input data-agent-budget="time_horizon_days" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.time_horizon_days || 0)}" /></label><label>Budget: max_tool_calls<input data-agent-budget="max_tool_calls" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.max_tool_calls || 0)}" /></label></div><label>Agent plan (JSON)</label><textarea data-agent-plan="${idx}" style="min-height:130px">${JSON.stringify(agent.plan, null, 2)}</textarea>`;
           agentEditorsEl.appendChild(node);
         });
         sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
 
         agentEditorsEl.querySelectorAll("input[data-agent-id]").forEach((node) => node.addEventListener("input", (ev) => {
           sessionState.agents[Number(ev.target.dataset.agentId)].agent_id = ev.target.value.trim() || `agent-${Number(ev.target.dataset.agentId) + 1}`;
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("input[data-agent-budget]").forEach((node) => node.addEventListener("input", (ev) => {
+          const idx = Number(ev.target.dataset.agentIndex);
+          const budgetKey = ev.target.dataset.agentBudget;
+          sessionState.agents[idx].budgets = sessionState.agents[idx].budgets || {};
+          sessionState.agents[idx].budgets[budgetKey] = Number(ev.target.value || 0);
           sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
         }));
         agentEditorsEl.querySelectorAll("textarea[data-agent-plan]").forEach((node) => node.addEventListener("input", (ev) => {
@@ -477,25 +520,63 @@
       function topAxesText(aggregate = {}) { return Object.entries(aggregate).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([axis, value]) => `${axis}:${Number(value).toFixed(2)}`).join(", "); }
       function budgetUtilizationText(util = {}) { return Object.entries(util).map(([k, v]) => `${k}:${(100 * Number(v || 0)).toFixed(0)}%`).join(", ") || "n/a"; }
 
+      function utilizationMeter(label, used, limit) {
+        const safeLimit = Number(limit || 0);
+        const safeUsed = Number(used || 0);
+        const ratio = safeLimit > 0 ? safeUsed / safeLimit : 0;
+        const percent = (100 * ratio).toFixed(0);
+        return `<div><div class="inline-label"><span>${label}</span><strong>${safeUsed.toFixed(1)} / ${safeLimit.toFixed(1)}</strong></div><div class="meter"><span style="width:${Math.min(100, Math.max(0, ratio * 100))}%"></span></div><div class="muted">${percent}% consumed</div></div>`;
+      }
+
       function renderSessionDashboard(payload = {}) {
-        sessionAgentTableEl.innerHTML = ""; sessionGlobalTableEl.innerHTML = ""; sessionLaunderingTableEl.innerHTML = "";
+        sessionAgentTableEl.innerHTML = "";
+        sessionGlobalTableEl.innerHTML = "";
+        sessionLaunderingTableEl.innerHTML = "";
+        sessionLedgerEl.innerHTML = "";
+
         Object.entries(payload.dashboard?.per_agent || {}).forEach(([agentId, entry]) => {
           const tr = document.createElement("tr");
           tr.innerHTML = `<td>${agentId}</td><td>${decisionBadge(entry.decision)}</td><td>${topAxesText(entry.aggregate)}</td><td>${budgetUtilizationText(entry.budget_utilization)}</td>`;
           sessionAgentTableEl.appendChild(tr);
+
+          const source = sessionState.agents.find((agent) => agent.agent_id === agentId) || {};
+          const consumption = entry.budget_consumption || {};
+          const budgets = source.budgets || {};
+          const card = document.createElement("div");
+          card.className = "ledger-card";
+          card.innerHTML = `<h4 style="margin:0 0 6px">${agentId}</h4>${utilizationMeter("cost_usd", consumption.cost_usd, budgets.cost_usd)}${utilizationMeter("time_horizon_days", consumption.time_horizon_days, budgets.time_horizon_days)}${utilizationMeter("max_tool_calls", consumption.max_tool_calls, budgets.max_tool_calls)}`;
+          sessionLedgerEl.appendChild(card);
         });
+
         const global = payload.dashboard?.global || {};
         [["Decision", global.decision || payload.decision || "n/a"], ["Top axes", topAxesText(global.aggregate || {})], ["Budget utilization", budgetUtilizationText(global.budget_utilization || {})], ["Negotiation triggered", payload.negotiation?.triggered ? "yes" : "no"]].forEach(([k, v]) => {
-          const tr = document.createElement("tr"); tr.innerHTML = `<td>${k}</td><td>${v}</td>`; sessionGlobalTableEl.appendChild(tr);
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${k}</td><td>${v}</td>`;
+          sessionGlobalTableEl.appendChild(tr);
         });
+
         (payload.laundering_signals || []).forEach((signal) => {
           const tr = document.createElement("tr");
           tr.innerHTML = `<td>${signal.axis}</td><td>${Number(signal.global_value).toFixed(3)}</td><td>${Number(signal.max_agent_value).toFixed(3)}</td><td>${Number(signal.delta).toFixed(3)}</td><td>${Number(signal.ask_threshold).toFixed(3)}</td>`;
           sessionLaunderingTableEl.appendChild(tr);
         });
         if (!(payload.laundering_signals || []).length) {
-          const tr = document.createElement("tr"); tr.innerHTML = "<td colspan='5'>No cross-agent laundering signals detected.</td>"; sessionLaunderingTableEl.appendChild(tr);
+          const tr = document.createElement("tr");
+          tr.innerHTML = "<td colspan='5'>No cross-agent laundering signals detected.</td>";
+          sessionLaunderingTableEl.appendChild(tr);
         }
+
+        const globalCard = document.createElement("div");
+        globalCard.className = "ledger-card";
+        const globalConsumption = global.budget_consumption || {};
+        const globalBudget = {
+          cost_usd: Number(el("session-budget-cost").value || 0),
+          time_horizon_days: Number(el("session-budget-time").value || 0),
+          max_tool_calls: Number(el("session-budget-tools").value || 0)
+        };
+        const launderingChips = (payload.laundering_signals || []).map((signal) => `<span class="signal-chip">${signal.axis} Δ${Number(signal.delta).toFixed(2)}</span>`).join("") || '<span class="muted">No laundering signals.</span>';
+        globalCard.innerHTML = `<h4 style="margin:0 0 6px">Global</h4>${utilizationMeter("cost_usd", globalConsumption.cost_usd, globalBudget.cost_usd)}${utilizationMeter("time_horizon_days", globalConsumption.time_horizon_days, globalBudget.time_horizon_days)}${utilizationMeter("max_tool_calls", globalConsumption.max_tool_calls, globalBudget.max_tool_calls)}<div style="margin-top:8px"><strong>Laundering pressure</strong><div style="margin-top:4px">${launderingChips}</div></div>`;
+        sessionLedgerEl.appendChild(globalCard);
       }
 
 
@@ -556,11 +637,6 @@
         ]);
 
         wizardTemplates = templates.templates || [];
-
-      function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
-
-      async function loadCatalog() {
-        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
         const options = [];
         (templates.templates || []).forEach((domain) => Object.entries(domain.variants || {}).forEach(([variant, body]) => { if (body.content?.contract && body.content?.plan) { options.push({ key: `${domain.domain}:${variant}`, contract: body.content.contract, plan: body.content.plan }); } }));
         templateSelectEl.innerHTML = options.map((opt) => `<option value="${opt.key}">${opt.key}</option>`).join("");
@@ -718,6 +794,8 @@
       async function replayTelemetry() {
         const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json());
         telemetryEl.textContent = JSON.stringify(replay, null, 2);
+      }
+
       async function runSessionEvaluation() {
         const body = sessionPayloadFromState();
         sessionPayloadEl.textContent = JSON.stringify(body, null, 2);
@@ -728,9 +806,10 @@
         renderSessionDashboard(payload);
       }
 
-      async function replayTelemetry() { const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json()); telemetryEl.textContent = JSON.stringify(replay, null, 2); }
-      async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
-
+      async function loadCalibrationDashboard() {
+        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
+        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
+      }
 
       async function validateCaseDraft() {
         const payload = { case: JSON.parse(caseDraftEl.value) };
@@ -778,15 +857,6 @@
         renderWhatIfEditors(picked.plan);
         scheduleAutoEvaluate();
       });
-      el("run").addEventListener("click", () => runEvaluation().catch((err) => {
-        resultEl.textContent = `Error: ${err.message}`;
-      }));
-      el("replay").addEventListener("click", () => replayTelemetry().catch((err) => {
-        telemetryEl.textContent = `Error: ${err.message}`;
-      }));
-      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
-        calibrationDashboardEl.textContent = `Error: ${err.message}`;
-      }));
       el("dataset-validate").addEventListener("click", () => validateCaseDraft().catch((err) => {
         datasetOutputEl.textContent = `Validation error: ${err.message}`;
       }));
@@ -803,14 +873,17 @@
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Error: ${err.message}`; }));
+      el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; }));
+      el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
+      el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => { pluginManagerEl.textContent = `Uninstall error: ${err.message}`; }));
       el("add-agent").addEventListener("click", () => {
         const idx = sessionState.agents.length + 1;
-        sessionState.agents.push({ agent_id: `agent-${idx}`, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
+        sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
         renderSessionBuilder();
       });
       el("sync-from-current-plan").addEventListener("click", () => {
         const parsedPlan = JSON.parse(planEl.value);
-        if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", plan: parsedPlan });
+        if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, plan: parsedPlan });
         else sessionState.agents[0].plan = parsedPlan;
         renderSessionBuilder();
       });
@@ -840,22 +913,11 @@
         scheduleAutoEvaluate();
       });
 
-      loadCatalog().then(() => runEvaluation()).catch((err) => {
-        catalogEl.textContent = `Catalog load error: ${err.message}`;
-      });
-      loadCalibrationDashboard().catch((err) => {
-        calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
-      });
-      runStreamingEvaluation().catch((err) => {
-        streamingEl.textContent = `Streaming load error: ${err.message}`;
-      });
-      runEvaluation().catch((err) => {
-        resultEl.textContent = `Error: ${err.message}`;
-      });
       renderSessionBuilder();
-      loadCatalog().catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
+      loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
       loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });
-      runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; });
+      runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
+      loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
       runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
     </script>
   </body>
