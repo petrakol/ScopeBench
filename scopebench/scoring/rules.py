@@ -11,7 +11,7 @@ import yaml
 from scopebench.contracts import TaskContract
 from scopebench.plan import EffectMagnitude, EffectSpec, PlanDAG, PlanStep
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector, SCOPE_AXES
-from scopebench.scoring.knee import KneeFlag, detect_knees
+from scopebench.scoring.knee import KneeAnalysis, KneeFlag, analyze_knees, detect_knees
 
 
 @dataclass(frozen=True)
@@ -805,3 +805,17 @@ def detect_knees_for_plan(
     step_vectors: Optional[List[ScopeVector]] = None,
 ) -> List[KneeFlag]:
     return detect_knees(plan, min_marginal_ratio=min_marginal_ratio, step_vectors=step_vectors)
+
+
+def analyze_knees_for_plan(
+    plan: PlanDAG,
+    min_marginal_ratio: float,
+    max_knee_steps: int,
+    step_vectors: Optional[List[ScopeVector]] = None,
+) -> KneeAnalysis:
+    return analyze_knees(
+        plan,
+        min_marginal_ratio=min_marginal_ratio,
+        max_knee_steps=max_knee_steps,
+        step_vectors=step_vectors,
+    )
