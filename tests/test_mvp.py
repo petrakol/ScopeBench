@@ -532,3 +532,112 @@ def test_policy_input_v1_and_audit_metadata_in_api_response():
     assert body["policy_version"]
     assert body["policy_hash"]
     assert body["policy_input"]["policy_input_version"] == "v1"
+
+
+def test_plan_step_accepts_optional_benefit_fields():
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Small bug fix",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Patch bug",
+                    "tool": "git_patch",
+                    "est_cost_usd": 2.0,
+                    "est_benefit": 1.1,
+                    "benefit_unit": "quality",
+                }
+            ],
+        }
+    )
+    assert plan.steps[0].est_benefit == pytest.approx(1.1)
+    assert plan.steps[0].benefit_unit == "quality"
+
+
+def test_api_include_steps_serializes_benefit_fields():
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "contract": {"goal": "Fix bug", "preset": "team"},
+        "plan": {
+            "task": "Fix bug",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Read bug context",
+                    "tool": "git_read",
+                    "est_cost_usd": 1.0,
+                    "est_benefit": 1.5,
+                    "benefit_unit": "quality",
+                }
+            ],
+        },
+        "include_steps": True,
+    }
+    response = client.post("/evaluate", json=payload)
+    assert response.status_code == 200
+    first_step = response.json()["steps"][0]
+    assert first_step["est_cost_usd"] == pytest.approx(1.0)
+    assert first_step["est_benefit"] == pytest.approx(1.5)
+    assert first_step["benefit_unit"] == "quality"
+
+
+def test_knee_of_curve_triggers_ask_with_step_ids():
+    contract = TaskContract.model_validate(
+        {
+            "goal": "Fix tiny bug",
+            "preset": "team",
+            "thresholds": {"min_marginal_ratio": 0.5, "max_knee_steps": 0},
+        }
+    )
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix tiny bug",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Read failing test",
+                    "tool": "git_read",
+                    "est_cost_usd": 1,
+                    "est_benefit": 1.0,
+                    "benefit_unit": "quality",
+                },
+                {
+                    "id": "2",
+                    "description": "Apply minimal patch",
+                    "tool": "git_patch",
+                    "depends_on": ["1"],
+                    "est_cost_usd": 1,
+                    "est_benefit": 0.8,
+                    "benefit_unit": "quality",
+                },
+                {
+                    "id": "3",
+                    "description": "Rewrite subsystem architecture",
+                    "tool": "git_rewrite",
+                    "depends_on": ["2"],
+                    "est_cost_usd": 10,
+                    "est_benefit": 0.2,
+                    "benefit_unit": "quality",
+                },
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    assert res.policy.decision.value in {"ASK", "DENY"}
+    assert "knee_of_curve" in res.policy.asked
+    assert any("steps 3" in reason for reason in res.policy.reasons)
+
+
+def test_dataset_has_at_least_five_knee_cases():
+    dataset_path = ROOT / "scopebench/bench/cases/examples.jsonl"
+    rows = [json.loads(line) for line in dataset_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    knee_rows = [row for row in rows if "knee" in row["id"]]
+    assert len(knee_rows) >= 5
+    for row in knee_rows:
+        contract = TaskContract.model_validate(row["contract"])
+        plan = PlanDAG.model_validate(row["plan"])
+        res = evaluate(contract, plan)
+        assert res.policy.decision.value == row["expected_decision"]

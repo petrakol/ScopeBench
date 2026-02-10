@@ -10,6 +10,7 @@ import yaml
 
 from scopebench.plan import PlanDAG, PlanStep
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector, SCOPE_AXES
+from scopebench.scoring.knee import KneeFlag, detect_knees
 
 
 @dataclass(frozen=True)
@@ -457,3 +458,12 @@ def aggregate_scope(vectors: List[ScopeVector], plan: Optional[PlanDAG] = None) 
         uncertainty=aggregated["uncertainty"],
         n_steps=len(vectors),
     )
+
+
+
+def detect_knees_for_plan(
+    plan: PlanDAG,
+    min_marginal_ratio: float,
+    step_vectors: Optional[List[ScopeVector]] = None,
+) -> List[KneeFlag]:
+    return detect_knees(plan, min_marginal_ratio=min_marginal_ratio, step_vectors=step_vectors)

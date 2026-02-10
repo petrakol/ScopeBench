@@ -37,6 +37,8 @@ class Thresholds(BaseModel):
     max_stakeholder_radius: float = Field(default=0.4, ge=0, le=1)
     max_power_concentration: float = Field(default=0.3, ge=0, le=1)
     max_uncertainty: float = Field(default=0.6, ge=0, le=1)
+    min_marginal_ratio: float = Field(default=0.25, ge=0)
+    max_knee_steps: int = Field(default=2, ge=0)
 
 
 class EscalationRules(BaseModel):
