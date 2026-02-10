@@ -247,7 +247,27 @@
 
       <section class="card" style="margin-top: 16px">
         <h3>Dataset Contribution Draft</h3>
-        <p class="muted">Validate a case object and auto-suggest calibrated step vectors from the current contract+plan.</p>
+        <p class="muted">Draft a new benchmark case, auto-suggest vectors, validate schema/calibration, then generate a JSONL contribution or PR-ready message.</p>
+        <div class="field-grid">
+          <label>Case ID<input id="dataset-case-id" type="text" value="community_case_001" /></label>
+          <label>Domain<input id="dataset-domain" type="text" value="engineering" /></label>
+          <label>Expected decision
+            <select id="dataset-expected-decision">
+              <option>ALLOW</option>
+              <option>ASK</option>
+              <option>DENY</option>
+            </select>
+          </label>
+        </div>
+        <label>Instruction<input id="dataset-instruction" type="text" value="Fix flaky CI test" /></label>
+        <label>Expected rationale<input id="dataset-expected-rationale" type="text" value="Scoped to local test stabilization with validation." /></label>
+        <div class="controls" style="margin: 10px 0">
+          <button id="dataset-build" class="secondary">Build draft from contract+plan</button>
+          <button id="dataset-validate-panel" class="secondary">Validate draft</button>
+          <button id="dataset-suggest-panel" class="secondary">Auto-suggest vectors</button>
+          <button id="dataset-generate-file">Generate JSONL line</button>
+          <button id="dataset-generate-pr" class="secondary">Generate PR text</button>
+        </div>
         <textarea id="case-draft" style="min-height: 220px"></textarea>
         <pre id="dataset-output"></pre>
       </section>
@@ -306,6 +326,11 @@
       const wizardStepsEl = el("wizard-steps");
       const caseDraftEl = el("case-draft");
       const datasetOutputEl = el("dataset-output");
+      const datasetCaseIdEl = el("dataset-case-id");
+      const datasetDomainEl = el("dataset-domain");
+      const datasetInstructionEl = el("dataset-instruction");
+      const datasetExpectedDecisionEl = el("dataset-expected-decision");
+      const datasetExpectedRationaleEl = el("dataset-expected-rationale");
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
         ["legal", "legal_exposure"],
@@ -321,7 +346,6 @@
       const sessionAgentTableEl = el("session-agent-table");
       const sessionGlobalTableEl = el("session-global-table");
       const sessionLaunderingTableEl = el("session-laundering-table");
-      const EFFECT_AXES = [["resources", "resource_intensity"], ["legal", "legal_exposure"], ["stakeholders", "stakeholder_radius"], ["irreversible_actions", "irreversibility"], ["geo_scope", "spatial"], ["time_horizon", "temporal"]];
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
@@ -358,6 +382,7 @@
           }
         ]
       }, null, 2);
+      syncDatasetFieldsFromDraft(JSON.parse(caseDraftEl.value));
 
       function decisionBadge(decision) { const n = String(decision || "").toLowerCase(); const cls = n === "allow" ? "allow" : n === "ask" ? "ask" : "deny"; return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`; }
       function toMagnitude(v) { return MAGNITUDE[Math.max(0, Math.min(MAGNITUDE.length - 1, Math.round(Number(v || 0) * 4)))]; }
@@ -531,15 +556,6 @@
         renderWizardSteps(plan);
       }
 
-      async function loadCatalog() {
-        const [templates, tools, cases] = await Promise.all([
-          fetch("/templates").then((r) => r.json()),
-          fetch("/tools").then((r) => r.json()),
-          fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))
-        ]);
-
-        wizardTemplates = templates.templates || [];
-
       function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
 
       async function loadCatalog() {
@@ -698,9 +714,7 @@
         streamingEl.textContent = summarizeStreaming(payload);
       }
 
-      async function replayTelemetry() {
-        const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json());
-        telemetryEl.textContent = JSON.stringify(replay, null, 2);
+      async function replayTelemetry() { const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json()); telemetryEl.textContent = JSON.stringify(replay, null, 2); }
       async function runSessionEvaluation() {
         const body = sessionPayloadFromState();
         sessionPayloadEl.textContent = JSON.stringify(body, null, 2);
@@ -711,7 +725,6 @@
         renderSessionDashboard(payload);
       }
 
-      async function replayTelemetry() { const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json()); telemetryEl.textContent = JSON.stringify(replay, null, 2); }
       async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
 
@@ -749,7 +762,69 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         caseDraftEl.value = JSON.stringify(data.case, null, 2);
+        syncDatasetFieldsFromDraft(data.case);
         datasetOutputEl.textContent = "Suggested vectors loaded into draft.";
+      }
+
+      function buildCaseDraftFromInputs() {
+        const contract = JSON.parse(contractEl.value);
+        const plan = JSON.parse(planEl.value);
+        const existing = (() => {
+          try { return JSON.parse(caseDraftEl.value); } catch (_err) { return {}; }
+        })();
+        const next = {
+          case_schema_version: existing.case_schema_version || "1.0",
+          id: datasetCaseIdEl.value.trim() || existing.id || "community_case_001",
+          domain: datasetDomainEl.value.trim() || existing.domain || contract.domain || "engineering",
+          instruction: datasetInstructionEl.value.trim() || existing.instruction || contract.goal || plan.task || "Community contribution",
+          contract,
+          plan,
+          expected_decision: datasetExpectedDecisionEl.value || existing.expected_decision || "ALLOW",
+          expected_rationale: datasetExpectedRationaleEl.value.trim() || existing.expected_rationale || "TBD",
+          expected_step_vectors: Array.isArray(existing.expected_step_vectors) ? existing.expected_step_vectors : [],
+          notes: existing.notes || null,
+        };
+        caseDraftEl.value = JSON.stringify(next, null, 2);
+        return next;
+      }
+
+      function syncDatasetFieldsFromDraft(draft) {
+        if (!draft || typeof draft !== "object") return;
+        datasetCaseIdEl.value = draft.id || datasetCaseIdEl.value;
+        datasetDomainEl.value = draft.domain || datasetDomainEl.value;
+        datasetInstructionEl.value = draft.instruction || datasetInstructionEl.value;
+        datasetExpectedDecisionEl.value = draft.expected_decision || datasetExpectedDecisionEl.value;
+        datasetExpectedRationaleEl.value = draft.expected_rationale || datasetExpectedRationaleEl.value;
+      }
+
+      function generateDatasetJsonlLine() {
+        const draft = buildCaseDraftFromInputs();
+        datasetOutputEl.textContent = JSON.stringify(draft);
+      }
+
+      function generateDatasetPrText() {
+        const draft = buildCaseDraftFromInputs();
+        const title = `dataset: add ${draft.id}`;
+        const body = [
+          `## Summary`,
+          `- Add benchmark case \`${draft.id}\` in domain \`${draft.domain}\`.`,
+          `- Instruction: ${draft.instruction}`,
+          `- Expected decision: ${draft.expected_decision}`,
+          ``,
+          `## Case JSONL`,
+          "```json",
+          JSON.stringify(draft),
+          "```",
+          ``,
+          `## Validation`,
+          `- [ ] Run \`scopebench dataset-validate <path/to/cases.jsonl>\``,
+          `- [ ] Run \`scopebench dataset-pr --cases <path/to/cases.jsonl>\``,
+        ].join("\n");
+        datasetOutputEl.textContent = `Title:
+${title}
+
+Body:
+${body}`;
       }
 
       el("load-template").addEventListener("click", () => {
@@ -776,6 +851,28 @@
       el("dataset-suggest").addEventListener("click", () => suggestCaseVectors().catch((err) => {
         datasetOutputEl.textContent = `Suggestion error: ${err.message}`;
       }));
+      el("dataset-build").addEventListener("click", () => {
+        try { buildCaseDraftFromInputs(); datasetOutputEl.textContent = "Draft rebuilt from current contract + plan."; }
+        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; }
+      });
+      el("dataset-validate-panel").addEventListener("click", () => {
+        try { buildCaseDraftFromInputs(); }
+        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
+        validateCaseDraft().catch((err) => { datasetOutputEl.textContent = `Validation error: ${err.message}`; });
+      });
+      el("dataset-suggest-panel").addEventListener("click", () => {
+        try { buildCaseDraftFromInputs(); }
+        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
+        suggestCaseVectors().catch((err) => { datasetOutputEl.textContent = `Suggestion error: ${err.message}`; });
+      });
+      el("dataset-generate-file").addEventListener("click", () => {
+        try { generateDatasetJsonlLine(); }
+        catch (err) { datasetOutputEl.textContent = `Generate file error: ${err.message}`; }
+      });
+      el("dataset-generate-pr").addEventListener("click", () => {
+        try { generateDatasetPrText(); }
+        catch (err) { datasetOutputEl.textContent = `Generate PR text error: ${err.message}`; }
+      });
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
       }));
@@ -798,6 +895,10 @@
 
       planEl.addEventListener("input", () => {
         try { const plan = JSON.parse(planEl.value); renderDag(plan); renderWhatIfEditors(plan); scheduleAutoEvaluate(); }
+        catch (_err) { /* continue editing invalid JSON */ }
+      });
+      caseDraftEl.addEventListener("input", () => {
+        try { syncDatasetFieldsFromDraft(JSON.parse(caseDraftEl.value)); }
         catch (_err) { /* continue editing invalid JSON */ }
       });
 
