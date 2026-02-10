@@ -84,3 +84,15 @@ ScopeBench now supports a causal abstraction layer in `effects_v1`:
 - For covered axes, precedence remains: explicit effects > macro consequence inference > tool priors > keywords.
 
 This means scoring can prioritize declared effects and causal consequence mappings over tool priors and keyword-only heuristics.
+
+
+## LLM-assisted effects annotation
+
+Use the CLI annotator to suggest `effects_v1` for each plan step from tool defaults, tool priors, and macro-consequence heuristics:
+
+```bash
+scopebench suggest-effects <plan.yaml> --json
+scopebench suggest-effects <plan.yaml> --in-place
+```
+
+Suggested effects are meant as editable drafts: explicit user-provided `effects_v1` remains the strongest signal in scoring precedence.
