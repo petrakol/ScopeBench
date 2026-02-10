@@ -1,25 +1,29 @@
 # Interactive Quickstart Walkthrough
 
-This guide is a hands-on companion to `scopebench quickstart` and `scopebench coding-quickstart`.
-It is designed for workshop, onboarding, and self-serve experimentation.
+This walkthrough is designed for new ScopeBench users who want to learn by doing.
+It guides you through the full lifecycle:
+
+1. Choose a template/contract preset.
+2. Edit a plan and observe policy changes.
+3. Annotate plan effects.
+4. Evaluate through CLI and API.
 
 ## What you will learn
 
-By the end of this walkthrough, you will be able to:
+By the end of this tutorial, you will be able to:
 
-1. Install ScopeBench in a local virtual environment.
-2. Run both quickstart commands and inspect decisions.
-3. Choose and compare contract templates.
-4. Edit a plan and observe decision changes.
-5. Evaluate plans over HTTP via `POST /evaluate`.
-6. Integrate ScopeBench into Python workflows with the integrations SDK.
+- Inspect and pick templates for your domain.
+- Run plan checks with `scopebench run`.
+- Make constrained plan edits and re-check decisions.
+- Auto-suggest and review effect annotations.
+- Evaluate plans through `POST /evaluate`.
 
 ## Prerequisites
 
 - Python 3.10+
 - `pip`
 - `curl`
-- Optional: `jq` for pretty JSON output
+- Optional: `jq` for readable JSON
 
 ---
 
@@ -35,87 +39,82 @@ scopebench --help
 
 ---
 
-## 2) Run quickstarts
+## 2) Explore templates and select a starting point
 
-### Canonical quickstart
-
-```bash
-scopebench quickstart
-scopebench quickstart --json | jq
-```
-
-### Coding quickstart
-
-```bash
-scopebench coding-quickstart
-scopebench coding-quickstart --json | jq
-```
-
-What to inspect:
-
-- `decision` (`ALLOW`, `ASK`, or `DENY`)
-- `reasons` and axis-level limit breaches
-- differences between generic and coding-specific policies
-
----
-
-## 3) Select templates and compare strictness
-
-Inspect available templates:
+List available templates:
 
 ```bash
 scopebench list-templates
 ```
 
-Create test contracts (example):
-
-```yaml
-# personal.contract.yaml
-goal: "Fix flaky test"
-preset: personal
-```
-
-```yaml
-# enterprise.contract.yaml
-goal: "Fix flaky test"
-preset: enterprise
-```
-
-Re-run the same plan against each contract and compare output:
+Pick one template and inspect it. For example:
 
 ```bash
-scopebench run personal.contract.yaml examples/coding_small.patch.plan.yaml --json | jq '.decision, .scores'
-scopebench run enterprise.contract.yaml examples/coding_small.patch.plan.yaml --json | jq '.decision, .scores'
+cat scopebench/templates/swe/contract.yaml
+cat scopebench/templates/swe/plan.yaml
+```
+
+Run a template-backed example plan:
+
+```bash
+scopebench run examples/coding_bugfix.contract.yaml examples/coding_bugfix.plan.yaml --json | jq '.decision, .scores, .reasons'
 ```
 
 ---
 
-## 4) Edit a plan and observe policy behavior
+## 3) Edit a plan and observe scope changes
 
-Start from an existing plan and fork it:
-
-```bash
-cp examples/phone_charge.plan.yaml /tmp/phone_charge.plan.yaml
-```
-
-Run baseline:
+Create an editable copy:
 
 ```bash
-scopebench run examples/phone_charge.contract.yaml /tmp/phone_charge.plan.yaml --json | jq '.decision, .reasons'
+cp examples/coding_bugfix.plan.yaml /tmp/coding_bugfix.plan.yaml
 ```
 
-Now iteratively reduce scope in `/tmp/phone_charge.plan.yaml`:
+Run baseline evaluation:
 
-- remove broad or irreversible actions
-- minimize number of steps
-- narrow tool choice to local, low-impact tools
-- limit external side effects
+```bash
+scopebench run examples/coding_bugfix.contract.yaml /tmp/coding_bugfix.plan.yaml --json | jq '.decision, .reasons'
+```
 
-Re-run after each edit until the plan moves toward `ASK` or `ALLOW`.
+Now edit `/tmp/coding_bugfix.plan.yaml` to change scope and re-run.
+
+Try:
+
+- removing broad/high-impact actions,
+- reducing number of steps,
+- replacing expansive tools with narrower ones.
+
+Re-evaluate after each edit:
+
+```bash
+scopebench run examples/coding_bugfix.contract.yaml /tmp/coding_bugfix.plan.yaml --json | jq '.decision, .reasons, .scores'
+```
 
 ---
 
-## 5) Use the API interactively
+## 4) Annotate effects for richer policy signals
+
+Generate suggested effect annotations:
+
+```bash
+scopebench suggest-effects /tmp/coding_bugfix.plan.yaml --json | jq
+```
+
+Apply annotations in-place when satisfied:
+
+```bash
+scopebench suggest-effects /tmp/coding_bugfix.plan.yaml --in-place
+```
+
+Re-run evaluation with the updated plan:
+
+```bash
+scopebench run examples/coding_bugfix.contract.yaml /tmp/coding_bugfix.plan.yaml --json | jq '.decision, .scores, .reasons'
+```
+
+---
+
+## 5) Evaluate with the HTTP API
 
 Start the server:
 
@@ -123,21 +122,24 @@ Start the server:
 scopebench serve --host 0.0.0.0 --port 8080
 ```
 
-In another shell, use the web docs and HTTP endpoints:
+In another shell, inspect API endpoints:
 
-- Open API docs: `http://localhost:8080/docs`
-- Health: `curl -s http://localhost:8080/health | jq`
-- Templates: `curl -s http://localhost:8080/templates | jq '.count'`
+```bash
+curl -s http://localhost:8080/health | jq
+curl -s http://localhost:8080/templates | jq '.count'
+curl -s http://localhost:8080/tools | jq '.count'
+curl -s http://localhost:8080/cases | jq '.count'
+```
 
-Evaluate a plan:
+Submit an evaluation request:
 
 ```bash
 curl -s http://localhost:8080/evaluate \
   -H 'content-type: application/json' \
   -d '{
-    "contract": {"goal": "Fix failing test", "preset": "team"},
+    "contract": {"goal": "Fix failing unit test", "preset": "team"},
     "plan": {
-      "task": "Fix failing test",
+      "task": "Fix failing unit test",
       "steps": [
         {"id":"1","description":"Read failing test","tool":"git_read"},
         {"id":"2","description":"Apply minimal patch","tool":"git_patch","depends_on":["1"]},
@@ -148,46 +150,14 @@ curl -s http://localhost:8080/evaluate \
     "include_next_steps": true,
     "include_patch": true,
     "include_telemetry": true
-  }' | jq
+  }' | jq '.decision, .summary, .next_steps, .plan_patch_suggestion'
 ```
 
 ---
 
-## 6) Python integration walkthrough
+## 6) Continue with the notebook tutorial
 
-Use the Python SDK wrappers to embed checks directly in pipelines and agents:
+Open and run the companion notebook for the same workflow in a single interactive environment:
 
-```python
-from scopebench.integrations.sdk import evaluate_plan
+- `docs/notebooks/scopebench_quickstart_tutorial.ipynb`
 
-contract = {
-    "goal": "Fix failing unit test",
-    "preset": "team",
-}
-
-plan = {
-    "task": "Fix failing unit test",
-    "steps": [
-        {"id": "1", "description": "Read failing test", "tool": "git_read"},
-        {"id": "2", "description": "Apply minimal patch", "tool": "git_patch", "depends_on": ["1"]},
-        {"id": "3", "description": "Run targeted test", "tool": "pytest", "depends_on": ["2"]},
-    ],
-}
-
-result = evaluate_plan(contract=contract, plan=plan, include_summary=True)
-print(result["decision"], result.get("summary"))
-```
-
-You can place this call:
-
-- before autonomous tool execution,
-- before PR creation,
-- or inside CI checks for plan-level policy conformance.
-
----
-
-## Next steps
-
-- Run the companion notebook: `docs/notebooks/scopebench_quickstart_tutorial.ipynb`
-- Explore templates in `scopebench/templates/`
-- Try red-team and calibration flows from the main README
