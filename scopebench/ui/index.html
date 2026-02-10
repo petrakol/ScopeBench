@@ -1695,7 +1695,67 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderCalibrationControls(entry);
       }
 
-      async function loadCasesAnalyticsDashboard() { const dashboard = await fetch('/cases/analytics').then((r) => r.json()); casesAnalyticsDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
+      function renderCasesAnalyticsDashboard(dashboard) {
+        const byDomain = (dashboard.decision_distribution_by_domain || []).map((entry) => {
+          const counts = entry.decision_counts || {};
+          const rates = entry.decision_rates || {};
+          return {
+            domain: entry.domain,
+            total: entry.total_cases,
+            ALLOW: `${counts.ALLOW || 0} (${formatPct(rates.ALLOW || 0)})`,
+            ASK: `${counts.ASK || 0} (${formatPct(rates.ASK || 0)})`,
+            DENY: `${counts.DENY || 0} (${formatPct(rates.DENY || 0)})`,
+          };
+        });
+
+        const triggerAxes = (dashboard.trigger_axes || []).map((entry) => ({
+          axis: entry.axis,
+          ASK: entry.ask_count || 0,
+          DENY: entry.deny_count || 0,
+        }));
+
+        const effectVsThreshold = (dashboard.effect_magnitude_vs_threshold || []).map((entry) => ({
+          axis: entry.axis,
+          avg_effect: Number(entry.average_effect || 0).toFixed(3),
+          avg_threshold: Number(entry.average_threshold || 0).toFixed(3),
+          avg_margin: Number(entry.average_margin || 0).toFixed(3),
+          over_threshold_cases: entry.over_threshold_cases || 0,
+          over_threshold_rate: formatPct(entry.over_threshold_rate || 0),
+        }));
+
+        const topAxes = (dashboard.top_trigger_axes_by_decision || []).map((entry) => ({
+          decision: entry.decision,
+          total_cases: entry.total_cases || 0,
+          top_axes: (entry.top_axes || []).map((axisRow) => `${axisRow.axis}:${axisRow.count} (${formatPct(axisRow.rate_within_decision || 0)})`).join(', '),
+        }));
+
+        const effectProfiles = (dashboard.effect_magnitude_profiles || []).map((entry) => {
+          const rates = entry.decision_rates || {};
+          return {
+            effect_type: entry.effect_type,
+            magnitude: entry.magnitude,
+            count: entry.count || 0,
+            ALLOW: formatPct(rates.ALLOW || 0),
+            ASK: formatPct(rates.ASK || 0),
+            DENY: formatPct(rates.DENY || 0),
+          };
+        });
+
+        casesAnalyticsDashboardEl.textContent = JSON.stringify({
+          source: dashboard.source,
+          count: dashboard.count,
+          decision_distribution_by_domain: byDomain,
+          trigger_axes: triggerAxes,
+          top_trigger_axes_by_decision: topAxes,
+          effect_magnitude_vs_threshold: effectVsThreshold,
+          effect_magnitude_profiles: effectProfiles,
+        }, null, 2);
+      }
+
+      async function loadCasesAnalyticsDashboard() {
+        const dashboard = await fetch('/cases/analytics').then((r) => r.json());
+        renderCasesAnalyticsDashboard(dashboard);
+      }
 
       async function validateCaseDraft() {
         setDatasetWizardStep("validate", "running", "running");
