@@ -102,6 +102,13 @@
       .case-item:last-child { border-bottom: none; }
       .case-item.active { background: #eff6ff; }
       .case-item:hover { background: #f8fafc; }
+      .bar-chart { display: grid; gap: 8px; }
+      .bar-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 72px; gap: 8px; align-items: center; }
+      .bar-track { height: 12px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+      .bar-fill { display: block; height: 100%; background: linear-gradient(90deg, #60a5fa, #2563eb); }
+      .rate-grid { display: grid; gap: 8px; }
+      .rate-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }
+      .threshold-table td, .threshold-table th { font-size: 12px; }
       .dataset-wizard-steps {
         display: grid;
         gap: 8px;
@@ -483,7 +490,6 @@ Require rollback plan before high-irreversibility actions.</textarea>
         <div class="card"><h3>Telemetry Replay</h3><pre id="telemetry"></pre></div>
       </section>
       <section class="grid" style="margin-top: 16px">
-        <div class="card"><h3>Calibration Dashboard</h3><pre id="calibration-dashboard"></pre></div>
         <div class="card"><h3>Cross-case Analytics Dashboard</h3><pre id="cases-analytics-dashboard"></pre></div>
         <div class="card">
           <h3>Calibration Dashboard</h3>
@@ -501,15 +507,15 @@ Require rollback plan before high-irreversibility actions.</textarea>
           </div>
           <div class="grid two-col" id="calibration-controls"></div>
           <div class="grid two-col" style="margin-top:10px">
-            <div><h4>Per-axis score distributions</h4><pre id="calibration-distributions"></pre></div>
-            <div><h4>False-alarm vs override rates</h4><pre id="calibration-rates"></pre></div>
+            <div><h4>Per-axis score distributions</h4><div id="calibration-distributions"></div></div>
+            <div><h4>False-alarm vs override rates</h4><div id="calibration-rates"></div></div>
           </div>
           <div class="grid two-col" style="margin-top:10px">
-            <div><h4>Preset thresholds</h4><pre id="calibration-thresholds"></pre></div>
-            <div><h4>Sample plan threshold pressure</h4><pre id="calibration-plan-impact"></pre></div>
+            <div><h4>Preset thresholds</h4><div id="calibration-thresholds"></div></div>
+            <div><h4>Sample plan threshold pressure</h4><div id="calibration-plan-impact"></div></div>
           </div>
           <h4 style="margin-top:10px">Raw payload</h4>
-          <pre id="calibration-dashboard"></pre>
+          <pre id="calibration-raw"></pre>
         </div>
       </section>
     </main>
@@ -544,7 +550,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const whatIfEditorsEl = el("whatif-editors");
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
-      const calibrationDashboardEl = el("calibration-dashboard");
+      const calibrationRawEl = el("calibration-raw");
       const casesAnalyticsDashboardEl = el("cases-analytics-dashboard");
       const calibrationDomainEl = el("calibration-domain");
       const calibrationControlsEl = el("calibration-controls");
@@ -1460,26 +1466,39 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderSessionDashboard(payload);
       }
 
+      function clamp01(value) {
+        return Math.max(0, Math.min(1, Number(value || 0)));
+      }
+
+      function axisSampleScore(entry, axis) {
+        const baseline = Number(latestEvaluation?.aggregate?.[axis] || entry.calibration?.axis_distributions?.[axis]?.quantiles?.p50 || 0);
+        const scale = 1 + Number(calibrationSelection.axisScaleDelta[axis] || 0);
+        return clamp01(baseline * scale);
+      }
+
+      function formatPct(value) {
+        return `${(100 * Number(value || 0)).toFixed(1)}%`;
+      }
+
       async function loadCalibrationDashboard() {
-        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
+        const dashboard = await fetch('/calibration/dashboard').then((r) => r.json());
         calibrationDashboardState = dashboard;
-        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
-        calibrationDomainEl.innerHTML = (dashboard.domains || []).map((entry) => `<option value="${entry.domain}">${entry.domain}</option>`).join("");
+        calibrationRawEl.textContent = JSON.stringify(dashboard, null, 2);
+        calibrationDomainEl.innerHTML = (dashboard.domains || []).map((entry) => `<option value="${entry.domain}">${entry.domain}</option>`).join('');
         if (!calibrationSelection.domain && dashboard.domains?.length) calibrationSelection.domain = dashboard.domains[0].domain;
         if (calibrationSelection.domain) calibrationDomainEl.value = calibrationSelection.domain;
         renderCalibrationViews();
       }
 
-
-
       function renderCalibrationControls(entry) {
-        calibrationControlsEl.innerHTML = "";
+        calibrationControlsEl.innerHTML = '';
         const calibration = entry?.calibration || {};
         const scales = calibration.axis_scale || {};
         const factors = calibration.axis_threshold_factor || {};
+
         Object.keys(scales).forEach((axis) => {
-          const wrap = document.createElement("div");
-          wrap.className = "card";
+          const wrap = document.createElement('div');
+          wrap.className = 'card';
           const scaleVal = Number(calibrationSelection.axisScaleDelta[axis] || 0);
           const factorVal = Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
           wrap.innerHTML = `<h4>${axis}</h4>
@@ -1488,23 +1507,25 @@ Require rollback plan before high-irreversibility actions.</textarea>
             <p class="muted">Current scale=${Number(scales[axis] || 1).toFixed(2)}, threshold factor=${Number(factors[axis] || 1).toFixed(2)}</p>`;
           calibrationControlsEl.appendChild(wrap);
         });
-        const abstainWrap = document.createElement("div");
-        abstainWrap.className = "card";
+
+        const abstainWrap = document.createElement('div');
+        abstainWrap.className = 'card';
         abstainWrap.innerHTML = `<h4>Uncertainty abstain threshold</h4><label>Δ <input type="range" min="-0.2" max="0.2" step="0.01" value="${Number(calibrationSelection.abstainDelta || 0)}" id="calibration-abstain" /><span class="muted">${Number(calibrationSelection.abstainDelta || 0).toFixed(2)}</span></label>`;
         calibrationControlsEl.appendChild(abstainWrap);
 
-        calibrationControlsEl.querySelectorAll("input[data-kind]").forEach((node) => {
-          node.addEventListener("input", (ev) => {
+        calibrationControlsEl.querySelectorAll('input[data-kind]').forEach((node) => {
+          node.addEventListener('input', (ev) => {
             const axis = ev.target.dataset.axis;
             const val = Number(ev.target.value || 0);
-            if (ev.target.dataset.kind === "scale") calibrationSelection.axisScaleDelta[axis] = val;
+            if (ev.target.dataset.kind === 'scale') calibrationSelection.axisScaleDelta[axis] = val;
             else calibrationSelection.axisThresholdFactorDelta[axis] = val;
             renderCalibrationViews();
           });
         });
-        const abstainNode = el("calibration-abstain");
+
+        const abstainNode = el('calibration-abstain');
         if (abstainNode) {
-          abstainNode.addEventListener("input", (ev) => {
+          abstainNode.addEventListener('input', (ev) => {
             calibrationSelection.abstainDelta = Number(ev.target.value || 0);
             renderCalibrationViews();
           });
@@ -1516,44 +1537,53 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const domain = calibrationSelection.domain || calibrationDashboardState.domains[0].domain;
         const entry = calibrationDashboardState.domains.find((item) => item.domain === domain) || calibrationDashboardState.domains[0];
         calibrationSelection.domain = entry.domain;
+
         const dist = entry.calibration?.axis_distributions || {};
         const rates = entry.calibration?.rates || {};
         const telemetryDelta = entry.calibration?.telemetry_delta || {};
         const thresholdBlock = entry.calibration?.preset_thresholds || {};
-        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
-      }
-      async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
-      async function loadCasesAnalyticsDashboard() { const dashboard = await fetch("/cases/analytics").then((r) => r.json()); casesAnalyticsDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
-      async function loadCalibrationDashboard() {
-        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
-        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
-      }
-
-        const distLines = Object.entries(dist).map(([axis, item]) => `${axis}: n=${item.samples}, p50=${Number(item.quantiles?.p50 || 0).toFixed(2)}, p90=${Number(item.quantiles?.p90 || 0).toFixed(2)}
-  bins=${(item.histogram || []).join(",")}`);
-        calibrationDistributionsEl.textContent = distLines.join("\n\n") || "No data";
-
-        const rateLines = Object.entries(rates).map(([axis, item]) => {
-          const tele = telemetryDelta[axis] || {};
-          return `${axis}: false_alarm=${(100 * Number(item.false_alarm_rate || 0)).toFixed(1)}%, override=${(100 * Number(item.override_rate || 0)).toFixed(1)}%, scaleΔ=${Number(tele.axis_scale_delta || 0).toFixed(3)}, thresholdΔ=${Number(tele.threshold_factor_delta || 0).toFixed(3)}`;
+        const distRows = Object.entries(dist).map(([axis, item]) => {
+          const bars = (item.histogram || []).map((count) => Number(count || 0));
+          const maxBin = Math.max(1, ...bars);
+          const binsHtml = bars.map((count) => `<span class="bar-fill" style="width:${(100 * count) / maxBin}%"></span>`);
+          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">n=${item.samples || 0} • p50=${Number(item.quantiles?.p50 || 0).toFixed(2)} • p90=${Number(item.quantiles?.p90 || 0).toFixed(2)}</span></div><div class="bar-chart">${binsHtml.map((fill, idx) => `<div class="bar-row"><span class="muted">${(idx / 10).toFixed(1)}-${((idx + 1) / 10).toFixed(1)}</span><span class="bar-track">${fill}</span><span>${bars[idx]}</span></div>`).join('')}</div></div>`;
         });
-        calibrationRatesEl.textContent = rateLines.join("\n") || "No data";
-        calibrationThresholdsEl.textContent = JSON.stringify(thresholdBlock, null, 2);
+        calibrationDistributionsEl.innerHTML = distRows.join('') || '<p class="muted">No data</p>';
 
-        const preset = calibrationPlanPresetEl.value || "team";
+        const rateRows = Object.entries(rates).map(([axis, item]) => {
+          const tele = telemetryDelta[axis] || {};
+          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">scaleΔ=${Number(tele.axis_scale_delta || 0).toFixed(3)}, thresholdΔ=${Number(tele.threshold_factor_delta || 0).toFixed(3)}</span></div><div class="bar-row"><span>false alarm</span><span class="bar-track"><span class="bar-fill" style="width:${100 * Number(item.false_alarm_rate || 0)}%"></span></span><span>${formatPct(item.false_alarm_rate)}</span></div><div class="bar-row"><span>override</span><span class="bar-track"><span class="bar-fill" style="width:${100 * Number(item.override_rate || 0)}%"></span></span><span>${formatPct(item.override_rate)}</span></div></div>`;
+        });
+        calibrationRatesEl.innerHTML = `<div class="rate-grid">${rateRows.join('')}</div>` || '<p class="muted">No data</p>';
+
+        const preset = calibrationPlanPresetEl.value || 'team';
         const base = thresholdBlock.base?.[preset] || {};
         const calibrated = thresholdBlock.calibrated?.[preset] || {};
-        const impactLines = Object.keys(base).map((axis) => {
-          const localFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
-          const adjustedThreshold = Math.max(0, Math.min(1, Number(calibrated[axis] || base[axis] || 0) * localFactor));
-          const planAxis = Number((JSON.parse(planEl.value).steps || []).length ? 0.35 : 0);
-          const ratio = adjustedThreshold > 0 ? (planAxis / adjustedThreshold) : 0;
-          return `${axis}: threshold=${adjustedThreshold.toFixed(3)} | sample_plan_score≈${planAxis.toFixed(3)} | pressure=${ratio.toFixed(2)}x`;
+        const axes = Object.keys(base).length ? Object.keys(base) : Object.keys(dist);
+
+        const thresholdRows = axes.map((axis) => {
+          const adjustedFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
+          const adjustedThreshold = clamp01(Number(calibrated[axis] || base[axis] || 0) * adjustedFactor);
+          return `<tr><td>${axis}</td><td>${Number(base[axis] || 0).toFixed(3)}</td><td>${Number(calibrated[axis] || 0).toFixed(3)}</td><td>${adjustedThreshold.toFixed(3)}</td></tr>`;
         });
-        calibrationPlanImpactEl.textContent = impactLines.join("\n");
+        calibrationThresholdsEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Base</th><th>Calibrated</th><th>Adjusted</th></tr></thead><tbody>${thresholdRows.join('')}</tbody></table>`;
+
+        const impactRows = axes.map((axis) => {
+          const adjustedFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
+          const threshold = clamp01(Number(calibrated[axis] || base[axis] || 0) * adjustedFactor);
+          const score = axisSampleScore(entry, axis);
+          const pressure = threshold > 0 ? score / threshold : 0;
+          const status = pressure >= 1 ? '⚠ near/over threshold' : '✅ below threshold';
+          return `<tr><td>${axis}</td><td>${score.toFixed(3)}</td><td>${threshold.toFixed(3)}</td><td>${pressure.toFixed(2)}x</td><td>${status}</td></tr>`;
+        });
+        calibrationPlanImpactEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Sample score</th><th>Adjusted threshold</th><th>Pressure</th><th>Status</th></tr></thead><tbody>${impactRows.join('')}</tbody></table><p class="muted">Sample score is driven by latest evaluation aggregate when available, otherwise p50 telemetry.</p>`;
+
         renderCalibrationControls(entry);
       }
+
+      async function loadCasesAnalyticsDashboard() { const dashboard = await fetch('/cases/analytics').then((r) => r.json()); casesAnalyticsDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
+
       async function validateCaseDraft() {
         setDatasetWizardStep("validate", "running", "running");
         const payload = { case: JSON.parse(caseDraftEl.value) };
@@ -1699,7 +1729,7 @@ ${body}`;
         telemetryEl.textContent = `Error: ${err.message}`;
       }));
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
-        calibrationDashboardEl.textContent = `Error: ${err.message}`;
+        calibrationRawEl.textContent = `Error: ${err.message}`;
       }));
       el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => {
         casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`;
@@ -1773,7 +1803,7 @@ ${body}`;
       el("run").addEventListener("click", () => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }));
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
-      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Error: ${err.message}`; }));
+      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationRawEl.textContent = `Error: ${err.message}`; }));
       el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`; }));
       el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; }));
       el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
@@ -1835,7 +1865,7 @@ ${body}`;
         pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
       });
       loadCalibrationDashboard().catch((err) => {
-        calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
+        calibrationRawEl.textContent = `Calibration load error: ${err.message}`;
       });
       loadCasesAnalyticsDashboard().catch((err) => {
         casesAnalyticsDashboardEl.textContent = `Analytics load error: ${err.message}`;
@@ -1846,7 +1876,7 @@ ${body}`;
       renderSessionBuilder();
       renderSessionBuilder();
       loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
-      loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });
+      loadCalibrationDashboard().catch((err) => { calibrationRawEl.textContent = `Calibration load error: ${err.message}`; });
       loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsDashboardEl.textContent = `Analytics load error: ${err.message}`; });
       runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; });
       runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
@@ -1855,6 +1885,7 @@ ${body}`;
     }
       loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
       loadPolicyWorkbenchState().catch((err) => { policyWorkbenchStateEl.textContent = `Policy state load error: ${err.message}`; });
+    }
     </script>
   </body>
 </html>
