@@ -239,6 +239,79 @@ class EvaluateSessionRequest(BaseModel):
     )
 
 
+class StreamingPlanEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str = Field(..., min_length=1)
+    operation: str = Field(..., pattern=r"^(add_step|update_step|remove_step|replace_plan)$")
+    step_id: Optional[str] = None
+    step: Optional[Dict[str, Any]] = None
+    index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Optional insertion index used with add_step; appends when omitted.",
+    )
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional context payload stored in the snapshot for consumers.",
+    )
+
+
+class EvaluateStreamRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contract: Dict[str, Any] = Field(..., description="TaskContract as dict")
+    plan: Dict[str, Any] = Field(..., description="Initial PlanDAG as dict")
+    events: List[StreamingPlanEvent] = Field(
+        default_factory=list,
+        description="Ordered stream of plan evolution events.",
+    )
+    include_steps: bool = Field(False, description="Include step-level vectors for each snapshot.")
+    policy_backend: Optional[str] = Field(
+        None, description="Policy backend override: python|opa|cedar."
+    )
+    judge: str = Field(
+        "heuristic",
+        pattern=r"^(heuristic|llm)$",
+        description="Step judge mode used for each streaming re-evaluation.",
+    )
+
+
+class TriggeredReevaluation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str
+    axis: Optional[str] = None
+    previous: Optional[float] = None
+    current: Optional[float] = None
+    threshold: Optional[float] = None
+    details: Optional[str] = None
+
+
+class StreamStepDelta(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_id: str
+    changed_axes: List[str]
+
+
+class StreamingEvaluationSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str
+    event_index: int
+    operation: str
+    decision: str
+    aggregate: Dict[str, float]
+    exceeded: Dict[str, Dict[str, float]]
+    asked: Dict[str, float]
+    triggers: List[TriggeredReevaluation]
+    judge_output_deltas: List[StreamStepDelta]
+    context: Dict[str, Any] = Field(default_factory=dict)
+    steps: Optional[List[StepDetail]] = None
+
+
+class EvaluateStreamResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    initial: StreamingEvaluationSnapshot
+    updates: List[StreamingEvaluationSnapshot]
+
+
 class SessionAggregateDetail(BaseModel):
     aggregate: Dict[str, float]
     ledger: Dict[str, Dict[str, float]]
@@ -349,6 +422,213 @@ class EvaluateSessionResponse(BaseModel):
     negotiation: SessionNegotiation
 
     model_config = {"populate_by_name": True}
+
+
+
+
+def _step_detail_payload(vectors, plan: PlanDAG) -> List[StepDetail]:
+    plan_steps_by_id = {step.id: step for step in plan.steps}
+    details: List[StepDetail] = []
+    for vec in vectors:
+        axes = {
+            "spatial": AxisDetail(**vec.spatial.model_dump()),
+            "temporal": AxisDetail(**vec.temporal.model_dump()),
+            "depth": AxisDetail(**vec.depth.model_dump()),
+            "irreversibility": AxisDetail(**vec.irreversibility.model_dump()),
+            "resource_intensity": AxisDetail(**vec.resource_intensity.model_dump()),
+            "legal_exposure": AxisDetail(**vec.legal_exposure.model_dump()),
+            "dependency_creation": AxisDetail(**vec.dependency_creation.model_dump()),
+            "stakeholder_radius": AxisDetail(**vec.stakeholder_radius.model_dump()),
+            "power_concentration": AxisDetail(**vec.power_concentration.model_dump()),
+            "uncertainty": AxisDetail(**vec.uncertainty.model_dump()),
+        }
+        plan_step = plan_steps_by_id.get(vec.step_id or "")
+        details.append(
+            StepDetail(
+                step_id=vec.step_id,
+                tool=vec.tool,
+                tool_category=vec.tool_category,
+                est_cost_usd=plan_step.est_cost_usd if plan_step else None,
+                est_time_days=plan_step.est_time_days if plan_step else None,
+                est_labor_hours=plan_step.est_labor_hours if plan_step else None,
+                resolved_cost_usd=plan_step.resolved_cost_usd() if plan_step else None,
+                resolved_time_days=plan_step.resolved_time_days() if plan_step else None,
+                resolved_labor_hours=plan_step.resolved_labor_hours() if plan_step else None,
+                realtime_estimates=list(plan_step.realtime_estimates) if plan_step else [],
+                est_benefit=plan_step.est_benefit if plan_step else None,
+                benefit_unit=plan_step.benefit_unit if plan_step else None,
+                axes=axes,
+            )
+        )
+    return details
+
+
+def _vector_axes_by_step(vectors: List[Any]) -> Dict[str, Dict[str, float]]:
+    payload: Dict[str, Dict[str, float]] = {}
+    for vector in vectors:
+        if not vector.step_id:
+            continue
+        payload[vector.step_id] = vector.as_dict
+    return payload
+
+
+def _judge_output_deltas(
+    previous_vectors: Optional[List[Any]],
+    current_vectors: List[Any],
+) -> List[StreamStepDelta]:
+    if previous_vectors is None:
+        return []
+    previous = _vector_axes_by_step(previous_vectors)
+    current = _vector_axes_by_step(current_vectors)
+    deltas: List[StreamStepDelta] = []
+    for step_id, current_axes in current.items():
+        previous_axes = previous.get(step_id)
+        if previous_axes is None:
+            continue
+        changed_axes = [
+            axis
+            for axis, value in current_axes.items()
+            if abs(float(value) - float(previous_axes.get(axis, 0.0))) > 1e-6
+        ]
+        if changed_axes:
+            deltas.append(StreamStepDelta(step_id=step_id, changed_axes=sorted(changed_axes)))
+    return sorted(deltas, key=lambda item: item.step_id)
+
+
+def _threshold_value(contract: TaskContract, axis: str) -> Optional[float]:
+    field = f"max_{axis}"
+    if hasattr(contract.thresholds, field):
+        return float(getattr(contract.thresholds, field))
+    return None
+
+
+def _triggered_reevaluations(
+    contract: TaskContract,
+    previous_aggregate: Optional[Dict[str, float]],
+    current_aggregate: Dict[str, float],
+    judge_deltas: List[StreamStepDelta],
+) -> List[TriggeredReevaluation]:
+    triggers: List[TriggeredReevaluation] = []
+    if previous_aggregate is not None:
+        for axis in SCOPE_AXES:
+            threshold = _threshold_value(contract, axis)
+            if threshold is None:
+                continue
+            previous = float(previous_aggregate.get(axis, 0.0))
+            current = float(current_aggregate.get(axis, 0.0))
+            if previous < threshold <= current:
+                triggers.append(
+                    TriggeredReevaluation(
+                        kind="threshold_crossed",
+                        axis=axis,
+                        previous=previous,
+                        current=current,
+                        threshold=threshold,
+                    )
+                )
+    if judge_deltas:
+        changed_steps = ", ".join(delta.step_id for delta in judge_deltas)
+        triggers.append(
+            TriggeredReevaluation(
+                kind="judge_output_changed",
+                details=f"LLM/heuristic judge outputs changed for step(s): {changed_steps}",
+            )
+        )
+    return triggers
+
+
+def _apply_streaming_event(plan_data: Dict[str, Any], event: StreamingPlanEvent) -> Dict[str, Any]:
+    updated = dict(plan_data)
+    steps = list(updated.get("steps", []))
+    operation = event.operation
+
+    if operation == "replace_plan":
+        if not isinstance(event.step, dict):
+            raise HTTPException(status_code=400, detail="replace_plan requires 'step' with full plan payload")
+        replacement = dict(event.step)
+        if "task" not in replacement or "steps" not in replacement:
+            raise HTTPException(status_code=400, detail="replace_plan payload must include task and steps")
+        return replacement
+
+    if not event.step_id:
+        raise HTTPException(status_code=400, detail=f"{operation} requires step_id")
+
+    index_by_id = {str(step.get("id")): idx for idx, step in enumerate(steps)}
+
+    if operation == "add_step":
+        if not isinstance(event.step, dict):
+            raise HTTPException(status_code=400, detail="add_step requires step payload")
+        if str(event.step.get("id")) != event.step_id:
+            raise HTTPException(status_code=400, detail="add_step step.id must match step_id")
+        if event.step_id in index_by_id:
+            raise HTTPException(status_code=400, detail=f"step '{event.step_id}' already exists")
+        insertion = len(steps) if event.index is None else min(event.index, len(steps))
+        steps.insert(insertion, event.step)
+    elif operation == "update_step":
+        if event.step_id not in index_by_id:
+            raise HTTPException(status_code=400, detail=f"step '{event.step_id}' not found")
+        if not isinstance(event.step, dict):
+            raise HTTPException(status_code=400, detail="update_step requires step payload")
+        existing = dict(steps[index_by_id[event.step_id]])
+        existing.update(event.step)
+        existing["id"] = event.step_id
+        steps[index_by_id[event.step_id]] = existing
+    elif operation == "remove_step":
+        if event.step_id not in index_by_id:
+            raise HTTPException(status_code=400, detail=f"step '{event.step_id}' not found")
+        removed_idx = index_by_id[event.step_id]
+        steps.pop(removed_idx)
+        for idx, step in enumerate(steps):
+            deps = [dep for dep in step.get("depends_on", []) if dep != event.step_id]
+            if deps != step.get("depends_on", []):
+                refreshed = dict(step)
+                refreshed["depends_on"] = deps
+                steps[idx] = refreshed
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported operation '{operation}'")
+
+    updated["steps"] = steps
+    return updated
+
+
+def _snapshot_from_result(
+    *,
+    contract: TaskContract,
+    event_id: str,
+    event_index: int,
+    operation: str,
+    context: Dict[str, Any],
+    result,
+    judge_deltas: List[StreamStepDelta],
+    previous_aggregate: Optional[Dict[str, float]],
+    include_steps: bool,
+) -> StreamingEvaluationSnapshot:
+    exceeded_payload = {
+        key: {"value": float(values[0]), "threshold": float(values[1])}
+        for key, values in result.policy.exceeded.items()
+    }
+    asked_payload = {key: float(value) for key, value in result.policy.asked.items()}
+    aggregate_payload = result.aggregate.as_dict()
+    triggers = _triggered_reevaluations(
+        contract,
+        previous_aggregate=previous_aggregate,
+        current_aggregate=aggregate_payload,
+        judge_deltas=judge_deltas,
+    )
+    steps_payload = _step_detail_payload(result.vectors, result.plan) if include_steps else None
+    return StreamingEvaluationSnapshot(
+        event_id=event_id,
+        event_index=event_index,
+        operation=operation,
+        decision=result.policy.decision.value,
+        aggregate=aggregate_payload,
+        exceeded=exceeded_payload,
+        asked=asked_payload,
+        triggers=triggers,
+        judge_output_deltas=judge_deltas,
+        context=context,
+        steps=steps_payload,
+    )
 
 
 def _budget_consumption_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
@@ -1251,6 +1531,54 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             telemetry=telemetry,
             policy_input=policy_input_payload,
         )
+
+    @app.post("/evaluate_stream", response_model=EvaluateStreamResponse)
+    def evaluate_stream_endpoint(req: EvaluateStreamRequest):
+        contract = TaskContract.model_validate(req.contract)
+        backend = req.policy_backend or default_policy_backend
+
+        plan_data: Dict[str, Any] = dict(req.plan)
+        previous_vectors = None
+        previous_aggregate = None
+
+        initial_plan = PlanDAG.model_validate(plan_data)
+        initial_result = evaluate(contract, initial_plan, policy_backend=backend, judge=req.judge)
+        initial_snapshot = _snapshot_from_result(
+            contract=contract,
+            event_id="initial",
+            event_index=0,
+            operation="initial",
+            context={},
+            result=initial_result,
+            judge_deltas=[],
+            previous_aggregate=None,
+            include_steps=req.include_steps,
+        )
+        previous_vectors = initial_result.vectors
+        previous_aggregate = initial_result.aggregate.as_dict()
+
+        updates: List[StreamingEvaluationSnapshot] = []
+        for index, event in enumerate(req.events, start=1):
+            plan_data = _apply_streaming_event(plan_data, event)
+            plan_model = PlanDAG.model_validate(plan_data)
+            result = evaluate(contract, plan_model, policy_backend=backend, judge=req.judge)
+            judge_deltas = _judge_output_deltas(previous_vectors, result.vectors)
+            snapshot = _snapshot_from_result(
+                contract=contract,
+                event_id=event.event_id,
+                event_index=index,
+                operation=event.operation,
+                context=dict(event.context),
+                result=result,
+                judge_deltas=judge_deltas,
+                previous_aggregate=previous_aggregate,
+                include_steps=req.include_steps,
+            )
+            updates.append(snapshot)
+            previous_vectors = result.vectors
+            previous_aggregate = result.aggregate.as_dict()
+
+        return EvaluateStreamResponse(initial=initial_snapshot, updates=updates)
 
     @app.post("/evaluate_session", response_model=EvaluateSessionResponse)
     def evaluate_session_endpoint(req: EvaluateSessionRequest):
