@@ -18,6 +18,7 @@ Instead of only asking *"is this intent safe?"*, ScopeBench asks *"is this plan 
 - [Features](#features)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
+- [Interactive tutorials](#interactive-tutorials)
 - [CLI Reference](#cli-reference)
 - [API Usage](#api-usage)
 - [Examples Included](#examples-included)
@@ -109,6 +110,13 @@ scopebench run examples/phone_charge.contract.yaml examples/phone_charge.plan.ya
 scopebench quickstart
 scopebench coding-quickstart
 ```
+
+### Interactive tutorials
+
+For hands-on onboarding, use the guided walkthroughs:
+
+- Web-style walkthrough (step-by-step CLI + API): `docs/tutorials/interactive_quickstart_walkthrough.md`
+- Jupyter notebook tutorial: `docs/notebooks/scopebench_quickstart_tutorial.ipynb`
 
 ### 3) Start the API server
 
