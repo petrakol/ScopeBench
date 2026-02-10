@@ -979,16 +979,6 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderWizardSteps(plan);
       }
 
-      function scheduleAutoEvaluate() {
-        if (!autoRunEl.checked) return;
-        if (autoTimer) clearTimeout(autoTimer);
-        autoTimer = setTimeout(() => runEvaluation().catch((err) => {
-          resultEl.textContent = `Error: ${err.message}`;
-        }), 300);
-      }
-
-      async function loadCatalog() {
-        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
       function renderCaseExplorer() {
         const query = (caseSearchEl.value || "").trim().toLowerCase();
         const domain = caseDomainFilterEl.value || "all";
@@ -1027,13 +1017,28 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
 
         const selected = filtered.find((item) => item.id === selectedCaseId) || filtered[0];
-        caseDetailEl.textContent = JSON.stringify(selected, null, 2);
+        caseDetailEl.textContent = [
+          `Case: ${selected.id}`,
+          `Domain: ${selected.domain}`,
+          `Expected decision: ${selected.expected_decision}`,
+          "",
+          "Instruction",
+          selected.instruction || "",
+          "",
+          "Expected rationale",
+          selected.expected_rationale || "",
+          "",
+          "Contract",
+          JSON.stringify(selected.contract || {}, null, 2),
+          "",
+          "Plan",
+          JSON.stringify(selected.plan || {}, null, 2),
+          "",
+          "Expected step vectors",
+          JSON.stringify(selected.expected_step_vectors || [], null, 2)
+        ].join("\n");
       }
 
-      function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
-
-      async function loadCatalog() {
-        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
       async function loadCatalog() {
         const [templates, tools, cases] = await Promise.all([
           fetch("/templates").then((r) => r.json()),
@@ -1059,7 +1064,11 @@ Require rollback plan before high-irreversibility actions.</textarea>
         generateWizardDraft();
 
         knownTools = (tools.tools || []).map((item) => item.tool).filter(Boolean).sort();
-        allCases = cases.cases || [];
+        allCases = (cases.cases || []).slice().sort((a, b) => {
+          const domainCmp = String(a.domain || "").localeCompare(String(b.domain || ""));
+          if (domainCmp !== 0) return domainCmp;
+          return String(a.id || "").localeCompare(String(b.id || ""));
+        });
         caseDomainFilterEl.innerHTML = ['<option value="all">All domains</option>', ...(cases.domains || []).map((d) => `<option value="${d}">${d}</option>`)].join("");
         caseDecisionFilterEl.innerHTML = ['<option value="all">All decisions</option>', '<option value="ALLOW">ALLOW</option>', '<option value="ASK">ASK</option>', '<option value="DENY">DENY</option>'].join("");
         renderCaseExplorer();
