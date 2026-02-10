@@ -162,6 +162,7 @@ curl -s http://localhost:8080/evaluate \
 scopebench run <contract.yaml> <plan.yaml> [--json] [--compact-json] [--otel-console] [--calibration-scale <float>]
 scopebench quickstart [--json] [--compact-json] [--otel-console]
 scopebench coding-quickstart [--json] [--compact-json] [--otel-console]
+scopebench suggest-effects <plan.yaml> [--json] [--in-place]
 scopebench weekly-calibrate <telemetry.jsonl> [--json]
 scopebench continuous-learn <telemetry.jsonl> --benchmark scopebench/bench/cases/redteam.jsonl --report-out continuous_learning_report.md [--apply-updates]
 python -m scopebench.redteam.generate --count 120 --seed 7 --output scopebench/bench/cases/redteam.jsonl
