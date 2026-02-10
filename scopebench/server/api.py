@@ -8,11 +8,10 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
 from pydantic import BaseModel, ConfigDict, Field
 
 from scopebench.contracts import TaskContract
-from scopebench.plan import PlanDAG
+from scopebench.plan import PlanDAG, RealtimeEstimate
 from scopebench.runtime.guard import evaluate
 from scopebench.scoring.axes import SCOPE_AXES, combine_aggregates
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
@@ -106,6 +105,11 @@ class StepDetail(BaseModel):
     tool_category: Optional[str]
     est_cost_usd: Optional[float] = None
     est_time_days: Optional[float] = None
+    est_labor_hours: Optional[float] = None
+    resolved_cost_usd: Optional[float] = None
+    resolved_time_days: Optional[float] = None
+    resolved_labor_hours: Optional[float] = None
+    realtime_estimates: List[RealtimeEstimate] = Field(default_factory=list)
     est_benefit: Optional[float] = None
     benefit_unit: Optional[str] = None
     axes: Dict[str, AxisDetail]
@@ -240,6 +244,8 @@ class SessionDashboardEntry(BaseModel):
     aggregate: Dict[str, float]
     budget_consumption: Dict[str, float]
     budget_utilization: Dict[str, float]
+    budget_projection: Dict[str, float]
+    budget_projection_utilization: Dict[str, float]
     decision: str
 
 
@@ -274,6 +280,23 @@ def _budget_utilization_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict
         utilization[key] = 0.0 if budget <= 0.0 else consumed / budget
     return utilization
 
+
+
+
+def _budget_projection_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    projection: Dict[str, float] = {}
+    for key, values in ledger.items():
+        projection[key] = float(values.get("projected", values.get("consumed", 0.0)))
+    return projection
+
+
+def _budget_projection_utilization_from_ledger(ledger: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    utilization: Dict[str, float] = {}
+    for key, values in ledger.items():
+        budget = float(values.get("budget", 0.0))
+        projected = float(values.get("projected", values.get("consumed", 0.0)))
+        utilization[key] = 0.0 if budget <= 0.0 else projected / budget
+    return utilization
 
 def _aggregate_session_risk(per_agent_aggregates: Dict[str, Dict[str, float]]) -> Dict[str, float]:
     aggregated: Dict[str, float] = {}
@@ -343,7 +366,7 @@ def _next_steps_from_policy(policy) -> List[str]:
         suggestions.append("Remove high-risk tool categories or get explicit approval.")
 
     knee_recommendations = []
-    if policy.policy_input is not None:
+    if getattr(policy, "policy_input", None) is not None:
         knee_recommendations = (
             policy.policy_input.metadata.get("knee_plan_patch_recommendations", [])
             if isinstance(policy.policy_input.metadata, dict)
@@ -363,7 +386,7 @@ def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
     patches: List[Dict[str, Any]] = []
 
     knee_recommendations = []
-    if policy.policy_input is not None and isinstance(policy.policy_input.metadata, dict):
+    if getattr(policy, "policy_input", None) is not None and isinstance(policy.policy_input.metadata, dict):
         knee_recommendations = policy.policy_input.metadata.get("knee_plan_patch_recommendations", [])
     for recommendation in knee_recommendations:
         if isinstance(recommendation, dict):
@@ -807,6 +830,11 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                         tool_category=vec.tool_category,
                         est_cost_usd=plan_step.est_cost_usd if plan_step else None,
                         est_time_days=plan_step.est_time_days if plan_step else None,
+                        est_labor_hours=plan_step.est_labor_hours if plan_step else None,
+                        resolved_cost_usd=plan_step.resolved_cost_usd() if plan_step else None,
+                        resolved_time_days=plan_step.resolved_time_days() if plan_step else None,
+                        resolved_labor_hours=plan_step.resolved_labor_hours() if plan_step else None,
+                        realtime_estimates=list(plan_step.realtime_estimates) if plan_step else [],
                         est_benefit=plan_step.est_benefit if plan_step else None,
                         benefit_unit=plan_step.benefit_unit if plan_step else None,
                         axes=axes,
@@ -920,6 +948,8 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 aggregate=aggregate_dict,
                 budget_consumption=_budget_consumption_from_ledger(agent_ledger),
                 budget_utilization=_budget_utilization_from_ledger(agent_ledger),
+                budget_projection=_budget_projection_from_ledger(agent_ledger),
+                budget_projection_utilization=_budget_projection_utilization_from_ledger(agent_ledger),
                 decision=agent_decision,
             )
             agent_aggregates.append(agent_aggregate)
@@ -956,6 +986,8 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 aggregate=global_aggregate_dict,
                 budget_consumption=_budget_consumption_from_ledger(global_ledger),
                 budget_utilization=_budget_utilization_from_ledger(global_ledger),
+                budget_projection=_budget_projection_from_ledger(global_ledger),
+                budget_projection_utilization=_budget_projection_utilization_from_ledger(global_ledger),
                 decision=global_decision,
             ),
         )
