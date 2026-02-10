@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
+import yaml
 
 from scopebench.contracts import TaskContract
-from scopebench.plan import PlanDAG, RealtimeEstimate, plan_from_dict
+from scopebench.plan import EffectSpec, PlanDAG, RealtimeEstimate, plan_from_dict
 from scopebench.contracts import Preset, TaskContract
 from scopebench.plan import PlanDAG, RealtimeEstimate
 from scopebench.runtime.guard import evaluate
@@ -2357,14 +2360,56 @@ def create_app(
     @app.post("/suggest_effects", response_model=SuggestEffectsResponse)
     def suggest_effects_endpoint(req: SuggestEffectsRequest):
         plan = PlanDAG.model_validate(req.plan)
-        suggestions = suggest_effects_for_plan(plan)
+        suggestions: List[SuggestEffectsItem] = []
+
+        with TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            plan_path = tmp_dir / "plan.yaml"
+            plan_path.write_text(
+                yaml.safe_dump(plan.model_dump(mode="json", exclude_none=True), sort_keys=False),
+                encoding="utf-8",
+            )
+            cmd = [
+                "python",
+                "-m",
+                "scopebench.cli",
+                "suggest-effects",
+                str(plan_path),
+                "--json",
+            ]
+            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if completed.returncode == 0:
+                try:
+                    payload = json.loads(completed.stdout)
+                    for item in payload.get("steps", []):
+                        if isinstance(item, dict) and item.get("id"):
+                            suggestions.append(
+                                SuggestEffectsItem(
+                                    step_id=str(item.get("id")),
+                                    tool=item.get("tool"),
+                                    effects=item.get("effects") or {},
+                                )
+                            )
+                except json.JSONDecodeError:
+                    suggestions = []
+
+            if not suggestions:
+                # Fall back to in-process annotation when CLI invocation is unavailable.
+                for item in suggest_effects_for_plan(plan):
+                    suggestions.append(
+                        SuggestEffectsItem(
+                            step_id=item.step_id,
+                            tool=item.tool,
+                            effects=item.effects.model_dump(mode="json", exclude_none=True),
+                        )
+                    )
 
         step_lookup = {step.id: step for step in plan.steps}
         suggestion_payload: List[SuggestEffectsItem] = []
         for suggestion in suggestions:
-            effects_payload = suggestion.effects.model_dump(mode="json", exclude_none=True)
+            effects_payload = suggestion.effects
             if suggestion.step_id in step_lookup:
-                step_lookup[suggestion.step_id].effects = suggestion.effects
+                step_lookup[suggestion.step_id].effects = EffectSpec.model_validate(effects_payload)
             suggestion_payload.append(
                 SuggestEffectsItem(
                     step_id=suggestion.step_id,

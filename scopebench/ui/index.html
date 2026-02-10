@@ -102,6 +102,38 @@
       .case-item:last-child { border-bottom: none; }
       .case-item.active { background: #eff6ff; }
       .case-item:hover { background: #f8fafc; }
+      .bar-chart { display: grid; gap: 8px; }
+      .bar-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 72px; gap: 8px; align-items: center; }
+      .bar-track { height: 12px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+      .bar-fill { display: block; height: 100%; background: linear-gradient(90deg, #60a5fa, #2563eb); }
+      .rate-grid { display: grid; gap: 8px; }
+      .rate-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }
+      .threshold-table td, .threshold-table th { font-size: 12px; }
+      .dataset-wizard-steps {
+        display: grid;
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .dataset-wizard-step {
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        gap: 8px;
+        align-items: center;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .status-chip {
+        border-radius: 999px;
+        font-size: 12px;
+        padding: 2px 8px;
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        color: #334155;
+      }
+      .status-chip.done { background: #dcfce7; color: #166534; border-color: #86efac; }
+      .status-chip.running { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+      .status-chip.error { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
       @media (max-width: 900px) {
         .two-col { grid-template-columns: 1fr; }
       }
@@ -117,6 +149,13 @@
       .meter { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 4px; }
       .meter > span { display: block; height: 100%; background: #2563eb; }
       .signal-chip { display: inline-block; margin-right: 6px; margin-bottom: 6px; padding: 3px 8px; border-radius: 999px; font-size: 12px; background: #fee2e2; color: #991b1b; }
+      .chart-block { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-top: 8px; }
+      .chart-title { font-weight: 600; margin-bottom: 6px; }
+      .bar-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) 64px; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+      .bar-track { height: 10px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
+      .bar-fill { height: 100%; border-radius: 999px; }
+      .bar-fill.budget { background: #2563eb; }
+      .bar-fill.risk { background: #dc2626; }
       th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
       @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid { grid-template-columns: 1fr; } }
     </style>
@@ -374,6 +413,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody id="session-global-table"></tbody></table>
           <h4 style="margin-top:12px">Laundering signals</h4>
           <table><thead><tr><th>Axis</th><th>Global</th><th>Max agent</th><th>Delta</th><th>Ask threshold</th></tr></thead><tbody id="session-laundering-table"></tbody></table>
+          <div class="chart-block">
+            <div class="chart-title">Risk profile (global vs max agent)</div>
+            <div id="session-risk-chart"></div>
+          </div>
         </div>
       </section>
 
@@ -399,12 +442,16 @@ Require rollback plan before high-irreversibility actions.</textarea>
         </section>
         <h3>Budget consumption ledger</h3>
         <p class="muted">Tracks consumed budget vs limits for each agent and globally, plus laundering pressure chips.</p>
+        <div class="chart-block">
+          <div class="chart-title">Budget consumption (agent vs global)</div>
+          <div id="session-budget-chart"></div>
+        </div>
         <div id="session-ledger" class="ledger-grid"></div>
       </section>
 
       <section class="card" style="margin-top: 16px">
         <h3>Dataset Contribution Draft</h3>
-        <p class="muted">Draft a new benchmark case, auto-suggest vectors, validate schema/calibration, then generate a JSONL contribution or PR-ready message.</p>
+        <p class="muted">Wizard flow: draft a case, auto-fill vectors via <code>/dataset/suggest</code>, validate with <code>/dataset/validate</code>, then export a ready-to-submit JSONL contribution.</p>
         <div class="field-grid">
           <label>Case ID<input id="dataset-case-id" type="text" value="community_case_001" /></label>
           <label>Domain<input id="dataset-domain" type="text" value="engineering" /></label>
@@ -418,7 +465,14 @@ Require rollback plan before high-irreversibility actions.</textarea>
         </div>
         <label>Instruction<input id="dataset-instruction" type="text" value="Fix flaky CI test" /></label>
         <label>Expected rationale<input id="dataset-expected-rationale" type="text" value="Scoped to local test stabilization with validation." /></label>
+        <div class="dataset-wizard-steps" id="dataset-wizard-steps">
+          <div class="dataset-wizard-step"><strong>1</strong><span>Build draft from contract + plan</span><span class="status-chip" id="dataset-step-build">pending</span></div>
+          <div class="dataset-wizard-step"><strong>2</strong><span>Auto-fill vectors from <code>/dataset/suggest</code></span><span class="status-chip" id="dataset-step-suggest">pending</span></div>
+          <div class="dataset-wizard-step"><strong>3</strong><span>Validate schema with <code>/dataset/validate</code></span><span class="status-chip" id="dataset-step-validate">pending</span></div>
+          <div class="dataset-wizard-step"><strong>4</strong><span>Generate ready-to-submit JSONL contribution</span><span class="status-chip" id="dataset-step-generate">pending</span></div>
+        </div>
         <div class="controls" style="margin: 10px 0">
+          <button id="dataset-run-wizard">Run full wizard</button>
           <button id="dataset-build" class="secondary">Build draft from contract+plan</button>
           <button id="dataset-validate-panel" class="secondary">Validate draft</button>
           <button id="dataset-suggest-panel" class="secondary">Auto-suggest vectors</button>
@@ -426,6 +480,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <button id="dataset-generate-pr" class="secondary">Generate PR text</button>
         </div>
         <textarea id="case-draft" style="min-height: 220px"></textarea>
+        <h4 style="margin: 8px 0 6px">Contribution file preview</h4>
+        <textarea id="dataset-contribution-file" style="min-height: 100px" readonly></textarea>
         <pre id="dataset-output"></pre>
       </section>
 
@@ -434,7 +490,6 @@ Require rollback plan before high-irreversibility actions.</textarea>
         <div class="card"><h3>Telemetry Replay</h3><pre id="telemetry"></pre></div>
       </section>
       <section class="grid" style="margin-top: 16px">
-        <div class="card"><h3>Calibration Dashboard</h3><pre id="calibration-dashboard"></pre></div>
         <div class="card"><h3>Cross-case Analytics Dashboard</h3><pre id="cases-analytics-dashboard"></pre></div>
         <div class="card">
           <h3>Calibration Dashboard</h3>
@@ -452,15 +507,15 @@ Require rollback plan before high-irreversibility actions.</textarea>
           </div>
           <div class="grid two-col" id="calibration-controls"></div>
           <div class="grid two-col" style="margin-top:10px">
-            <div><h4>Per-axis score distributions</h4><pre id="calibration-distributions"></pre></div>
-            <div><h4>False-alarm vs override rates</h4><pre id="calibration-rates"></pre></div>
+            <div><h4>Per-axis score distributions</h4><div id="calibration-distributions"></div></div>
+            <div><h4>False-alarm vs override rates</h4><div id="calibration-rates"></div></div>
           </div>
           <div class="grid two-col" style="margin-top:10px">
-            <div><h4>Preset thresholds</h4><pre id="calibration-thresholds"></pre></div>
-            <div><h4>Sample plan threshold pressure</h4><pre id="calibration-plan-impact"></pre></div>
+            <div><h4>Preset thresholds</h4><div id="calibration-thresholds"></div></div>
+            <div><h4>Sample plan threshold pressure</h4><div id="calibration-plan-impact"></div></div>
           </div>
           <h4 style="margin-top:10px">Raw payload</h4>
-          <pre id="calibration-dashboard"></pre>
+          <pre id="calibration-raw"></pre>
         </div>
       </section>
     </main>
@@ -495,7 +550,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const whatIfEditorsEl = el("whatif-editors");
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
-      const calibrationDashboardEl = el("calibration-dashboard");
+      const calibrationRawEl = el("calibration-raw");
       const casesAnalyticsDashboardEl = el("cases-analytics-dashboard");
       const calibrationDomainEl = el("calibration-domain");
       const calibrationControlsEl = el("calibration-controls");
@@ -553,6 +608,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const datasetInstructionEl = el("dataset-instruction");
       const datasetExpectedDecisionEl = el("dataset-expected-decision");
       const datasetExpectedRationaleEl = el("dataset-expected-rationale");
+      const datasetContributionFileEl = el("dataset-contribution-file");
+      const datasetStepEls = {
+        build: el("dataset-step-build"),
+        suggest: el("dataset-step-suggest"),
+        validate: el("dataset-step-validate"),
+        generate: el("dataset-step-generate"),
+      };
       const suggestEffectsEl = el("suggest-effects");
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
@@ -570,6 +632,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const sessionGlobalTableEl = el("session-global-table");
       const sessionLaunderingTableEl = el("session-laundering-table");
       const sessionLedgerEl = el("session-ledger");
+      const sessionBudgetChartEl = el("session-budget-chart");
+      const sessionRiskChartEl = el("session-risk-chart");
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
@@ -612,6 +676,26 @@ Require rollback plan before high-irreversibility actions.</textarea>
         ]
       }, null, 2);
       syncDatasetFieldsFromDraft(JSON.parse(caseDraftEl.value));
+      datasetContributionFileEl.value = "";
+
+      function setDatasetWizardStep(step, status, text) {
+        const node = datasetStepEls[step];
+        if (!node) return;
+        node.classList.remove("done", "running", "error");
+        if (status === "done") node.classList.add("done");
+        if (status === "running") node.classList.add("running");
+        if (status === "error") node.classList.add("error");
+        node.textContent = text || status;
+      }
+
+      function resetDatasetWizardSteps() {
+        setDatasetWizardStep("build", "pending", "pending");
+        setDatasetWizardStep("suggest", "pending", "pending");
+        setDatasetWizardStep("validate", "pending", "pending");
+        setDatasetWizardStep("generate", "pending", "pending");
+      }
+
+      resetDatasetWizardSteps();
 
       function decisionBadge(decision) { const n = String(decision || "").toLowerCase(); const cls = n === "allow" ? "allow" : n === "ask" ? "ask" : "deny"; return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`; }
       function toMagnitude(v) { return MAGNITUDE[Math.max(0, Math.min(MAGNITUDE.length - 1, Math.round(Number(v || 0) * 4)))]; }
@@ -767,6 +851,17 @@ Require rollback plan before high-irreversibility actions.</textarea>
         step.effects = step.effects || {}; step.effects[effectKey] = toMagnitude(sliderValue); planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate();
       }
 
+      function applySuggestedEffects(plan, suggestions = []) {
+        const nextPlan = JSON.parse(JSON.stringify(plan || { task: "", steps: [] }));
+        const stepById = Object.fromEntries((nextPlan.steps || []).map((step) => [String(step.id), step]));
+        (suggestions || []).forEach((item) => {
+          const stepId = String(item?.step_id || "");
+          if (!stepId || !stepById[stepId]) return;
+          stepById[stepId].effects = item.effects || {};
+        });
+        return nextPlan;
+      }
+
       async function suggestEffectsForPlan() {
         const plan = JSON.parse(planEl.value);
         const res = await fetch("/suggest_effects", {
@@ -776,9 +871,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        planEl.value = JSON.stringify(data.plan, null, 2);
-        renderDag(data.plan);
-        renderWhatIfEditors(data.plan);
+        const updatedPlan = applySuggestedEffects(data.plan || plan, data.suggestions || []);
+        planEl.value = JSON.stringify(updatedPlan, null, 2);
+        renderDag(updatedPlan);
+        renderWhatIfEditors(updatedPlan);
         scheduleAutoEvaluate();
       }
 
@@ -878,6 +974,39 @@ Require rollback plan before high-irreversibility actions.</textarea>
         return `<div><div class="inline-label"><span>${label}</span><strong>${safeUsed.toFixed(1)} / ${safeLimit.toFixed(1)}</strong></div><div class="meter"><span style="width:${Math.min(100, Math.max(0, ratio * 100))}%"></span></div><div class="muted">${percent}% consumed</div></div>`;
       }
 
+      function renderBudgetBars(container, entries = []) {
+        if (!container) return;
+        container.innerHTML = "";
+        if (!entries.length) {
+          container.innerHTML = '<div class="muted">Run /evaluate_session to see budget consumption trends.</div>';
+          return;
+        }
+        entries.forEach((entry) => {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          const bounded = Math.max(0, Math.min(100, Number(entry.percent || 0)));
+          row.innerHTML = `<div>${entry.label}</div><div class="bar-track"><div class="bar-fill budget" style="width:${bounded}%"></div></div><div>${bounded.toFixed(0)}%</div>`;
+          container.appendChild(row);
+        });
+      }
+
+      function renderRiskBars(container, entries = []) {
+        if (!container) return;
+        container.innerHTML = "";
+        if (!entries.length) {
+          container.innerHTML = '<div class="muted">No risk data available yet.</div>';
+          return;
+        }
+        const max = Math.max(...entries.map((entry) => Number(entry.value || 0)), 0.001);
+        entries.forEach((entry) => {
+          const row = document.createElement("div");
+          row.className = "bar-row";
+          const percent = (100 * Number(entry.value || 0)) / max;
+          row.innerHTML = `<div>${entry.label}</div><div class="bar-track"><div class="bar-fill risk" style="width:${percent.toFixed(1)}%"></div></div><div>${Number(entry.value || 0).toFixed(2)}</div>`;
+          container.appendChild(row);
+        });
+      }
+
       function renderSessionDashboard(payload = {}) {
         sessionAgentTableEl.innerHTML = "";
         sessionGlobalTableEl.innerHTML = "";
@@ -915,6 +1044,28 @@ Require rollback plan before high-irreversibility actions.</textarea>
           tr.innerHTML = "<td colspan='5'>No cross-agent laundering signals detected.</td>";
           sessionLaunderingTableEl.appendChild(tr);
         }
+
+        const budgetChartRows = [];
+        Object.entries(payload.dashboard?.per_agent || {}).forEach(([agentId, entry]) => {
+          const util = entry.budget_utilization || {};
+          ["cost_usd", "time_horizon_days", "max_tool_calls"].forEach((metric) => {
+            budgetChartRows.push({ label: `${agentId} ${metric}`, percent: 100 * Number(util[metric] || 0) });
+          });
+        });
+        const globalUtil = global.budget_utilization || {};
+        ["cost_usd", "time_horizon_days", "max_tool_calls"].forEach((metric) => {
+          budgetChartRows.push({ label: `global ${metric}`, percent: 100 * Number(globalUtil[metric] || 0) });
+        });
+        renderBudgetBars(sessionBudgetChartEl, budgetChartRows);
+
+        const riskRows = [];
+        const globalAggregate = global.aggregate || {};
+        Object.entries(globalAggregate).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 6).forEach(([axis, value]) => {
+          const maxAgent = Math.max(...Object.values(payload.dashboard?.per_agent || {}).map((entry) => Number(entry.aggregate?.[axis] || 0)), 0);
+          riskRows.push({ label: `${axis} global`, value: Number(value || 0) });
+          riskRows.push({ label: `${axis} max-agent`, value: maxAgent });
+        });
+        renderRiskBars(sessionRiskChartEl, riskRows);
 
         const globalCard = document.createElement("div");
         globalCard.className = "ledger-card";
@@ -979,16 +1130,6 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderWizardSteps(plan);
       }
 
-      function scheduleAutoEvaluate() {
-        if (!autoRunEl.checked) return;
-        if (autoTimer) clearTimeout(autoTimer);
-        autoTimer = setTimeout(() => runEvaluation().catch((err) => {
-          resultEl.textContent = `Error: ${err.message}`;
-        }), 300);
-      }
-
-      async function loadCatalog() {
-        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
       function renderCaseExplorer() {
         const query = (caseSearchEl.value || "").trim().toLowerCase();
         const domain = caseDomainFilterEl.value || "all";
@@ -1027,13 +1168,28 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
 
         const selected = filtered.find((item) => item.id === selectedCaseId) || filtered[0];
-        caseDetailEl.textContent = JSON.stringify(selected, null, 2);
+        caseDetailEl.textContent = [
+          `Case: ${selected.id}`,
+          `Domain: ${selected.domain}`,
+          `Expected decision: ${selected.expected_decision}`,
+          "",
+          "Instruction",
+          selected.instruction || "",
+          "",
+          "Expected rationale",
+          selected.expected_rationale || "",
+          "",
+          "Contract",
+          JSON.stringify(selected.contract || {}, null, 2),
+          "",
+          "Plan",
+          JSON.stringify(selected.plan || {}, null, 2),
+          "",
+          "Expected step vectors",
+          JSON.stringify(selected.expected_step_vectors || [], null, 2)
+        ].join("\n");
       }
 
-      function scheduleAutoEvaluate() { if (!autoRunEl.checked) return; if (autoTimer) clearTimeout(autoTimer); autoTimer = setTimeout(() => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }), 300); }
-
-      async function loadCatalog() {
-        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
       async function loadCatalog() {
         const [templates, tools, cases] = await Promise.all([
           fetch("/templates").then((r) => r.json()),
@@ -1059,7 +1215,11 @@ Require rollback plan before high-irreversibility actions.</textarea>
         generateWizardDraft();
 
         knownTools = (tools.tools || []).map((item) => item.tool).filter(Boolean).sort();
-        allCases = cases.cases || [];
+        allCases = (cases.cases || []).slice().sort((a, b) => {
+          const domainCmp = String(a.domain || "").localeCompare(String(b.domain || ""));
+          if (domainCmp !== 0) return domainCmp;
+          return String(a.id || "").localeCompare(String(b.id || ""));
+        });
         caseDomainFilterEl.innerHTML = ['<option value="all">All domains</option>', ...(cases.domains || []).map((d) => `<option value="${d}">${d}</option>`)].join("");
         caseDecisionFilterEl.innerHTML = ['<option value="all">All decisions</option>', '<option value="ALLOW">ALLOW</option>', '<option value="ASK">ASK</option>', '<option value="DENY">DENY</option>'].join("");
         renderCaseExplorer();
@@ -1306,26 +1466,39 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderSessionDashboard(payload);
       }
 
+      function clamp01(value) {
+        return Math.max(0, Math.min(1, Number(value || 0)));
+      }
+
+      function axisSampleScore(entry, axis) {
+        const baseline = Number(latestEvaluation?.aggregate?.[axis] || entry.calibration?.axis_distributions?.[axis]?.quantiles?.p50 || 0);
+        const scale = 1 + Number(calibrationSelection.axisScaleDelta[axis] || 0);
+        return clamp01(baseline * scale);
+      }
+
+      function formatPct(value) {
+        return `${(100 * Number(value || 0)).toFixed(1)}%`;
+      }
+
       async function loadCalibrationDashboard() {
-        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
+        const dashboard = await fetch('/calibration/dashboard').then((r) => r.json());
         calibrationDashboardState = dashboard;
-        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
-        calibrationDomainEl.innerHTML = (dashboard.domains || []).map((entry) => `<option value="${entry.domain}">${entry.domain}</option>`).join("");
+        calibrationRawEl.textContent = JSON.stringify(dashboard, null, 2);
+        calibrationDomainEl.innerHTML = (dashboard.domains || []).map((entry) => `<option value="${entry.domain}">${entry.domain}</option>`).join('');
         if (!calibrationSelection.domain && dashboard.domains?.length) calibrationSelection.domain = dashboard.domains[0].domain;
         if (calibrationSelection.domain) calibrationDomainEl.value = calibrationSelection.domain;
         renderCalibrationViews();
       }
 
-
-
       function renderCalibrationControls(entry) {
-        calibrationControlsEl.innerHTML = "";
+        calibrationControlsEl.innerHTML = '';
         const calibration = entry?.calibration || {};
         const scales = calibration.axis_scale || {};
         const factors = calibration.axis_threshold_factor || {};
+
         Object.keys(scales).forEach((axis) => {
-          const wrap = document.createElement("div");
-          wrap.className = "card";
+          const wrap = document.createElement('div');
+          wrap.className = 'card';
           const scaleVal = Number(calibrationSelection.axisScaleDelta[axis] || 0);
           const factorVal = Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
           wrap.innerHTML = `<h4>${axis}</h4>
@@ -1334,23 +1507,25 @@ Require rollback plan before high-irreversibility actions.</textarea>
             <p class="muted">Current scale=${Number(scales[axis] || 1).toFixed(2)}, threshold factor=${Number(factors[axis] || 1).toFixed(2)}</p>`;
           calibrationControlsEl.appendChild(wrap);
         });
-        const abstainWrap = document.createElement("div");
-        abstainWrap.className = "card";
+
+        const abstainWrap = document.createElement('div');
+        abstainWrap.className = 'card';
         abstainWrap.innerHTML = `<h4>Uncertainty abstain threshold</h4><label>Δ <input type="range" min="-0.2" max="0.2" step="0.01" value="${Number(calibrationSelection.abstainDelta || 0)}" id="calibration-abstain" /><span class="muted">${Number(calibrationSelection.abstainDelta || 0).toFixed(2)}</span></label>`;
         calibrationControlsEl.appendChild(abstainWrap);
 
-        calibrationControlsEl.querySelectorAll("input[data-kind]").forEach((node) => {
-          node.addEventListener("input", (ev) => {
+        calibrationControlsEl.querySelectorAll('input[data-kind]').forEach((node) => {
+          node.addEventListener('input', (ev) => {
             const axis = ev.target.dataset.axis;
             const val = Number(ev.target.value || 0);
-            if (ev.target.dataset.kind === "scale") calibrationSelection.axisScaleDelta[axis] = val;
+            if (ev.target.dataset.kind === 'scale') calibrationSelection.axisScaleDelta[axis] = val;
             else calibrationSelection.axisThresholdFactorDelta[axis] = val;
             renderCalibrationViews();
           });
         });
-        const abstainNode = el("calibration-abstain");
+
+        const abstainNode = el('calibration-abstain');
         if (abstainNode) {
-          abstainNode.addEventListener("input", (ev) => {
+          abstainNode.addEventListener('input', (ev) => {
             calibrationSelection.abstainDelta = Number(ev.target.value || 0);
             renderCalibrationViews();
           });
@@ -1362,45 +1537,55 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const domain = calibrationSelection.domain || calibrationDashboardState.domains[0].domain;
         const entry = calibrationDashboardState.domains.find((item) => item.domain === domain) || calibrationDashboardState.domains[0];
         calibrationSelection.domain = entry.domain;
+
         const dist = entry.calibration?.axis_distributions || {};
         const rates = entry.calibration?.rates || {};
         const telemetryDelta = entry.calibration?.telemetry_delta || {};
         const thresholdBlock = entry.calibration?.preset_thresholds || {};
-        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
-      }
-      async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
-      async function loadCasesAnalyticsDashboard() { const dashboard = await fetch("/cases/analytics").then((r) => r.json()); casesAnalyticsDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
-      async function loadCalibrationDashboard() {
-        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
-        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
-      }
-
-        const distLines = Object.entries(dist).map(([axis, item]) => `${axis}: n=${item.samples}, p50=${Number(item.quantiles?.p50 || 0).toFixed(2)}, p90=${Number(item.quantiles?.p90 || 0).toFixed(2)}
-  bins=${(item.histogram || []).join(",")}`);
-        calibrationDistributionsEl.textContent = distLines.join("\n\n") || "No data";
-
-        const rateLines = Object.entries(rates).map(([axis, item]) => {
-          const tele = telemetryDelta[axis] || {};
-          return `${axis}: false_alarm=${(100 * Number(item.false_alarm_rate || 0)).toFixed(1)}%, override=${(100 * Number(item.override_rate || 0)).toFixed(1)}%, scaleΔ=${Number(tele.axis_scale_delta || 0).toFixed(3)}, thresholdΔ=${Number(tele.threshold_factor_delta || 0).toFixed(3)}`;
+        const distRows = Object.entries(dist).map(([axis, item]) => {
+          const bars = (item.histogram || []).map((count) => Number(count || 0));
+          const maxBin = Math.max(1, ...bars);
+          const binsHtml = bars.map((count) => `<span class="bar-fill" style="width:${(100 * count) / maxBin}%"></span>`);
+          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">n=${item.samples || 0} • p50=${Number(item.quantiles?.p50 || 0).toFixed(2)} • p90=${Number(item.quantiles?.p90 || 0).toFixed(2)}</span></div><div class="bar-chart">${binsHtml.map((fill, idx) => `<div class="bar-row"><span class="muted">${(idx / 10).toFixed(1)}-${((idx + 1) / 10).toFixed(1)}</span><span class="bar-track">${fill}</span><span>${bars[idx]}</span></div>`).join('')}</div></div>`;
         });
-        calibrationRatesEl.textContent = rateLines.join("\n") || "No data";
-        calibrationThresholdsEl.textContent = JSON.stringify(thresholdBlock, null, 2);
+        calibrationDistributionsEl.innerHTML = distRows.join('') || '<p class="muted">No data</p>';
 
-        const preset = calibrationPlanPresetEl.value || "team";
+        const rateRows = Object.entries(rates).map(([axis, item]) => {
+          const tele = telemetryDelta[axis] || {};
+          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">scaleΔ=${Number(tele.axis_scale_delta || 0).toFixed(3)}, thresholdΔ=${Number(tele.threshold_factor_delta || 0).toFixed(3)}</span></div><div class="bar-row"><span>false alarm</span><span class="bar-track"><span class="bar-fill" style="width:${100 * Number(item.false_alarm_rate || 0)}%"></span></span><span>${formatPct(item.false_alarm_rate)}</span></div><div class="bar-row"><span>override</span><span class="bar-track"><span class="bar-fill" style="width:${100 * Number(item.override_rate || 0)}%"></span></span><span>${formatPct(item.override_rate)}</span></div></div>`;
+        });
+        calibrationRatesEl.innerHTML = `<div class="rate-grid">${rateRows.join('')}</div>` || '<p class="muted">No data</p>';
+
+        const preset = calibrationPlanPresetEl.value || 'team';
         const base = thresholdBlock.base?.[preset] || {};
         const calibrated = thresholdBlock.calibrated?.[preset] || {};
-        const impactLines = Object.keys(base).map((axis) => {
-          const localFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
-          const adjustedThreshold = Math.max(0, Math.min(1, Number(calibrated[axis] || base[axis] || 0) * localFactor));
-          const planAxis = Number((JSON.parse(planEl.value).steps || []).length ? 0.35 : 0);
-          const ratio = adjustedThreshold > 0 ? (planAxis / adjustedThreshold) : 0;
-          return `${axis}: threshold=${adjustedThreshold.toFixed(3)} | sample_plan_score≈${planAxis.toFixed(3)} | pressure=${ratio.toFixed(2)}x`;
+        const axes = Object.keys(base).length ? Object.keys(base) : Object.keys(dist);
+
+        const thresholdRows = axes.map((axis) => {
+          const adjustedFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
+          const adjustedThreshold = clamp01(Number(calibrated[axis] || base[axis] || 0) * adjustedFactor);
+          return `<tr><td>${axis}</td><td>${Number(base[axis] || 0).toFixed(3)}</td><td>${Number(calibrated[axis] || 0).toFixed(3)}</td><td>${adjustedThreshold.toFixed(3)}</td></tr>`;
         });
-        calibrationPlanImpactEl.textContent = impactLines.join("\n");
+        calibrationThresholdsEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Base</th><th>Calibrated</th><th>Adjusted</th></tr></thead><tbody>${thresholdRows.join('')}</tbody></table>`;
+
+        const impactRows = axes.map((axis) => {
+          const adjustedFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
+          const threshold = clamp01(Number(calibrated[axis] || base[axis] || 0) * adjustedFactor);
+          const score = axisSampleScore(entry, axis);
+          const pressure = threshold > 0 ? score / threshold : 0;
+          const status = pressure >= 1 ? '⚠ near/over threshold' : '✅ below threshold';
+          return `<tr><td>${axis}</td><td>${score.toFixed(3)}</td><td>${threshold.toFixed(3)}</td><td>${pressure.toFixed(2)}x</td><td>${status}</td></tr>`;
+        });
+        calibrationPlanImpactEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Sample score</th><th>Adjusted threshold</th><th>Pressure</th><th>Status</th></tr></thead><tbody>${impactRows.join('')}</tbody></table><p class="muted">Sample score is driven by latest evaluation aggregate when available, otherwise p50 telemetry.</p>`;
+
         renderCalibrationControls(entry);
       }
+
+      async function loadCasesAnalyticsDashboard() { const dashboard = await fetch('/cases/analytics').then((r) => r.json()); casesAnalyticsDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
+
       async function validateCaseDraft() {
+        setDatasetWizardStep("validate", "running", "running");
         const payload = { case: JSON.parse(caseDraftEl.value) };
         const res = await fetch("/dataset/validate", {
           method: "POST",
@@ -1409,10 +1594,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setDatasetWizardStep("validate", "done", `valid (${data.case_id})`);
         datasetOutputEl.textContent = `Validation OK for case: ${data.case_id}`;
       }
 
       async function suggestCaseVectors() {
+        setDatasetWizardStep("suggest", "running", "running");
         const contract = JSON.parse(contractEl.value);
         const plan = JSON.parse(planEl.value);
         const draft = JSON.parse(caseDraftEl.value);
@@ -1435,6 +1622,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         caseDraftEl.value = JSON.stringify(data.case, null, 2);
         syncDatasetFieldsFromDraft(data.case);
+        setDatasetWizardStep("suggest", "done", "vectors filled");
         datasetOutputEl.textContent = "Suggested vectors loaded into draft.";
       }
 
@@ -1457,6 +1645,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           notes: existing.notes || null,
         };
         caseDraftEl.value = JSON.stringify(next, null, 2);
+        setDatasetWizardStep("build", "done", "draft ready");
         return next;
       }
 
@@ -1471,7 +1660,29 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       function generateDatasetJsonlLine() {
         const draft = buildCaseDraftFromInputs();
-        datasetOutputEl.textContent = JSON.stringify(draft);
+        const jsonlLine = JSON.stringify(draft);
+        datasetContributionFileEl.value = `${jsonlLine}\n`;
+        setDatasetWizardStep("generate", "done", "jsonl ready");
+        datasetOutputEl.textContent = jsonlLine;
+      }
+
+      async function runDatasetContributionWizard() {
+        resetDatasetWizardSteps();
+        datasetContributionFileEl.value = "";
+        try {
+          setDatasetWizardStep("build", "running", "running");
+          buildCaseDraftFromInputs();
+          await suggestCaseVectors();
+          await validateCaseDraft();
+          generateDatasetJsonlLine();
+          datasetOutputEl.textContent = "Wizard complete: draft built, vectors suggested, validation passed, contribution file generated.";
+        } catch (err) {
+          if (datasetStepEls.build.textContent === "running") setDatasetWizardStep("build", "error", "error");
+          if (datasetStepEls.suggest.textContent === "running") setDatasetWizardStep("suggest", "error", "error");
+          if (datasetStepEls.validate.textContent === "running") setDatasetWizardStep("validate", "error", "error");
+          if (datasetStepEls.generate.textContent === "running") setDatasetWizardStep("generate", "error", "error");
+          throw err;
+        }
       }
 
       function generateDatasetPrText() {
@@ -1518,7 +1729,7 @@ ${body}`;
         telemetryEl.textContent = `Error: ${err.message}`;
       }));
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
-        calibrationDashboardEl.textContent = `Error: ${err.message}`;
+        calibrationRawEl.textContent = `Error: ${err.message}`;
       }));
       el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => {
         casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`;
@@ -1533,22 +1744,25 @@ ${body}`;
       }));
       el("dataset-build").addEventListener("click", () => {
         try { buildCaseDraftFromInputs(); datasetOutputEl.textContent = "Draft rebuilt from current contract + plan."; }
-        catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; }
+        catch (err) { setDatasetWizardStep("build", "error", "error"); datasetOutputEl.textContent = `Draft build error: ${err.message}`; }
       });
       el("dataset-validate-panel").addEventListener("click", () => {
         try { buildCaseDraftFromInputs(); }
         catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
-        validateCaseDraft().catch((err) => { datasetOutputEl.textContent = `Validation error: ${err.message}`; });
+        validateCaseDraft().catch((err) => { setDatasetWizardStep("validate", "error", "error"); datasetOutputEl.textContent = `Validation error: ${err.message}`; });
       });
       el("dataset-suggest-panel").addEventListener("click", () => {
         try { buildCaseDraftFromInputs(); }
         catch (err) { datasetOutputEl.textContent = `Draft build error: ${err.message}`; return; }
-        suggestCaseVectors().catch((err) => { datasetOutputEl.textContent = `Suggestion error: ${err.message}`; });
+        suggestCaseVectors().catch((err) => { setDatasetWizardStep("suggest", "error", "error"); datasetOutputEl.textContent = `Suggestion error: ${err.message}`; });
       });
       el("dataset-generate-file").addEventListener("click", () => {
         try { generateDatasetJsonlLine(); }
-        catch (err) { datasetOutputEl.textContent = `Generate file error: ${err.message}`; }
+        catch (err) { setDatasetWizardStep("generate", "error", "error"); datasetOutputEl.textContent = `Generate file error: ${err.message}`; }
       });
+      el("dataset-run-wizard").addEventListener("click", () => runDatasetContributionWizard().catch((err) => {
+        datasetOutputEl.textContent = `Wizard error: ${err.message}`;
+      }));
       el("dataset-generate-pr").addEventListener("click", () => {
         try { generateDatasetPrText(); }
         catch (err) { datasetOutputEl.textContent = `Generate PR text error: ${err.message}`; }
@@ -1589,7 +1803,7 @@ ${body}`;
       el("run").addEventListener("click", () => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }));
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
-      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Error: ${err.message}`; }));
+      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationRawEl.textContent = `Error: ${err.message}`; }));
       el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`; }));
       el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; }));
       el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
@@ -1651,7 +1865,7 @@ ${body}`;
         pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
       });
       loadCalibrationDashboard().catch((err) => {
-        calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
+        calibrationRawEl.textContent = `Calibration load error: ${err.message}`;
       });
       loadCasesAnalyticsDashboard().catch((err) => {
         casesAnalyticsDashboardEl.textContent = `Analytics load error: ${err.message}`;
@@ -1662,7 +1876,7 @@ ${body}`;
       renderSessionBuilder();
       renderSessionBuilder();
       loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
-      loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });
+      loadCalibrationDashboard().catch((err) => { calibrationRawEl.textContent = `Calibration load error: ${err.message}`; });
       loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsDashboardEl.textContent = `Analytics load error: ${err.message}`; });
       runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; });
       runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
@@ -1671,6 +1885,7 @@ ${body}`;
     }
       loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
       loadPolicyWorkbenchState().catch((err) => { policyWorkbenchStateEl.textContent = `Policy state load error: ${err.message}`; });
+    }
     </script>
   </body>
 </html>
