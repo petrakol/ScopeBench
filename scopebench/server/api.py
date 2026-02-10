@@ -244,10 +244,6 @@ def _summarize_response(policy, aggregate, effective_decision: str) -> str:
 
 def _next_steps_from_policy(policy) -> List[str]:
     suggestions: List[str] = []
-    for axis, (_, threshold) in policy.exceeded.items():
-        suggestions.append(
-            f"Reduce {axis} below {float(threshold):.2f} or split into smaller steps."
-        )
 
     if "read_before_write" in policy.asked:
         suggestions.append(
@@ -258,6 +254,11 @@ def _next_steps_from_policy(policy) -> List[str]:
             "Add a downstream validation step after patching (for example: run targeted tests)."
         )
 
+    for axis, (_, threshold) in policy.exceeded.items():
+        suggestions.append(
+            f"Reduce {axis} below {float(threshold):.2f} or split into smaller steps."
+        )
+
     for axis, threshold in policy.asked.items():
         if axis in {"read_before_write", "validation_after_write"}:
             continue
@@ -265,6 +266,19 @@ def _next_steps_from_policy(policy) -> List[str]:
 
     if any("Tool category" in reason for reason in policy.reasons):
         suggestions.append("Remove high-risk tool categories or get explicit approval.")
+
+    knee_recommendations = []
+    if policy.policy_input is not None:
+        knee_recommendations = (
+            policy.policy_input.metadata.get("knee_plan_patch_recommendations", [])
+            if isinstance(policy.policy_input.metadata, dict)
+            else []
+        )
+    for recommendation in knee_recommendations:
+        rationale = recommendation.get("rationale") if isinstance(recommendation, dict) else None
+        if rationale:
+            suggestions.append(f"Knee recommendation: {rationale}")
+
     if not suggestions:
         suggestions.append("Proceed; plan appears proportionate to the contract.")
     return suggestions[:5]
@@ -272,6 +286,16 @@ def _next_steps_from_policy(policy) -> List[str]:
 
 def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
     patches: List[Dict[str, Any]] = []
+
+    knee_recommendations = []
+    if policy.policy_input is not None and isinstance(policy.policy_input.metadata, dict):
+        knee_recommendations = policy.policy_input.metadata.get("knee_plan_patch_recommendations", [])
+    for recommendation in knee_recommendations:
+        if isinstance(recommendation, dict):
+            patch = recommendation.get("patch")
+            if isinstance(patch, dict):
+                patches.append(patch)
+
     triggered = set(policy.exceeded.keys()) | set(policy.asked.keys())
     if "read_before_write" in policy.asked:
         first_write = next((step for step in plan.steps if step.tool in SWE_WRITE_TOOLS), None)

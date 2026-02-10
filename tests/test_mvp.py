@@ -1102,6 +1102,98 @@ def test_knee_of_curve_triggers_ask_with_step_ids():
     assert any("steps 3" in reason for reason in res.policy.reasons)
 
 
+
+
+def test_knee_instrumentation_populates_policy_input_metadata_and_patch_guidance():
+    contract = TaskContract.model_validate(
+        {
+            "goal": "Fix tiny bug",
+            "preset": "team",
+            "thresholds": {"min_marginal_ratio": 0.5, "max_knee_steps": 0},
+        }
+    )
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix tiny bug",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Read failing test",
+                    "tool": "git_read",
+                    "est_cost_usd": 1,
+                    "est_benefit": 1.2,
+                    "benefit_unit": "quality",
+                },
+                {
+                    "id": "2",
+                    "description": "Apply minimal patch",
+                    "tool": "git_patch",
+                    "depends_on": ["1"],
+                    "est_cost_usd": 1,
+                    "est_benefit": 0.9,
+                    "benefit_unit": "quality",
+                },
+                {
+                    "id": "3",
+                    "description": "Large optional optimization loop",
+                    "tool": "analysis",
+                    "depends_on": ["2"],
+                    "est_cost_usd": 12,
+                    "est_benefit": 0.2,
+                    "benefit_unit": "quality",
+                },
+            ],
+        }
+    )
+
+    res = evaluate(contract, plan)
+    metadata = res.policy.policy_input.metadata
+    assert "knee_step_logs" in metadata
+    assert any(log["step_id"] == "3" and log["is_knee"] for log in metadata["knee_step_logs"])
+    assert "knee_plan_patch_recommendations" in metadata
+    assert any(
+        rec["recommendation_type"] == "halt_further_optimization"
+        for rec in metadata["knee_plan_patch_recommendations"]
+    )
+
+    patches = _suggest_plan_patch(res.policy, plan)
+    assert any(patch.get("op") == "truncate_after_last_non_knee" for patch in patches)
+
+
+def test_knee_threshold_contract_override_controls_halt_recommendation():
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix tiny bug",
+            "steps": [
+                {"id": "1", "description": "Read context", "tool": "git_read", "est_cost_usd": 1, "est_benefit": 1.0},
+                {"id": "2", "description": "Patch bug", "tool": "git_patch", "depends_on": ["1"], "est_cost_usd": 1, "est_benefit": 0.8},
+                {"id": "3", "description": "Do optional tuning", "tool": "analysis", "depends_on": ["2"], "est_cost_usd": 8, "est_benefit": 0.2},
+            ],
+        }
+    )
+
+    strict_contract = TaskContract.model_validate(
+        {
+            "goal": "Fix tiny bug",
+            "preset": "team",
+            "thresholds": {"min_marginal_ratio": 0.5, "max_knee_steps": 0},
+        }
+    )
+    relaxed_contract = TaskContract.model_validate(
+        {
+            "goal": "Fix tiny bug",
+            "preset": "team",
+            "thresholds": {"min_marginal_ratio": 0.5, "max_knee_steps": 2},
+        }
+    )
+
+    strict_res = evaluate(strict_contract, plan)
+    relaxed_res = evaluate(relaxed_contract, plan)
+
+    strict_recs = strict_res.policy.policy_input.metadata["knee_plan_patch_recommendations"]
+    relaxed_recs = relaxed_res.policy.policy_input.metadata["knee_plan_patch_recommendations"]
+    assert any(rec["recommendation_type"] == "halt_further_optimization" for rec in strict_recs)
+    assert all(rec["recommendation_type"] != "halt_further_optimization" for rec in relaxed_recs)
 def test_dataset_has_at_least_five_knee_cases():
     dataset_path = ROOT / "scopebench/bench/cases/examples.jsonl"
     rows = [
