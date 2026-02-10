@@ -113,6 +113,10 @@ def evaluate(
             span.set_attribute(
                 "scopebench.calibration.global_scale", float(calibration.global_scale)
             )
+            for axis, value in calibration.resolved_axis_scale().items():
+                span.set_attribute(f"scopebench.calibration.axis_scale.{axis}", float(value))
+            for axis, value in calibration.resolved_axis_bias().items():
+                span.set_attribute(f"scopebench.calibration.axis_bias.{axis}", float(value))
         for axis, val in agg.as_dict().items():
             span.set_attribute(f"scopebench.aggregate.{axis}", float(val))
         span.set_attribute("scopebench.n_steps", agg.n_steps)

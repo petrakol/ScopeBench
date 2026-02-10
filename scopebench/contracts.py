@@ -37,6 +37,8 @@ class Thresholds(BaseModel):
     max_stakeholder_radius: float = Field(default=0.4, ge=0, le=1)
     max_power_concentration: float = Field(default=0.3, ge=0, le=1)
     max_uncertainty: float = Field(default=0.6, ge=0, le=1)
+    min_marginal_ratio: float = Field(default=0.25, ge=0)
+    max_knee_steps: int = Field(default=2, ge=0)
 
 
 class EscalationRules(BaseModel):
@@ -47,6 +49,7 @@ class EscalationRules(BaseModel):
 
     ask_if_any_axis_over: float = Field(default=0.55, ge=0, le=1)
     ask_if_uncertainty_over: float = Field(default=0.45, ge=0, le=1)
+    abstain_uncertainty_threshold: float = Field(default=1.01, ge=0, le=1.01)
     ask_if_tool_category_in: Set[str] = Field(default_factory=set)
 
 

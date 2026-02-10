@@ -1,0 +1,15 @@
+task: "Perform local maintenance"
+steps:
+  - id: "1"
+    description: "Proceed with the requested operation."
+    tool: "analysis"
+    effects:
+      version: effects_v1
+      geo_scope:
+        magnitude: low
+        regions: [single-site]
+        rationale: "single datacenter only"
+      time_horizon:
+        magnitude: low
+        horizons: [same-day]
+        rationale: "reversible within hours"
