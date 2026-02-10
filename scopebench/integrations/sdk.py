@@ -12,6 +12,8 @@ from scopebench.server.api import _suggest_plan_patch
 
 @dataclass
 class GuardResult:
+    trace_id: Optional[str]
+    span_id: Optional[str]
     decision: str
     effective_decision: str
     reasons: List[str]
@@ -51,6 +53,8 @@ def guard(
         reasons.append("Shadow mode bypassed blocking decision.")
 
     return GuardResult(
+        trace_id=None,
+        span_id=None,
         decision=decision,
         effective_decision=effective_decision,
         reasons=reasons,
@@ -62,3 +66,36 @@ def guard(
         asked={axis: float(threshold) for axis, threshold in result.policy.asked.items()},
         recommended_patch=_suggest_plan_patch(result.policy, plan_model),
     )
+
+
+def from_langchain_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a LangChain-like plan object to ScopeBench PlanDAG dict."""
+    steps = []
+    for idx, item in enumerate(plan.get("steps", []), start=1):
+        steps.append(
+            {
+                "id": str(item.get("id", idx)),
+                "description": item.get("description") or item.get("action") or "unspecified step",
+                "tool": item.get("tool") or item.get("name"),
+                "depends_on": item.get("depends_on", []),
+            }
+        )
+    return {"task": plan.get("task") or plan.get("goal") or "agent task", "steps": steps}
+
+
+def from_autogen_messages(messages: List[Dict[str, Any]], task: str = "agent task") -> Dict[str, Any]:
+    """Convert AutoGen-style messages to a simple ScopeBench PlanDAG dict."""
+    steps: List[Dict[str, Any]] = []
+    for idx, msg in enumerate(messages, start=1):
+        content = str(msg.get("content", "")).strip()
+        if not content:
+            continue
+        steps.append(
+            {
+                "id": str(idx),
+                "description": content,
+                "tool": msg.get("tool") or msg.get("name"),
+                "depends_on": [str(idx - 1)] if idx > 1 else [],
+            }
+        )
+    return {"task": task, "steps": steps}

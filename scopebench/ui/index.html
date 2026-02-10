@@ -5,59 +5,189 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ScopeBench UI</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
-      textarea { width: 100%; min-height: 160px; font-family: monospace; }
-      pre { background: #f5f5f5; padding: 12px; overflow-x: auto; }
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-      .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
-      button { padding: 8px 12px; }
+      :root {
+        color-scheme: light;
+        font-family: Inter, Arial, sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #f3f5f8;
+        color: #111827;
+      }
+      main {
+        max-width: 1200px;
+        margin: 24px auto;
+        padding: 0 16px 32px;
+      }
+      h1, h2, h3 {
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 4px 0 12px;
+      }
+      .grid {
+        display: grid;
+        gap: 16px;
+      }
+      .two-col {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+        padding: 14px;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+      }
+      textarea, pre, select {
+        width: 100%;
+        box-sizing: border-box;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      textarea {
+        min-height: 180px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 8px;
+      }
+      pre {
+        margin: 0;
+        background: #0f172a;
+        color: #f8fafc;
+        border-radius: 8px;
+        padding: 10px;
+        overflow-x: auto;
+        min-height: 120px;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      button {
+        border: 1px solid #2563eb;
+        background: #2563eb;
+        color: #fff;
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+      }
+      button.secondary {
+        border-color: #64748b;
+        background: #64748b;
+      }
+      .badge {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 12px;
+        margin-right: 8px;
+      }
+      .allow { background: #dcfce7; color: #166534; }
+      .ask { background: #fef3c7; color: #92400e; }
+      .deny { background: #fee2e2; color: #991b1b; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th, td {
+        border-bottom: 1px solid #e5e7eb;
+        padding: 6px;
+        text-align: left;
+        vertical-align: top;
+      }
+      @media (max-width: 900px) {
+        .two-col { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
-    <h1>ScopeBench — Minimal UI</h1>
-    <p>Author contract + plan, visualize DAG, run evaluation, inspect scores/rationales.</p>
+    <main>
+      <h1>ScopeBench Interactive Workbench</h1>
+      <p>Author contracts and plans, inspect DAGs, view axis scores/rationales, and replay telemetry.</p>
 
-    <div class="row">
       <div class="card">
-        <h3>Contract (JSON)</h3>
-        <textarea id="contract"></textarea>
+        <div class="controls">
+          <button id="load-template" class="secondary">Load template</button>
+          <select id="template-select"></select>
+          <button id="run">Run /evaluate</button>
+          <button id="replay" class="secondary">Replay telemetry</button>
+        </div>
       </div>
-      <div class="card">
-        <h3>Plan (JSON)</h3>
-        <textarea id="plan"></textarea>
-      </div>
-    </div>
 
-    <p><button id="run">Run /evaluate</button></p>
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Contract (JSON)</h3>
+          <textarea id="contract"></textarea>
+        </div>
+        <div class="card">
+          <h3>Plan (JSON)</h3>
+          <textarea id="plan"></textarea>
+        </div>
+      </section>
 
-    <div class="card">
-      <h3>DAG</h3>
-      <pre id="dag"></pre>
-    </div>
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Plan DAG</h3>
+          <pre id="dag"></pre>
+        </div>
+        <div class="card">
+          <h3>Decision & Trace</h3>
+          <div id="decision"></div>
+          <pre id="result"></pre>
+        </div>
+      </section>
 
-    <div class="card">
-      <h3>Decision + Axes</h3>
-      <pre id="result"></pre>
-    </div>
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Axis Scores</h3>
+          <table>
+            <thead><tr><th>Axis</th><th>Score</th></tr></thead>
+            <tbody id="axis-table"></tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h3>Step Rationales</h3>
+          <pre id="rationales"></pre>
+        </div>
+      </section>
+
+      <section class="grid two-col" style="margin-top: 16px">
+        <div class="card">
+          <h3>Catalog</h3>
+          <pre id="catalog"></pre>
+        </div>
+        <div class="card">
+          <h3>Telemetry Replay</h3>
+          <pre id="telemetry"></pre>
+        </div>
+      </section>
+    </main>
 
     <script>
-      const defaultContract = {
-        goal: "Fix failing unit test",
-        preset: "team"
-      };
+      const defaultContract = { goal: "Fix flaky CI test", preset: "team" };
       const defaultPlan = {
-        task: "Fix failing unit test",
+        task: "Fix flaky CI test",
         steps: [
-          { id: "1", description: "Read failing test and source", tool: "git_read" },
-          { id: "2", description: "Apply minimal patch", tool: "git_patch", depends_on: ["1"] },
-          { id: "3", description: "Run targeted test", tool: "pytest", depends_on: ["2"] }
+          { id: "1", description: "Inspect failing test", tool: "git_read" },
+          { id: "2", description: "Patch timing", tool: "git_patch", depends_on: ["1"] },
+          { id: "3", description: "Run pytest", tool: "pytest", depends_on: ["2"] }
         ]
       };
 
-      const contractEl = document.getElementById("contract");
-      const planEl = document.getElementById("plan");
-      const dagEl = document.getElementById("dag");
-      const resultEl = document.getElementById("result");
+      const el = (id) => document.getElementById(id);
+      const contractEl = el("contract");
+      const planEl = el("plan");
+      const dagEl = el("dag");
+      const resultEl = el("result");
+      const decisionEl = el("decision");
+      const axisTableEl = el("axis-table");
+      const rationaleEl = el("rationales");
+      const catalogEl = el("catalog");
+      const telemetryEl = el("telemetry");
+      const templateSelectEl = el("template-select");
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -70,59 +200,124 @@
         dagEl.textContent = `nodes:\n${nodes || "(none)"}\n\nedges:\n${edges || "(none)"}`;
       }
 
-      document.getElementById("run").addEventListener("click", async () => {
-        try {
-          const contract = JSON.parse(contractEl.value);
-          const plan = JSON.parse(planEl.value);
-          renderDag(plan);
-
-          const res = await fetch("/evaluate", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              contract,
-              plan,
-              include_summary: true,
-              include_steps: true,
-              include_telemetry: true
-            })
+      function renderAggregate(aggregate = {}) {
+        axisTableEl.innerHTML = "";
+        Object.entries(aggregate)
+          .sort((a, b) => b[1] - a[1])
+          .forEach(([axis, score]) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td>${axis}</td><td>${Number(score).toFixed(3)}</td>`;
+            axisTableEl.appendChild(tr);
           });
-          const payload = await res.json();
+      }
 
-          const topAxes = Object.entries(payload.aggregate || {})
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3)
-            .map(([axis, value]) => `${axis}: ${value.toFixed(3)}`)
-            .join("\n");
+      function renderStepRationales(steps = []) {
+        rationaleEl.textContent = steps
+          .map((step) => {
+            const entries = Object.entries(step.axes || {}).sort((a, b) => b[1].value - a[1].value);
+            const top = entries[0];
+            if (!top) return `${step.step_id || "unknown"}: (no rationale)`;
+            return `${step.step_id || "unknown"}: ${top[0]}=${top[1].value.toFixed(3)}\n  ${top[1].rationale || "n/a"}`;
+          })
+          .join("\n\n");
+      }
 
-          const stepRationales = (payload.steps || [])
-            .map((step) => {
-              const axes = step.axes || {};
-              const entries = Object.entries(axes).sort((a, b) => b[1].value - a[1].value);
-              const top = entries[0];
-              if (!top) return `${step.step_id}: (no rationale)`;
-              return `${step.step_id}: ${top[0]} => ${top[1].rationale || "n/a"}`;
-            })
-            .join("\n");
+      function decisionBadge(decision) {
+        const normalized = String(decision || "").toLowerCase();
+        const cls = normalized === "allow" ? "allow" : normalized === "ask" ? "ask" : "deny";
+        return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`;
+      }
 
-          resultEl.textContent = [
-            `decision: ${payload.decision}`,
-            `effective_decision: ${payload.effective_decision}`,
-            `trace_id: ${payload.trace_id || "n/a"}`,
-            `span_id: ${payload.span_id || "n/a"}`,
-            "",
-            "top_axes:",
-            topAxes,
-            "",
-            "step_rationales:",
-            stepRationales || "(none)"
-          ].join("\n");
-        } catch (err) {
-          resultEl.textContent = `Error: ${err.message}`;
-        }
+      async function loadCatalog() {
+        const [templates, tools, cases] = await Promise.all([
+          fetch("/templates").then((r) => r.json()),
+          fetch("/tools").then((r) => r.json()),
+          fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))
+        ]);
+
+        const options = [];
+        (templates.templates || []).forEach((domain) => {
+          Object.entries(domain.variants || {}).forEach(([variant, body]) => {
+            if (body.content?.contract && body.content?.plan) {
+              const key = `${domain.domain}:${variant}`;
+              options.push({ key, contract: body.content.contract, plan: body.content.plan });
+            }
+          });
+        });
+        templateSelectEl.innerHTML = options
+          .map((opt) => `<option value="${opt.key}">${opt.key}</option>`)
+          .join("");
+        templateSelectEl._options = options;
+
+        catalogEl.textContent = JSON.stringify(
+          {
+            templates: (templates.templates || []).length,
+            tools: (tools.tools || []).length,
+            cases_count: cases.count || 0,
+            case_domains: cases.domains || []
+          },
+          null,
+          2
+        );
+      }
+
+      async function runEvaluation() {
+        const contract = JSON.parse(contractEl.value);
+        const plan = JSON.parse(planEl.value);
+        renderDag(plan);
+
+        const res = await fetch("/evaluate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            contract,
+            plan,
+            include_summary: true,
+            include_steps: true,
+            include_telemetry: true
+          })
+        });
+        const payload = await res.json();
+
+        decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
+        resultEl.textContent = JSON.stringify(
+          {
+            trace_id: payload.trace_id,
+            span_id: payload.span_id,
+            summary: payload.summary,
+            next_steps: payload.next_steps,
+            telemetry: payload.telemetry
+          },
+          null,
+          2
+        );
+        renderAggregate(payload.aggregate || {});
+        renderStepRationales(payload.steps || []);
+      }
+
+      async function replayTelemetry() {
+        const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json());
+        telemetryEl.textContent = JSON.stringify(replay, null, 2);
+      }
+
+      el("load-template").addEventListener("click", () => {
+        const picked = (templateSelectEl._options || []).find((opt) => opt.key === templateSelectEl.value);
+        if (!picked) return;
+        contractEl.value = JSON.stringify(picked.contract, null, 2);
+        planEl.value = JSON.stringify(picked.plan, null, 2);
+        renderDag(picked.plan);
       });
+      el("run").addEventListener("click", () => runEvaluation().catch((err) => {
+        resultEl.textContent = `Error: ${err.message}`;
+      }));
+      el("replay").addEventListener("click", () => replayTelemetry().catch((err) => {
+        telemetryEl.textContent = `Error: ${err.message}`;
+      }));
 
       renderDag(defaultPlan);
+      loadCatalog().catch((err) => {
+        catalogEl.textContent = `Catalog load error: ${err.message}`;
+      });
     </script>
   </body>
 </html>
