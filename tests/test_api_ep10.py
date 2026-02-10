@@ -164,6 +164,8 @@ def test_evaluate_stream_endpoint_reacts_to_threshold_crossings_and_step_updates
     trigger_kinds = {trigger.kind for trigger in first.triggers}
     assert "judge_output_changed" in trigger_kinds or "threshold_crossed" in trigger_kinds
     assert isinstance(first.judge_output_deltas, list)
+    if first.judge_output_deltas:
+        assert hasattr(first.judge_output_deltas[0], "axis_deltas")
 
     second = response.updates[1]
     assert second.event_id == "evt-2"
@@ -205,6 +207,8 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     assert "Calibration Dashboard" in html
     assert "What-if Lab" in html
     assert "Explainability: Aggregate Risk Contributions" in html
+    assert "Stream /evaluate_stream" in html
+    assert "Streaming Evaluation Timeline" in html
 
 
 def test_telemetry_replay_endpoint_without_configuration() -> None:
