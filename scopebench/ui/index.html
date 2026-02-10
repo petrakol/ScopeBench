@@ -187,6 +187,7 @@
       <section class="card" style="margin-top: 16px">
         <h3>What-if Lab</h3>
         <p class="muted">Adjust descriptions, tools, and effect magnitudes. Updates flow into plan JSON and re-evaluate automatically.</p>
+        <div class="controls" style="margin-bottom:10px"><button id="suggest-effects" class="secondary">Suggest effects</button></div>
         <div id="whatif-editors"></div>
       </section>
 
@@ -306,6 +307,7 @@
       const wizardStepsEl = el("wizard-steps");
       const caseDraftEl = el("case-draft");
       const datasetOutputEl = el("dataset-output");
+      const suggestEffectsEl = el("suggest-effects");
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
         ["legal", "legal_exposure"],
@@ -396,6 +398,21 @@
       function updateEffectMagnitude(stepIndex, effectKey, sliderValue) {
         const plan = JSON.parse(planEl.value); const step = plan.steps?.[stepIndex]; if (!step) return;
         step.effects = step.effects || {}; step.effects[effectKey] = toMagnitude(sliderValue); planEl.value = JSON.stringify(plan, null, 2); scheduleAutoEvaluate();
+      }
+
+      async function suggestEffectsForPlan() {
+        const plan = JSON.parse(planEl.value);
+        const res = await fetch("/suggest_effects", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ plan })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        planEl.value = JSON.stringify(data.plan, null, 2);
+        renderDag(data.plan);
+        renderWhatIfEditors(data.plan);
+        scheduleAutoEvaluate();
       }
 
       function renderWhatIfEditors(plan) {
@@ -775,6 +792,9 @@
       }));
       el("dataset-suggest").addEventListener("click", () => suggestCaseVectors().catch((err) => {
         datasetOutputEl.textContent = `Suggestion error: ${err.message}`;
+      }));
+      suggestEffectsEl.addEventListener("click", () => suggestEffectsForPlan().catch((err) => {
+        resultEl.textContent = `Suggest effects error: ${err.message}`;
       }));
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
