@@ -118,6 +118,13 @@ For hands-on onboarding, use the guided walkthroughs:
 - Web-style walkthrough (step-by-step CLI + API): `docs/tutorials/interactive_quickstart_walkthrough.md`
 - Jupyter notebook tutorial: `docs/notebooks/scopebench_quickstart_tutorial.ipynb`
 
+Both tutorials walk through:
+
+1. template selection,
+2. plan editing,
+3. effect annotation (`scopebench suggest-effects`), and
+4. API evaluation with `POST /evaluate`.
+
 ### 3) Start the API server
 
 ```bash
