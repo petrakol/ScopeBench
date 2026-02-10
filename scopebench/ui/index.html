@@ -198,6 +198,38 @@
       </section>
 
       <section class="card" style="margin-top: 16px">
+        <h3>Effect-axis weighting and precedence lab</h3>
+        <p class="muted">Tune axis weights and signal precedence to run sensitivity analysis on a sample plan grounded in the effects guide.</p>
+        <div class="field-grid">
+          <label>Signal precedence mode
+            <select id="effect-lab-mode">
+              <option value="strict">Strict precedence (effects &gt; priors &gt; heuristics)</option>
+              <option value="blend">Weighted blend</option>
+              <option value="prioritized">Tool-prior override</option>
+            </select>
+          </label>
+          <label>Explicit effects weight <input id="effect-lab-explicit" type="number" value="1.2" min="0" max="3" step="0.1" /></label>
+          <label>Tool priors weight <input id="effect-lab-priors" type="number" value="0.8" min="0" max="3" step="0.1" /></label>
+        </div>
+        <div class="field-grid" style="margin-top:8px">
+          <label>Heuristics weight <input id="effect-lab-heuristics" type="number" value="0.5" min="0" max="3" step="0.1" /></label>
+          <div></div>
+          <div></div>
+        </div>
+        <div id="effect-lab-weights" class="slider-grid"></div>
+        <div class="grid two-col" style="margin-top:12px">
+          <div>
+            <h4 style="margin: 0 0 6px">Baseline vs adjusted summary</h4>
+            <pre id="effect-lab-summary"></pre>
+          </div>
+          <div>
+            <h4 style="margin: 0 0 6px">Per-axis comparison</h4>
+            <table><thead><tr><th>Axis</th><th>Baseline</th><th>Adjusted</th><th>Δ</th></tr></thead><tbody id="effect-lab-table"></tbody></table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
         <h3>Explainability: Aggregate Risk Contributions</h3>
         <p class="muted">Shows each step's contribution along the dominant risk path per axis.</p>
         <table><thead><tr><th>Axis</th><th>Aggregate</th><th>Critical path terminal</th><th>Step contributions</th></tr></thead><tbody id="contrib-table"></tbody></table>
@@ -384,6 +416,13 @@
       const wizardStepsEl = el("wizard-steps");
       const caseDraftEl = el("case-draft");
       const datasetOutputEl = el("dataset-output");
+      const effectLabModeEl = el("effect-lab-mode");
+      const effectLabExplicitEl = el("effect-lab-explicit");
+      const effectLabPriorsEl = el("effect-lab-priors");
+      const effectLabHeuristicsEl = el("effect-lab-heuristics");
+      const effectLabWeightsEl = el("effect-lab-weights");
+      const effectLabSummaryEl = el("effect-lab-summary");
+      const effectLabTableEl = el("effect-lab-table");
       const caseSearchEl = el("case-search");
       const caseDomainFilterEl = el("case-domain-filter");
       const caseDecisionFilterEl = el("case-decision-filter");
@@ -418,6 +457,7 @@
       let wizardTemplates = [];
       let wizardDraft = null;
       let sessionState = JSON.parse(JSON.stringify(defaultSessionState));
+      let latestEvaluation = null;
       let allCases = [];
       let selectedCaseId = null;
 
@@ -461,6 +501,119 @@
       }
 
       function renderAggregate(aggregate = {}) { axisTableEl.innerHTML = ""; Object.entries(aggregate).sort((a, b) => b[1] - a[1]).forEach(([axis, score]) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${axis}</td><td>${Number(score).toFixed(3)}</td>`; axisTableEl.appendChild(tr); }); }
+
+      function renderEffectLabWeightControls() {
+        effectLabWeightsEl.innerHTML = EFFECT_AXES.map(([, axisKey]) => `
+          <div class="slider-row"> 
+            <div class="inline-label"><strong>${axisKey}</strong><span data-axis-value="${axisKey}">1.00x</span></div>
+            <input type="range" min="0" max="2.5" step="0.1" value="1" data-axis-weight="${axisKey}" />
+          </div>
+        `).join("");
+        effectLabWeightsEl.querySelectorAll("input[data-axis-weight]").forEach((node) => {
+          node.addEventListener("input", (ev) => {
+            const axis = ev.target.dataset.axisWeight;
+            const value = Number(ev.target.value || 1);
+            const label = effectLabWeightsEl.querySelector(`[data-axis-value="${axis}"]`);
+            if (label) label.textContent = `${value.toFixed(2)}x`;
+            renderEffectLabComparison();
+          });
+        });
+      }
+
+      function getEffectLabState() {
+        const axisWeights = Object.fromEntries(Array.from(effectLabWeightsEl.querySelectorAll("input[data-axis-weight]")).map((node) => [node.dataset.axisWeight, Number(node.value || 1)]));
+        return {
+          mode: effectLabModeEl.value,
+          explicitWeight: Number(effectLabExplicitEl.value || 0),
+          priorsWeight: Number(effectLabPriorsEl.value || 0),
+          heuristicsWeight: Number(effectLabHeuristicsEl.value || 0),
+          axisWeights
+        };
+      }
+
+      function inferAxisSignalScores(plan, baseline = {}) {
+        const steps = plan.steps || [];
+        const scoreFromMagnitude = (value) => {
+          const idx = MAGNITUDE.indexOf(String(value || "none").toLowerCase());
+          return Math.max(0, idx) / (MAGNITUDE.length - 1);
+        };
+        const heuristicsByAxis = {};
+        const priorsByAxis = {};
+        const explicitByAxis = {};
+        Object.values(EFFECT_AXES).forEach(([, axis]) => {
+          heuristicsByAxis[axis] = Number(baseline[axis] || 0);
+          priorsByAxis[axis] = Number(baseline[axis] || 0) * 0.7;
+          explicitByAxis[axis] = 0;
+        });
+        steps.forEach((step) => {
+          EFFECT_AXES.forEach(([effectKey, axis]) => {
+            const explicit = scoreFromMagnitude(step.effects?.[effectKey]);
+            explicitByAxis[axis] = Math.max(explicitByAxis[axis], explicit);
+          });
+          const text = `${step.description || ""} ${step.tool || ""}`.toLowerCase();
+          if (text.includes("prod") || text.includes("deploy") || text.includes("rollout")) heuristicsByAxis.stakeholder_radius = Math.max(heuristicsByAxis.stakeholder_radius || 0, 0.6);
+          if (text.includes("legal") || text.includes("compliance") || text.includes("regulat")) heuristicsByAxis.legal_exposure = Math.max(heuristicsByAxis.legal_exposure || 0, 0.6);
+          if (text.includes("data") || text.includes("migration") || text.includes("delete")) heuristicsByAxis.irreversibility = Math.max(heuristicsByAxis.irreversibility || 0, 0.5);
+          if (text.includes("audit") || text.includes("report")) priorsByAxis.resource_intensity = Math.max(priorsByAxis.resource_intensity || 0, 0.5);
+        });
+        return { explicitByAxis, priorsByAxis, heuristicsByAxis };
+      }
+
+      function applyEffectLabWeighting(baseline = {}, plan = {}) {
+        const state = getEffectLabState();
+        const signals = inferAxisSignalScores(plan, baseline);
+        const adjusted = {};
+        Object.entries(baseline || {}).forEach(([axis, base]) => {
+          const explicit = Number(signals.explicitByAxis[axis] || 0);
+          const priors = Number(signals.priorsByAxis[axis] || 0);
+          const heuristics = Number(signals.heuristicsByAxis[axis] || 0);
+          let signalBlend = Number(base || 0);
+          if (state.mode === "strict") {
+            signalBlend = explicit > 0 ? explicit * state.explicitWeight : priors > 0 ? priors * state.priorsWeight : heuristics * state.heuristicsWeight;
+          } else if (state.mode === "prioritized") {
+            signalBlend = priors * state.priorsWeight + explicit * (state.explicitWeight * 0.35) + heuristics * (state.heuristicsWeight * 0.2);
+          } else {
+            const denom = Math.max(0.001, state.explicitWeight + state.priorsWeight + state.heuristicsWeight);
+            signalBlend = ((explicit * state.explicitWeight) + (priors * state.priorsWeight) + (heuristics * state.heuristicsWeight)) / denom;
+          }
+          adjusted[axis] = Math.max(0, Math.min(1.5, signalBlend * Number(state.axisWeights[axis] || 1)));
+        });
+        return { adjusted, signals, state };
+      }
+
+      function effectLabDecision(aggregate = {}) {
+        const top = Math.max(0, ...Object.values(aggregate).map((v) => Number(v || 0)));
+        if (top >= 0.85) return "DENY";
+        if (top >= 0.55) return "ASK";
+        return "ALLOW";
+      }
+
+      function renderEffectLabComparison() {
+        if (!latestEvaluation?.aggregate) {
+          effectLabSummaryEl.textContent = "Run /evaluate to populate baseline aggregate scores.";
+          effectLabTableEl.innerHTML = "";
+          return;
+        }
+        const baseline = latestEvaluation.aggregate || {};
+        const plan = latestEvaluation.plan || {};
+        const { adjusted, state } = applyEffectLabWeighting(baseline, plan);
+        const baseDecision = effectLabDecision(baseline);
+        const adjustedDecision = effectLabDecision(adjusted);
+        effectLabSummaryEl.textContent = JSON.stringify({
+          precedence_mode: state.mode,
+          baseline_decision: baseDecision,
+          adjusted_decision: adjustedDecision,
+          note: "Explicit effects can dominate in strict mode, or be blended/overridden for domain-specific sensitivity analysis."
+        }, null, 2);
+        effectLabTableEl.innerHTML = "";
+        Object.keys(baseline).sort((a, b) => Number(adjusted[b] || 0) - Number(adjusted[a] || 0)).forEach((axis) => {
+          const b = Number(baseline[axis] || 0);
+          const a = Number(adjusted[axis] || 0);
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${axis}</td><td>${b.toFixed(3)}</td><td>${a.toFixed(3)}</td><td>${(a - b).toFixed(3)}</td>`;
+          effectLabTableEl.appendChild(tr);
+        });
+      }
       function renderStepRationales(steps = []) {
         rationaleTableEl.innerHTML = "";
         const rows = [];
@@ -713,6 +866,8 @@
         }), 300);
       }
 
+      async function loadCatalog() {
+        const [templates, tools, cases] = await Promise.all([fetch("/templates").then((r) => r.json()), fetch("/tools").then((r) => r.json()), fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))]);
       function renderCaseExplorer() {
         const query = (caseSearchEl.value || "").trim().toLowerCase();
         const domain = caseDomainFilterEl.value || "all";
@@ -835,6 +990,103 @@
         const payload = await res.json();
         decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
         resultEl.textContent = JSON.stringify({ trace_id: payload.trace_id, span_id: payload.span_id, summary: payload.summary, next_steps: payload.next_steps, telemetry: payload.telemetry }, null, 2);
+        latestEvaluation = { aggregate: payload.aggregate || {}, steps: payload.steps || [], plan };
+        renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
+        renderEffectLabComparison();
+      }
+
+      function buildStreamingEvents(plan) {
+        const steps = plan.steps || [];
+        if (!steps.length) return [];
+        const candidateIndex = Math.max(0, steps.length - 1);
+        const candidate = steps[candidateIndex];
+        const intensified = {
+          ...candidate,
+          description: `${candidate.description || "Step"} with broader production impact and uncertain dependencies`,
+          tool_category: candidate.tool_category || "prod"
+        };
+        const reviewStepId = `review-${candidate.id || "step"}`;
+        const reviewDepends = candidate.id ? [candidate.id] : [];
+        return [
+          {
+            event_id: "stream-update-main-step",
+            operation: "update_step",
+            step_id: String(candidate.id || "1"),
+            step: intensified,
+            context: { label: "Intensify current step scope" }
+          },
+          {
+            event_id: "stream-add-safety-review",
+            operation: "add_step",
+            step_id: reviewStepId,
+            step: {
+              id: reviewStepId,
+              description: "Add expanded rollback + post-deploy validation rationale",
+              tool: "pytest",
+              depends_on: reviewDepends
+            },
+            context: { label: "Add new validation step" }
+          }
+        ];
+      }
+
+      function summarizeStreaming(payload) {
+        const snapshots = [payload.initial, ...(payload.updates || [])];
+        const lines = [];
+        const priorByAxis = {};
+        snapshots.forEach((snapshot) => {
+          lines.push(`${snapshot.event_index}. ${snapshot.event_id} (${snapshot.operation}) => ${snapshot.decision}`);
+          Object.entries(snapshot.aggregate || {})
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .forEach(([axis, value]) => {
+              const previous = priorByAxis[axis];
+              const change = previous == null ? "" : ` (Δ ${(Number(value) - Number(previous)).toFixed(3)})`;
+              lines.push(`   • ${axis}: ${Number(value).toFixed(3)}${change}`);
+              priorByAxis[axis] = Number(value);
+            });
+
+          (snapshot.triggers || []).forEach((trigger) => {
+            if (trigger.kind === "threshold_crossed") {
+              lines.push(
+                `   ⚠ threshold crossed on ${trigger.axis}: ${Number(trigger.previous || 0).toFixed(3)} -> ${Number(trigger.current || 0).toFixed(3)} (limit ${Number(trigger.threshold || 0).toFixed(3)})`
+              );
+            } else {
+              lines.push(`   ↻ ${trigger.details || trigger.kind}`);
+            }
+          });
+
+          (snapshot.judge_output_deltas || []).forEach((stepDelta) => {
+            lines.push(`   Δ judge output for ${stepDelta.step_id}: ${stepDelta.changed_axes.join(", ") || "none"}`);
+            (stepDelta.axis_deltas || []).forEach((axisDelta) => {
+              const prevR = axisDelta.previous_rationale || "";
+              const currR = axisDelta.current_rationale || "";
+              if (prevR !== currR) {
+                lines.push(`      rationale[${axisDelta.axis}]: "${prevR}" -> "${currR}"`);
+              }
+            });
+          });
+        });
+        return lines.join("\n");
+      }
+
+      async function runStreamingEvaluation() {
+        const contract = JSON.parse(contractEl.value);
+        const plan = JSON.parse(planEl.value);
+        const events = buildStreamingEvents(plan);
+        const payload = await fetch("/evaluate_stream", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            contract,
+            plan,
+            events,
+            include_steps: false,
+            judge: "llm"
+          })
+        }).then((r) => r.json());
+
+        streamingEl.textContent = summarizeStreaming(payload);
         renderAggregate(payload.aggregate || {});
         renderStepRationales(payload.steps || []);
         renderContributions(plan, payload.steps || [], payload.aggregate || {});
@@ -1052,6 +1304,11 @@ ${body}`;
         sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
       }));
 
+      [effectLabModeEl, effectLabExplicitEl, effectLabPriorsEl, effectLabHeuristicsEl].forEach((node) => {
+        node.addEventListener("input", () => renderEffectLabComparison());
+        node.addEventListener("change", () => renderEffectLabComparison());
+      });
+
       planEl.addEventListener("input", () => {
         try { const plan = JSON.parse(planEl.value); renderDag(plan); renderWhatIfEditors(plan); scheduleAutoEvaluate(); }
         catch (_err) { /* continue editing invalid JSON */ }
@@ -1061,8 +1318,10 @@ ${body}`;
         catch (_err) { /* continue editing invalid JSON */ }
       });
 
+      renderEffectLabWeightControls();
       renderDag(defaultPlan);
       renderWhatIfEditors(defaultPlan);
+      renderEffectLabComparison();
       wizardDomainEl.addEventListener("change", () => {
         renderWizardVariantOptions();
         generateWizardDraft();
