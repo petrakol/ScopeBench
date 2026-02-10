@@ -1,28 +1,56 @@
-
 <img width="973" height="209" alt="ScopeBench_w copy" src="https://github.com/user-attachments/assets/066d740e-f8ad-4876-89c5-48604a5cc7a0" />
 
 # ScopeBench
 
-**ScopeBench** is an open-source MVP for **plan-level proportionality enforcement** ("scope alignment") for tool-using agents.
+**ScopeBench** is an open-source Python toolkit for **plan-level proportionality enforcement** ("scope alignment") in tool-using agents.
 
-It targets a failure mode that is *not* "evil intent" or "wrong values", but **scale mismatch**:
+It is designed for a specific failure mode:
 
-> The agent is directionally correct, but acts at an *inappropriate magnitude*, e.g.  
-> *"Charge my phone"* → *"Re-architect the power grid and deploy solar on another continent."*
+> The agent is directionally correct, but acts at the wrong *magnitude*.
+>
+> Example: *"Charge my phone"* → *"Re-architect the power grid and deploy solar internationally."*
 
-ScopeBench provides:
+Instead of only asking *"is this intent safe?"*, ScopeBench asks *"is this plan proportionate to the task contract?"*.
 
-- A **Task Contract** (human envelope) format with presets (Personal / Team / Enterprise / Regulated)
-- A **Plan DAG** format (steps, tools, dependencies)
-- A **Scope Vector** scoring engine across multiple axes (space/time/depth/irreversibility/etc.)
-- **Cumulative scope accounting** (resists "scope laundering" across steps)
-- A **policy engine** that returns `ALLOW / ASK / DENY` with a rationale
-- **OpenTelemetry tracing** hooks (OTel-first, replay-friendly)
-- A tiny starter **ScopeBench dataset** (JSONL) + tests
+---
 
-## Quickstart
+## Why ScopeBench
 
-### 1) Install
+ScopeBench helps you enforce bounded execution before actions run by combining:
+
+- **Task contracts**: explicit envelopes for acceptable scope (goal, constraints, thresholds).
+- **Plan DAGs**: step-wise plans with tools and dependencies.
+- **Multi-axis scoring**: scope vectors across spatial, temporal, depth, irreversibility, legal exposure, and more.
+- **Cumulative accounting**: captures risk accumulation across a plan to resist “scope laundering.”
+- **Policy decisions**: deterministic `ALLOW / ASK / DENY` outputs with rule-level rationale.
+- **Operational hooks**: OpenTelemetry support plus weekly telemetry/benchmark replay utilities.
+
+---
+
+## Features
+
+- Contract presets (`personal`, `team`, `enterprise`, `regulated`) with threshold envelopes.
+- DAG-aware aggregation over plan steps.
+- Coding-task policy checks such as:
+  - `read_before_write`
+  - `validation_after_write`
+- CLI modes for one-off runs, quickstarts, weekly calibration, and API serving.
+- HTTP API with optional:
+  - step-level vectors
+  - summary + next-step guidance
+  - patch suggestions
+  - lightweight telemetry fields
+  - shadow-mode effective decisions
+
+---
+
+## Installation
+
+### Requirements
+
+- Python **3.10+**
+
+### Install from source
 
 ```bash
 python -m venv .venv
@@ -31,57 +59,138 @@ pip install -U pip
 pip install -e ".[dev]"
 ```
 
-### 2) Run the demo (phone → solar overreach)
+---
+
+## Quickstart
+
+### 1) Run the canonical overreach example
 
 ```bash
 scopebench run examples/phone_charge.contract.yaml examples/phone_charge.plan.yaml
 ```
 
-You should see a `DENY` decision with axis-wise reasons.
+Expected result: a `DENY` decision with axis-specific reasons.
 
-Quickstart shortcut:
+### 2) Try built-in shortcuts
 
 ```bash
 scopebench quickstart
-```
-
-Coding quickstart:
-
-```bash
 scopebench coding-quickstart
 ```
 
-Weekly calibration (telemetry + benchmark replay):
-
-```bash
-scopebench weekly-calibrate <telemetry.jsonl>
-```
-
-### 3) Start the API
+### 3) Start the API server
 
 ```bash
 scopebench serve --host 0.0.0.0 --port 8080
 ```
 
-Then:
+Health check:
 
 ```bash
 curl -s http://localhost:8080/health
 ```
 
-The `/evaluate` response can include a short `summary` and `next_steps` (set `include_summary=true`), a `plan_patch_suggestion`, and lightweight telemetry fields (set `include_telemetry=true`, default) including optional `ask_action`/`outcome` feedback. You can also run in `shadow_mode=true` to return an `effective_decision` without blocking while still logging what enforcement would decide.
+---
 
-## Repository layout
+## CLI Reference
 
-- `scopebench/contracts.py` — contract schema + presets
+```bash
+scopebench run <contract.yaml> <plan.yaml> [--json] [--compact-json] [--otel-console] [--calibration-scale <float>]
+scopebench quickstart [--json] [--compact-json] [--otel-console]
+scopebench coding-quickstart [--json] [--compact-json] [--otel-console]
+scopebench weekly-calibrate <telemetry.jsonl> [--json]
+scopebench serve [--host 127.0.0.1] [--port 8080]
+```
+
+---
+
+## API Usage
+
+### `POST /evaluate`
+
+Provide a `contract` object and a `plan` object.
+
+Minimal request:
+
+```json
+{
+  "contract": {
+    "goal": "Fix a failing unit test",
+    "preset": "team"
+  },
+  "plan": {
+    "task": "Fix the failing unit test",
+    "steps": [
+      {"id": "1", "description": "Read failing test and source", "tool": "git_read"},
+      {"id": "2", "description": "Apply minimal patch", "tool": "git_patch", "depends_on": ["1"]},
+      {"id": "3", "description": "Run targeted test", "tool": "pytest", "depends_on": ["2"]}
+    ]
+  },
+  "include_summary": true,
+  "include_telemetry": true,
+  "shadow_mode": false
+}
+```
+
+Response includes:
+
+- `decision` and `effective_decision`
+- `reasons`, `exceeded`, `asked`
+- aggregate scores and step count
+- optional `summary`, `next_steps`, `plan_patch_suggestion`, and `telemetry`
+
+---
+
+## Examples Included
+
+The `examples/` folder includes scenarios such as:
+
+- phone charging overreach
+- coding bugfix
+- SWE fix workflow
+- coding refactor
+- test stabilization
+- operations key rotation
+
+These are useful for demos, CI checks, and policy tuning.
+
+---
+
+## Testing
+
+Run the test suite:
+
+```bash
+pytest
+```
+
+---
+
+## Project Structure
+
+- `scopebench/contracts.py` — task contract schema and presets
 - `scopebench/plan.py` — plan DAG schema
-- `scopebench/scoring/` — scoring rules and aggregation
-- `scopebench/policy/` — policy engine (`ALLOW/ASK/DENY`)
-- `scopebench/runtime/guard.py` — the main orchestrator
-- `scopebench/server/api.py` — FastAPI service
-- `scopebench/bench/` — dataset schema and rubric
-- `examples/` — runnable example contracts/plans
-- `docs/BLUEPRINT.md` — MVP→full system blueprint and roadmap
+- `scopebench/scoring/` — axis scoring and aggregation
+- `scopebench/policy/` — policy engine for `ALLOW/ASK/DENY`
+- `scopebench/runtime/guard.py` — orchestration entrypoint
+- `scopebench/server/api.py` — FastAPI app and response shaping
+- `scopebench/bench/` — benchmark/telemetry utilities
+- `scopebench/tool_registry.yaml` — tool metadata used by scoring/policy
+- `examples/` — runnable scenario inputs
+- `docs/BLUEPRINT.md` — long-term architecture and roadmap
+
+---
+
+## Development
+
+```bash
+ruff check .
+pytest
+```
+
+Contributions are welcome. See `CONTRIBUTING.md`.
+
+---
 
 ## License
 
