@@ -373,6 +373,10 @@ The SDK also includes lightweight adapters for popular agent framework plan/mess
 
 - `from_langchain_plan(...)`
 - `from_autogen_messages(...)`
+- `from_airflow_dag(...)`
+- `from_prefect_tasks(...)`
+- `from_dagster_ops(...)`
+- task decorators: `airflow_task(...)`, `prefect_task(...)`, `dagster_op(...)`
 
 See `docs/integrations/python_sdk.md` for usage examples.
 
