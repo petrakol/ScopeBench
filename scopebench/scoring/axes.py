@@ -96,6 +96,27 @@ class ScopeAggregate(BaseModel):
         }
 
 
+def combine_aggregates(aggregates: list[ScopeAggregate]) -> ScopeAggregate:
+    """Combine multiple aggregates into a global envelope aggregate."""
+    if not aggregates:
+        raise ValueError("Cannot combine empty aggregates.")
+
+    combined = {axis: max(getattr(agg, axis) for agg in aggregates) for axis in SCOPE_AXES}
+    return ScopeAggregate(
+        spatial=combined["spatial"],
+        temporal=combined["temporal"],
+        depth=combined["depth"],
+        irreversibility=combined["irreversibility"],
+        resource_intensity=combined["resource_intensity"],
+        legal_exposure=combined["legal_exposure"],
+        dependency_creation=combined["dependency_creation"],
+        stakeholder_radius=combined["stakeholder_radius"],
+        power_concentration=combined["power_concentration"],
+        uncertainty=combined["uncertainty"],
+        n_steps=sum(agg.n_steps for agg in aggregates),
+    )
+
+
 SCOPE_AXES: Tuple[str, ...] = (
     "spatial",
     "temporal",

@@ -12,8 +12,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from scopebench.contracts import TaskContract
 from scopebench.plan import PlanDAG
 from scopebench.runtime.guard import evaluate
+from scopebench.scoring.axes import combine_aggregates
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
-from scopebench.tracing.otel import init_tracing
+from scopebench.scoring.rules import build_budget_ledger
+from scopebench.session import MultiAgentSession
+from scopebench.tracing.otel import get_tracer, init_tracing
 
 SWE_READ_TOOLS = {"git_read", "file_read"}
 SWE_WRITE_TOOLS = {"git_patch", "git_rewrite", "file_write"}
@@ -203,6 +206,31 @@ class EvaluateResponse(BaseModel):
     policy_input: Optional[Dict[str, Any]] = None
 
 
+class EvaluateSessionRequest(BaseModel):
+    session: Dict[str, Any] = Field(..., description="MultiAgentSession as dict")
+    include_steps: bool = Field(False, description="Include step-level vectors and rationales.")
+    include_telemetry: bool = Field(
+        True, description="Include lightweight evaluation telemetry fields."
+    )
+    policy_backend: Optional[str] = Field(
+        None, description="Policy backend override: python|opa|cedar."
+    )
+
+
+class SessionAggregateDetail(BaseModel):
+    aggregate: Dict[str, float]
+    ledger: Dict[str, Dict[str, float]]
+    decision: str
+
+
+class EvaluateSessionResponse(BaseModel):
+    decision: str
+    per_agent: Dict[str, SessionAggregateDetail]
+    global_: SessionAggregateDetail = Field(..., alias="global")
+
+    model_config = {"populate_by_name": True}
+
+
 def _summarize_response(policy, aggregate, effective_decision: str) -> str:
     top_axes = sorted(aggregate.items(), key=lambda item: item[1], reverse=True)[:3]
     axes_text = ", ".join(f"{axis}={value:.2f}" for axis, value in top_axes)
@@ -364,6 +392,7 @@ def _telemetry_row(
 
 def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Optional[str] = None) -> FastAPI:
     init_tracing(enable_console=False)
+    tracer = get_tracer("scopebench")
     app = FastAPI(title="ScopeBench", version="0.1.0")
     configured_telemetry_path = telemetry_jsonl_path or os.getenv("SCOPEBENCH_TELEMETRY_JSONL_PATH")
 
@@ -495,29 +524,64 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             policy_input=policy_input_payload,
         )
 
-    @app.post(
-        "/evaluate_session",
-        response_model=EvaluateResponse,
-        openapi_extra={
-            "requestBody": {
-                "content": {
-                    "application/json": {
-                        "example": EvaluateRequest.model_config["json_schema_extra"]["example"]
-                    }
-                }
-            },
-            "responses": {
-                "200": {
-                    "content": {
-                        "application/json": {
-                            "example": EvaluateResponse.model_config["json_schema_extra"]["example"]
-                        }
-                    }
-                }
-            },
-        },
-    )
-    def evaluate_session_endpoint(req: EvaluateRequest):
-        return evaluate_endpoint(req)
+    @app.post("/evaluate_session", response_model=EvaluateSessionResponse)
+    def evaluate_session_endpoint(req: EvaluateSessionRequest):
+        session = MultiAgentSession.model_validate(req.session)
+        backend = req.policy_backend or default_policy_backend
+
+        per_agent: Dict[str, SessionAggregateDetail] = {}
+        agent_aggregates = []
+        global_plans: List[PlanDAG] = []
+        global_decision = "ALLOW"
+
+        for agent in sorted(session.agents, key=lambda item: item.agent_id):
+            agent_plans = session.plans_for(agent.agent_id)
+            contract = session.contract_for(agent.agent_id)
+            global_plans.extend(agent_plans)
+
+            with tracer.start_as_current_span("scopebench.evaluate_session.agent") as span:
+                span.set_attribute("scopebench.agent_id", agent.agent_id)
+                span.set_attribute("scopebench.agent_plan_count", len(agent_plans))
+                agent_results = [evaluate(contract, plan, policy_backend=backend) for plan in agent_plans]
+            agent_aggregate = combine_aggregates([result.aggregate for result in agent_results])
+            agent_decision = "ALLOW"
+            for result in agent_results:
+                if result.policy.decision.value == "DENY":
+                    agent_decision = "DENY"
+                    break
+                if result.policy.decision.value == "ASK":
+                    agent_decision = "ASK"
+
+            agent_ledger = build_budget_ledger(contract, agent_plans)
+            if any(entry["exceeded"] > 0 for entry in agent_ledger.values()) and agent_decision != "DENY":
+                agent_decision = "ASK"
+
+            per_agent[agent.agent_id] = SessionAggregateDetail(
+                aggregate=agent_aggregate.as_dict(),
+                ledger=agent_ledger,
+                decision=agent_decision,
+            )
+            agent_aggregates.append(agent_aggregate)
+
+            if agent_decision == "DENY":
+                global_decision = "DENY"
+            elif agent_decision == "ASK" and global_decision != "DENY":
+                global_decision = "ASK"
+
+        global_aggregate = combine_aggregates(agent_aggregates)
+        global_ledger = build_budget_ledger(session.global_contract, global_plans)
+        if any(entry["exceeded"] > 0 for entry in global_ledger.values()) and global_decision != "DENY":
+            global_decision = "ASK"
+
+        global_scope = SessionAggregateDetail(
+            aggregate=global_aggregate.as_dict(),
+            ledger=global_ledger,
+            decision=global_decision,
+        )
+        return EvaluateSessionResponse(
+            decision=global_decision,
+            per_agent=per_agent,
+            global_=global_scope,
+        )
 
     return app

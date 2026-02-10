@@ -163,6 +163,26 @@ Response includes:
 - aggregate scores and step count
 - optional `summary`, `next_steps`, `plan_patch_suggestion`, and `telemetry`
 
+
+### `POST /evaluate_session`
+
+Evaluate a multi-agent session with a shared global contract, per-agent plans, and global budget enforcement.
+
+Example:
+
+```bash
+curl -s http://localhost:8080/evaluate_session \
+  -H 'content-type: application/json' \
+  -d @examples/multi_agent_session.json
+```
+
+Response includes:
+
+- `decision` (global)
+- `per_agent.<agent_id>.aggregate` and `per_agent.<agent_id>.ledger`
+- `global.aggregate` and `global.ledger`
+
+
 ---
 
 ## Examples Included

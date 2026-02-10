@@ -662,6 +662,30 @@ def test_policy_input_v1_and_audit_metadata_in_api_response():
     assert body["policy_input"]["policy_input_version"] == "v1"
 
 
+def test_multi_agent_session_schema_requires_bound_agent_ids():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        from scopebench.session import MultiAgentSession
+
+        MultiAgentSession.model_validate(
+            {
+                "global_contract": {"goal": "Coordinate fixes", "preset": "team"},
+                "agents": [{"agent_id": "agent-a"}],
+                "plans": [
+                    {
+                        "agent_id": "agent-b",
+                        "plan": {
+                            "task": "Fix unit test",
+                            "steps": [{"id": "1", "description": "Read test", "tool": "git_read"}],
+                        },
+                    }
+                ],
+            }
+        )
+
+
+def test_evaluate_session_returns_per_agent_and_global_aggregates():
 def test_plan_step_accepts_optional_benefit_fields():
     plan = PlanDAG.model_validate(
         {
@@ -688,6 +712,158 @@ def test_api_include_steps_serializes_benefit_fields():
 
     client = TestClient(app)
     payload = {
+        "session": {
+            "global_contract": {
+                "goal": "Coordinate fixes",
+                "preset": "team",
+                "budgets": {"cost_usd": 100.0, "time_horizon_days": 5.0, "max_tool_calls": 4},
+            },
+            "agents": [{"agent_id": "agent-a"}, {"agent_id": "agent-b"}],
+            "plans": [
+                {
+                    "agent_id": "agent-a",
+                    "plan": {
+                        "task": "Fix parser bug",
+                        "steps": [
+                            {"id": "1", "description": "Read failing test", "tool": "git_read"},
+                            {
+                                "id": "2",
+                                "description": "Apply patch",
+                                "tool": "git_patch",
+                                "depends_on": ["1"],
+                            },
+                            {
+                                "id": "3",
+                                "description": "Run targeted tests",
+                                "tool": "pytest",
+                                "depends_on": ["2"],
+                            },
+                        ],
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "plan": {
+                        "task": "Validate parser bug",
+                        "steps": [
+                            {"id": "1", "description": "Review patch impact", "tool": "analysis"}
+                        ],
+                    },
+                },
+            ],
+        }
+    }
+
+    response = client.post("/evaluate_session", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert "agent-a" in body["per_agent"]
+    assert "aggregate" in body["per_agent"]["agent-a"]
+    assert "global" in body
+    assert "aggregate" in body["global"]
+
+
+def test_evaluate_session_global_budget_can_trigger_ask():
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "session": {
+            "global_contract": {
+                "goal": "Coordinate fixes",
+                "preset": "team",
+                "budgets": {"cost_usd": 100.0, "time_horizon_days": 5.0, "max_tool_calls": 2},
+            },
+            "agents": [
+                {
+                    "agent_id": "agent-a",
+                    "contract": {
+                        "goal": "Fix parser bug",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 100.0, "time_horizon_days": 5.0, "max_tool_calls": 3},
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "contract": {
+                        "goal": "Validate parser bug",
+                        "preset": "team",
+                        "budgets": {"cost_usd": 100.0, "time_horizon_days": 5.0, "max_tool_calls": 2},
+                    },
+                },
+            ],
+            "plans": [
+                {
+                    "agent_id": "agent-a",
+                    "plan": {
+                        "task": "Fix parser bug",
+                        "steps": [
+                            {"id": "1", "description": "Read failing test", "tool": "git_read"},
+                            {
+                                "id": "2",
+                                "description": "Apply patch",
+                                "tool": "git_patch",
+                                "depends_on": ["1"],
+                            },
+                        ],
+                    },
+                },
+                {
+                    "agent_id": "agent-b",
+                    "plan": {
+                        "task": "Validate parser bug",
+                        "steps": [
+                            {"id": "1", "description": "Inspect patch", "tool": "analysis"},
+                            {"id": "2", "description": "Run targeted tests", "tool": "pytest", "depends_on": ["1"]},
+                        ],
+                    },
+                },
+            ],
+        }
+    }
+
+    response = client.post("/evaluate_session", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["global"]["ledger"]["max_tool_calls"]["exceeded"] == 1.0
+    assert body["per_agent"]["agent-a"]["ledger"]["max_tool_calls"]["exceeded"] == 0.0
+    assert body["per_agent"]["agent-b"]["ledger"]["max_tool_calls"]["exceeded"] == 0.0
+    assert body["decision"] in {"ASK", "DENY"}
+
+
+def test_evaluate_session_is_deterministic_for_same_input():
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "session": {
+            "global_contract": {"goal": "Coordinate fixes", "preset": "team"},
+            "agents": [{"agent_id": "agent-a"}],
+            "plans": [
+                {
+                    "agent_id": "agent-a",
+                    "plan": {
+                        "task": "Fix parser bug",
+                        "steps": [
+                            {"id": "1", "description": "Read failing test", "tool": "git_read"},
+                            {
+                                "id": "2",
+                                "description": "Apply patch",
+                                "tool": "git_patch",
+                                "depends_on": ["1"],
+                            },
+                        ],
+                    },
+                }
+            ],
+        }
+    }
+
+    first = client.post("/evaluate_session", json=payload).json()
+    second = client.post("/evaluate_session", json=payload).json()
+    assert first == second
         "contract": {"goal": "Fix bug", "preset": "team"},
         "plan": {
             "task": "Fix bug",
