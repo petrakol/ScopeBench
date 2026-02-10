@@ -168,6 +168,9 @@ scopebench continuous-learn <telemetry.jsonl> --benchmark scopebench/bench/cases
 python -m scopebench.redteam.generate --count 120 --seed 7 --output scopebench/bench/cases/redteam.jsonl
 scopebench judge-bench scopebench/bench/cases/redteam.jsonl --judge heuristic
 scopebench serve [--host 127.0.0.1] [--port 8080] [--policy-backend python|opa|cedar]
+scopebench dataset-validate <cases.jsonl>
+scopebench dataset-suggest --id <case_id> --domain <domain> --instruction <text> --contract <contract.yaml> --plan <plan.yaml> --expected-decision ALLOW|ASK|DENY --expected-rationale <text> [--append-to <cases.jsonl>]
+scopebench dataset-pr --title <title> --body <body>
 ```
 
 ---
@@ -217,6 +220,14 @@ When calling `POST /evaluate`, these flags are especially useful during integrat
 - `include_patch`: include a patch-style plan transformation suggestion.
 - `include_telemetry`: include telemetry payload fields for logging/replay.
 - `shadow_mode`: run checks in shadow mode while preserving production behavior.
+
+
+### Community dataset contribution endpoints
+
+- `POST /dataset/validate` validates a single case object against the rubric/schema requirements (`case_schema_version`, required fields, one vector per step, and axis values in `[0,1]`).
+- `POST /dataset/suggest` takes draft metadata + contract/plan and returns a case with `expected_step_vectors` auto-filled from the current evaluator for annotation bootstrap.
+
+These are exposed in the interactive `/ui` through **Validate case draft** and **Suggest vectors** actions in the Dataset Contribution Draft panel.
 
 ### `POST /evaluate_stream`
 

@@ -10,6 +10,12 @@ from rich.console import Console
 from rich.table import Table
 
 from scopebench.bench.judge import run_judge_bench
+from scopebench.bench.community import (
+    append_case,
+    submit_pull_request,
+    suggest_case,
+    validate_cases_file,
+)
 from scopebench.bench.plugin_harness import run_plugin_test_harness
 from scopebench.bench.continuous_learning import (
     analyze_continuous_learning,
@@ -553,6 +559,65 @@ def judge_bench(
 
     if payload["error_case_ids"]:
         raise typer.Exit(code=1)
+
+
+@app.command("dataset-validate")
+def dataset_validate(cases_jsonl: Path = typer.Argument(..., help="Path to cases JSONL.")):
+    """Validate a community dataset file against ScopeBench schema and calibration constraints."""
+    cases = validate_cases_file(cases_jsonl)
+    payload = {"ok": True, "path": str(cases_jsonl), "count": len(cases)}
+    console.print_json(json.dumps(payload))
+
+
+@app.command("dataset-suggest")
+def dataset_suggest(
+    case_id: str = typer.Option(..., "--id", help="Case id"),
+    domain: str = typer.Option(..., help="Case domain"),
+    instruction: str = typer.Option(..., help="User instruction / task statement"),
+    contract_path: Path = typer.Option(..., "--contract", help="Contract YAML path"),
+    plan_path: Path = typer.Option(..., "--plan", help="Plan YAML path"),
+    expected_decision: str = typer.Option(..., "--expected-decision", help="ALLOW|ASK|DENY"),
+    expected_rationale: str = typer.Option(..., "--expected-rationale", help="Gold rationale"),
+    notes: str | None = typer.Option(None, "--notes", help="Optional notes"),
+    policy_backend: str = typer.Option("python", "--policy-backend", help="Policy backend used to prefill vectors."),
+    out: Path | None = typer.Option(None, "--out", help="Write case JSON to path instead of stdout."),
+    append_to: Path | None = typer.Option(None, "--append-to", help="Append generated case to dataset JSONL."),
+):
+    """Generate a schema-valid case draft with auto-filled step vectors from current evaluator."""
+    case = suggest_case(
+        case_id=case_id,
+        domain=domain,
+        instruction=instruction,
+        contract_path=contract_path,
+        plan_path=plan_path,
+        expected_decision=expected_decision,
+        expected_rationale=expected_rationale,
+        notes=notes,
+        policy_backend=policy_backend,
+    )
+    if append_to is not None:
+        append_case(append_to, case)
+    payload = {"case": case, "appended_to": str(append_to) if append_to else None}
+    if out is not None:
+        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        console.print_json(json.dumps({"ok": True, "out": str(out), "appended_to": payload["appended_to"]}))
+    else:
+        console.print_json(json.dumps(payload))
+
+
+@app.command("dataset-pr")
+def dataset_pr(
+    title: str = typer.Option(..., "--title", help="Pull request title"),
+    body: str = typer.Option(..., "--body", help="Pull request body"),
+    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+):
+    """Create a pull request for dataset contributions using gh CLI."""
+    url = submit_pull_request(title=title, body=body)
+    payload = {"url": url}
+    if json_out:
+        console.print_json(json.dumps(payload))
+    else:
+        console.print(f"Created PR: {url}")
 
 
 @app.command()

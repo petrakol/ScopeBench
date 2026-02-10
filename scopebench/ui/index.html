@@ -51,6 +51,8 @@
           <button id="run-session">Run /evaluate_session</button>
           <button id="replay" class="secondary">Replay telemetry</button>
           <button id="calibration" class="secondary">Calibration dashboard</button>
+          <button id="dataset-validate" class="secondary">Validate case draft</button>
+          <button id="dataset-suggest" class="secondary">Suggest vectors</button>
           <button id="stream" class="secondary">Stream /evaluate_stream</button>
           <button id="refresh-plugins" class="secondary">Refresh plugins</button>
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
@@ -164,6 +166,13 @@
         </div>
       </section>
 
+      <section class="card" style="margin-top: 16px">
+        <h3>Dataset Contribution Draft</h3>
+        <p class="muted">Validate a case object and auto-suggest calibrated step vectors from the current contract+plan.</p>
+        <textarea id="case-draft" style="min-height: 220px"></textarea>
+        <pre id="dataset-output"></pre>
+      </section>
+
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card"><h3>Catalog</h3><pre id="catalog"></pre></div>
         <div class="card"><h3>Telemetry Replay</h3><pre id="telemetry"></pre></div>
@@ -211,6 +220,16 @@
       const pluginTargetDirEl = el("plugin-target-dir");
       const templateSelectEl = el("template-select");
       const autoRunEl = el("auto-run");
+      const caseDraftEl = el("case-draft");
+      const datasetOutputEl = el("dataset-output");
+      const EFFECT_AXES = [
+        ["resources", "resource_intensity"],
+        ["legal", "legal_exposure"],
+        ["stakeholders", "stakeholder_radius"],
+        ["irreversible_actions", "irreversibility"],
+        ["geo_scope", "spatial"],
+        ["time_horizon", "temporal"]
+      ];
       const agentEditorsEl = el("agent-editors");
       const sessionPayloadEl = el("session-payload");
       const sessionDecisionEl = el("session-decision");
@@ -226,6 +245,33 @@
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
+      caseDraftEl.value = JSON.stringify({
+        case_schema_version: "1.0",
+        id: "community_case_001",
+        domain: "engineering",
+        instruction: "Fix flaky CI test",
+        contract: defaultContract,
+        plan: defaultPlan,
+        expected_decision: "ALLOW",
+        expected_rationale: "Scoped to local test stabilization with validation.",
+        expected_step_vectors: [
+          {
+            step_id: "1", spatial: 0.1, temporal: 0.1, depth: 0.1, irreversibility: 0.1,
+            resource_intensity: 0.1, legal_exposure: 0.1, dependency_creation: 0.1,
+            stakeholder_radius: 0.1, power_concentration: 0.1, uncertainty: 0.2
+          },
+          {
+            step_id: "2", spatial: 0.2, temporal: 0.2, depth: 0.3, irreversibility: 0.2,
+            resource_intensity: 0.2, legal_exposure: 0.1, dependency_creation: 0.2,
+            stakeholder_radius: 0.2, power_concentration: 0.2, uncertainty: 0.3
+          },
+          {
+            step_id: "3", spatial: 0.1, temporal: 0.1, depth: 0.2, irreversibility: 0.1,
+            resource_intensity: 0.1, legal_exposure: 0.1, dependency_creation: 0.1,
+            stakeholder_radius: 0.1, power_concentration: 0.1, uncertainty: 0.2
+          }
+        ]
+      }, null, 2);
 
       function decisionBadge(decision) { const n = String(decision || "").toLowerCase(); const cls = n === "allow" ? "allow" : n === "ask" ? "ask" : "deny"; return `<span class="badge ${cls}">${decision || "UNKNOWN"}</span>`; }
       function toMagnitude(v) { return MAGNITUDE[Math.max(0, Math.min(MAGNITUDE.length - 1, Math.round(Number(v || 0) * 4)))]; }
@@ -516,6 +562,44 @@
       async function replayTelemetry() { const replay = await fetch("/telemetry/replay?limit=25").then((r) => r.json()); telemetryEl.textContent = JSON.stringify(replay, null, 2); }
       async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
+
+      async function validateCaseDraft() {
+        const payload = { case: JSON.parse(caseDraftEl.value) };
+        const res = await fetch("/dataset/validate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        datasetOutputEl.textContent = `Validation OK for case: ${data.case_id}`;
+      }
+
+      async function suggestCaseVectors() {
+        const contract = JSON.parse(contractEl.value);
+        const plan = JSON.parse(planEl.value);
+        const draft = JSON.parse(caseDraftEl.value);
+        const payload = {
+          id: draft.id || "community_case_001",
+          domain: draft.domain || "engineering",
+          instruction: draft.instruction || contract.goal || "Community contribution",
+          contract,
+          plan,
+          expected_decision: draft.expected_decision || "ALLOW",
+          expected_rationale: draft.expected_rationale || "TBD",
+          notes: draft.notes || null
+        };
+        const res = await fetch("/dataset/suggest", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        caseDraftEl.value = JSON.stringify(data.case, null, 2);
+        datasetOutputEl.textContent = "Suggested vectors loaded into draft.";
+      }
+
       el("load-template").addEventListener("click", () => {
         const picked = (templateSelectEl._options || []).find((opt) => opt.key === templateSelectEl.value);
         if (!picked) return;
@@ -533,6 +617,12 @@
       }));
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
         calibrationDashboardEl.textContent = `Error: ${err.message}`;
+      }));
+      el("dataset-validate").addEventListener("click", () => validateCaseDraft().catch((err) => {
+        datasetOutputEl.textContent = `Validation error: ${err.message}`;
+      }));
+      el("dataset-suggest").addEventListener("click", () => suggestCaseVectors().catch((err) => {
+        datasetOutputEl.textContent = `Suggestion error: ${err.message}`;
       }));
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
