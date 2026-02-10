@@ -43,6 +43,7 @@ def evaluate(
     plan: PlanDAG,
     tool_registry: Optional[ToolRegistry] = None,
     calibration: Optional[CalibratedDecisionThresholds] = None,
+    policy_backend: Optional[str] = None,
 ) -> EvaluationResult:
     tracer = get_tracer("scopebench")
 
@@ -86,7 +87,13 @@ def evaluate(
             span.set_attribute(f"scopebench.aggregate.{axis}", float(val))
         span.set_attribute("scopebench.n_steps", agg.n_steps)
 
-        policy = evaluate_policy(contract, agg, step_vectors=vectors, plan=plan)
+        policy = evaluate_policy(
+            contract,
+            agg,
+            step_vectors=vectors,
+            plan=plan,
+            policy_backend=policy_backend,
+        )
         span.set_attribute("scopebench.decision", policy.decision.value)
 
         return EvaluationResult(
@@ -102,7 +109,8 @@ def evaluate_from_files(
     contract_path: str,
     plan_path: str,
     calibration: Optional[CalibratedDecisionThresholds] = None,
+    policy_backend: Optional[str] = None,
 ) -> EvaluationResult:
     contract = load_contract(contract_path)
     plan = load_plan(plan_path)
-    return evaluate(contract, plan, calibration=calibration)
+    return evaluate(contract, plan, calibration=calibration, policy_backend=policy_backend)

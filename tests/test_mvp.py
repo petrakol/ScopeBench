@@ -14,11 +14,13 @@ sys.path.insert(0, str(ROOT))
 from scopebench.bench.weekly import replay_benchmark_slice, summarize_weekly_telemetry  # noqa: E402
 from scopebench.contracts import TaskContract  # noqa: E402
 from scopebench.plan import PlanDAG  # noqa: E402
+from scopebench.policy.backends.factory import get_policy_backend  # noqa: E402
 from scopebench.policy.engine import evaluate_policy  # noqa: E402
 from scopebench.runtime.guard import evaluate  # noqa: E402
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector  # noqa: E402
 from scopebench.scoring.rules import aggregate_scope  # noqa: E402
 from scopebench.server.api import (  # noqa: E402
+    create_app,
     _build_telemetry,
     _effective_decision,
     _next_steps_from_policy,
@@ -471,3 +473,62 @@ def test_weekly_telemetry_summary_and_benchmark_replay(tmp_path: Path):
     replay = replay_benchmark_slice(ROOT)
     assert replay
     assert all(item.ok for item in replay)
+
+
+def test_backend_selection_from_env(monkeypatch):
+    monkeypatch.setenv("SCOPEBENCH_POLICY_BACKEND", "opa")
+    backend = get_policy_backend()
+    assert backend.name == "opa"
+
+
+def test_backend_override_argument_wins():
+    backend = get_policy_backend("cedar")
+    assert backend.name == "cedar"
+
+
+def test_opa_backend_matches_python_on_examples():
+    dataset_path = ROOT / "scopebench/bench/cases/examples.jsonl"
+    rows = [json.loads(line) for line in dataset_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for row in rows:
+        contract = TaskContract.model_validate(row["contract"])
+        plan = PlanDAG.model_validate(row["plan"])
+        res_python = evaluate(contract, plan, policy_backend="python")
+        res_opa = evaluate(contract, plan, policy_backend="opa")
+        assert res_opa.policy.decision == res_python.policy.decision
+        assert set(res_opa.policy.exceeded.keys()) == set(res_python.policy.exceeded.keys())
+
+
+def test_cedar_backend_matches_python_on_examples():
+    dataset_path = ROOT / "scopebench/bench/cases/examples.jsonl"
+    rows = [json.loads(line) for line in dataset_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    for row in rows:
+        contract = TaskContract.model_validate(row["contract"])
+        plan = PlanDAG.model_validate(row["plan"])
+        res_python = evaluate(contract, plan, policy_backend="python")
+        res_cedar = evaluate(contract, plan, policy_backend="cedar")
+        assert res_cedar.policy.decision == res_python.policy.decision
+
+
+def test_policy_input_v1_and_audit_metadata_in_api_response():
+    app = create_app(default_policy_backend="python")
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    payload = {
+        "contract": {"goal": "Fix failing unit test", "preset": "team"},
+        "plan": {
+            "task": "Fix failing unit test",
+            "steps": [
+                {"id": "1", "description": "Read failing test", "tool": "git_read"},
+                {"id": "2", "description": "Patch code", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        },
+        "include_telemetry": True,
+    }
+    response = client.post("/evaluate", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["policy_backend"] == "python"
+    assert body["policy_version"]
+    assert body["policy_hash"]
+    assert body["policy_input"]["policy_input_version"] == "v1"

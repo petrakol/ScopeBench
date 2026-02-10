@@ -92,6 +92,30 @@ curl -s http://localhost:8080/health
 
 ---
 
+### 4) Run with OPA backend
+
+Start OPA with the bundled Rego policy:
+
+```bash
+opa run --server --addr :8181 scopebench/policy/opa/policy.rego
+```
+
+In another shell, start ScopeBench using OPA backend:
+
+```bash
+scopebench serve --host 0.0.0.0 --port 8080 --policy-backend opa
+```
+
+Evaluate a plan:
+
+```bash
+curl -s http://localhost:8080/evaluate \
+  -H 'content-type: application/json' \
+  -d '{"contract":{"goal":"Fix failing unit test","preset":"team"},"plan":{"task":"Fix failing unit test","steps":[{"id":"1","description":"Read failing test","tool":"git_read"},{"id":"2","description":"Apply patch","tool":"git_patch","depends_on":["1"]},{"id":"3","description":"Run test","tool":"analysis","depends_on":["2"]}]},"include_telemetry":true}'
+```
+
+---
+
 ## CLI Reference
 
 ```bash
@@ -99,7 +123,7 @@ scopebench run <contract.yaml> <plan.yaml> [--json] [--compact-json] [--otel-con
 scopebench quickstart [--json] [--compact-json] [--otel-console]
 scopebench coding-quickstart [--json] [--compact-json] [--otel-console]
 scopebench weekly-calibrate <telemetry.jsonl> [--json]
-scopebench serve [--host 127.0.0.1] [--port 8080]
+scopebench serve [--host 127.0.0.1] [--port 8080] [--policy-backend python|opa|cedar]
 ```
 
 ---

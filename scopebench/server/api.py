@@ -38,6 +38,9 @@ class EvaluateRequest(BaseModel):
     calibration_scale: Optional[float] = Field(
         None, ge=0.0, description="Optional scale for aggregate scores."
     )
+    policy_backend: Optional[str] = Field(
+        None, description="Policy backend override: python|opa|cedar."
+    )
 
 
 class AxisDetail(BaseModel):
@@ -55,6 +58,7 @@ class StepDetail(BaseModel):
 
 class TelemetryDetail(BaseModel):
     preset: str
+    policy_input_version: str
     task_type: str
     plan_size: int
     decision: str
@@ -67,6 +71,9 @@ class TelemetryDetail(BaseModel):
 
 class EvaluateResponse(BaseModel):
     decision: str
+    policy_backend: str
+    policy_version: str
+    policy_hash: str
     effective_decision: str
     shadow_mode: bool
     reasons: list[str]
@@ -79,6 +86,7 @@ class EvaluateResponse(BaseModel):
     next_steps: Optional[List[str]] = None
     plan_patch_suggestion: Optional[List[Dict[str, Any]]] = None
     telemetry: Optional[TelemetryDetail] = None
+    policy_input: Optional[Dict[str, Any]] = None
 
 
 def _summarize_response(policy, aggregate, effective_decision: str) -> str:
@@ -193,6 +201,7 @@ def _build_telemetry(
     triggered = sorted(set(policy.exceeded.keys()) | set(policy.asked.keys()))
     return TelemetryDetail(
         preset=contract.preset.value,
+        policy_input_version="v1",
         task_type=_infer_task_type(contract, plan),
         plan_size=len(plan.steps),
         decision=policy.decision.value,
@@ -210,7 +219,7 @@ def _effective_decision(policy_decision: str, shadow_mode: bool) -> str:
     return policy_decision
 
 
-def create_app() -> FastAPI:
+def create_app(default_policy_backend: str = "python") -> FastAPI:
     init_tracing(enable_console=False)
     app = FastAPI(title="ScopeBench", version="0.1.0")
 
@@ -225,7 +234,8 @@ def create_app() -> FastAPI:
         calibration = None
         if req.calibration_scale is not None:
             calibration = CalibratedDecisionThresholds(global_scale=req.calibration_scale)
-        res = evaluate(contract, plan, calibration=calibration)
+        backend = req.policy_backend or default_policy_backend
+        res = evaluate(contract, plan, calibration=calibration, policy_backend=backend)
         pol = res.policy
 
         decision = pol.decision.value
@@ -278,6 +288,9 @@ def create_app() -> FastAPI:
 
         return EvaluateResponse(
             decision=decision,
+            policy_backend=pol.policy_backend,
+            policy_version=pol.policy_version,
+            policy_hash=pol.policy_hash,
             effective_decision=effective_decision,
             shadow_mode=req.shadow_mode,
             reasons=reasons,
@@ -292,6 +305,7 @@ def create_app() -> FastAPI:
             next_steps=next_steps,
             plan_patch_suggestion=patch_suggestion,
             telemetry=telemetry,
+            policy_input=(pol.policy_input.__dict__ if (req.include_telemetry and pol.policy_input) else None),
         )
 
     return app

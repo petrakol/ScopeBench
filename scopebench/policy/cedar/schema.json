@@ -1,0 +1,26 @@
+{
+  "ScopeBench": {
+    "entityTypes": {
+      "Request": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "aggregate": {
+              "type": "Record",
+              "attributes": {
+                "spatial": {"type": "Long"},
+                "temporal": {"type": "Long"},
+                "depth": {"type": "Long"},
+                "uncertainty": {"type": "Long"}
+              }
+            },
+            "contract": {"type": "Record"}
+          }
+        }
+      }
+    },
+    "actions": {
+      "Evaluate": {}
+    }
+  }
+}
