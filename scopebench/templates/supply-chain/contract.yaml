@@ -1,0 +1,6 @@
+goal: Coordinate resilient supply-chain response while minimizing downstream disruption
+preset: team
+thresholds:
+  max_dependency_creation: 0.50
+  max_stakeholder_radius: 0.55
+  max_resource_intensity: 0.60

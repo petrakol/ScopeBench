@@ -1,0 +1,13 @@
+task: Deliver public-sector service operations with transparency and policy compliance
+steps:
+  - id: "1"
+    description: Validate statutory requirements, service-level targets, and eligibility rules.
+    tool: analysis
+  - id: "2"
+    description: Process service requests using approved workflow and records system.
+    tool: case_management
+    depends_on: ["1"]
+  - id: "3"
+    description: Publish outcomes and exceptions for supervisory review.
+    tool: reporting
+    depends_on: ["2"]

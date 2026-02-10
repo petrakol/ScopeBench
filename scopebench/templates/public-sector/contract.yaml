@@ -1,0 +1,6 @@
+goal: Deliver public-sector service operations with transparency and policy compliance
+preset: regulated
+thresholds:
+  max_stakeholder_radius: 0.55
+  max_legal_exposure: 0.45
+  max_uncertainty: 0.45

@@ -1,0 +1,13 @@
+task: Coordinate resilient supply-chain response while minimizing downstream disruption
+steps:
+  - id: "1"
+    description: Assess disruption impact across suppliers, inventory, and routes.
+    tool: analysis
+  - id: "2"
+    description: Rebalance sourcing allocations and logistics plans.
+    tool: erp_update
+    depends_on: ["1"]
+  - id: "3"
+    description: Communicate revised fulfillment commitments to stakeholders.
+    tool: stakeholder_comms
+    depends_on: ["2"]

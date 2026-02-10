@@ -1,0 +1,6 @@
+goal: Run compliant biotech workflow with contamination and biosafety controls
+preset: regulated
+thresholds:
+  max_legal_exposure: 0.45
+  max_uncertainty: 0.40
+  max_resource_intensity: 0.55

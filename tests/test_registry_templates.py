@@ -48,7 +48,18 @@ tools:
 
 
 def test_templates_evaluate_without_exception() -> None:
-    for domain in ["swe", "ops", "finance", "health", "marketing"]:
+    for domain in [
+        "swe",
+        "ops",
+        "finance",
+        "health",
+        "marketing",
+        "robotics",
+        "biotech",
+        "supply-chain",
+        "fintech-risk",
+        "public-sector",
+    ]:
         contract = load_contract(str(TEMPLATE_ROOT / domain / "contract.yaml"))
         plan = load_plan(str(TEMPLATE_ROOT / domain / "plan.yaml"))
         result = evaluate(contract, plan)

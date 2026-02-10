@@ -1,0 +1,6 @@
+goal: Execute supervised robotics workflow with explicit safety gates
+preset: regulated
+thresholds:
+  max_irreversibility: 0.45
+  max_stakeholder_radius: 0.50
+  max_uncertainty: 0.40
