@@ -108,6 +108,8 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     html = _endpoint(app, "/ui")()
     assert "ScopeBench Interactive Workbench" in html
     assert "Replay telemetry" in html
+    assert "What-if Lab" in html
+    assert "Explainability: Aggregate Risk Contributions" in html
 
 
 def test_telemetry_replay_endpoint_without_configuration() -> None:
