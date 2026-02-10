@@ -69,6 +69,8 @@ class PlanStep(BaseModel):
     # Optional estimated cost/time (can be filled by planner, or by a predictor).
     est_cost_usd: Optional[float] = Field(default=None, ge=0)
     est_time_days: Optional[float] = Field(default=None, ge=0)
+    est_benefit: Optional[float] = Field(default=None, ge=0)
+    benefit_unit: Optional[str] = None
 
 
 class PlanDAG(BaseModel):

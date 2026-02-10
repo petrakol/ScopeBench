@@ -7,6 +7,7 @@ from scopebench.plan import PlanDAG
 from scopebench.policy.backends.base import Decision, PolicyInput, PolicyResult
 from scopebench.policy.backends.factory import get_policy_backend
 from scopebench.scoring.axes import ScopeAggregate, ScopeVector
+from scopebench.scoring.rules import detect_knees_for_plan
 
 
 def build_policy_input(
@@ -35,6 +36,22 @@ def evaluate_policy(
     backend = get_policy_backend(policy_backend)
     result = backend.evaluate(contract, agg, step_vectors=step_vectors, plan=plan)
 
+    if plan is not None:
+        knee_flags = detect_knees_for_plan(
+            plan,
+            min_marginal_ratio=contract.thresholds.min_marginal_ratio,
+            step_vectors=step_vectors,
+        )
+        if len(knee_flags) > contract.thresholds.max_knee_steps:
+            flagged_steps = sorted({flag.step_id for flag in knee_flags})
+            result.asked.setdefault("knee_of_curve", float(len(flagged_steps)))
+            result.reasons.append(
+                "Knee-of-curve detected at steps "
+                + ", ".join(flagged_steps)
+                + f"; min_marginal_ratio={contract.thresholds.min_marginal_ratio:.2f}"
+            )
+            if result.decision.value == "ALLOW":
+                result.decision = Decision.ASK
     abstain_threshold = contract.escalation.abstain_uncertainty_threshold
     if agg.uncertainty >= abstain_threshold:
         result.decision = Decision.ASK

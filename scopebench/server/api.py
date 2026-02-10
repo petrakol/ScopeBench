@@ -98,6 +98,10 @@ class StepDetail(BaseModel):
     step_id: Optional[str]
     tool: Optional[str]
     tool_category: Optional[str]
+    est_cost_usd: Optional[float] = None
+    est_time_days: Optional[float] = None
+    est_benefit: Optional[float] = None
+    benefit_unit: Optional[str] = None
     axes: Dict[str, AxisDetail]
 
 
@@ -405,6 +409,7 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         steps = None
         if req.include_steps:
             steps = []
+            plan_steps_by_id = {step.id: step for step in plan.steps}
             for vec in res.vectors:
                 axes = {
                     "spatial": AxisDetail(**vec.spatial.model_dump()),
@@ -418,11 +423,16 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                     "power_concentration": AxisDetail(**vec.power_concentration.model_dump()),
                     "uncertainty": AxisDetail(**vec.uncertainty.model_dump()),
                 }
+                plan_step = plan_steps_by_id.get(vec.step_id or "")
                 steps.append(
                     StepDetail(
                         step_id=vec.step_id,
                         tool=vec.tool,
                         tool_category=vec.tool_category,
+                        est_cost_usd=plan_step.est_cost_usd if plan_step else None,
+                        est_time_days=plan_step.est_time_days if plan_step else None,
+                        est_benefit=plan_step.est_benefit if plan_step else None,
+                        benefit_unit=plan_step.benefit_unit if plan_step else None,
                         axes=axes,
                     )
                 )
