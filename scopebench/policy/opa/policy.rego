@@ -1,5 +1,8 @@
 package scopebench
 
+import future.keywords.if
+import future.keywords.in
+
 default decision := {
   "decision": "ALLOW",
   "reasons": ["Within contract envelope"],
@@ -7,64 +10,139 @@ default decision := {
   "asked": {}
 }
 
-deny_axes[axis] {
-  axis := "spatial"
-  input.aggregate.spatial > input.contract.thresholds.max_spatial
+contraction := max([0, 1 - input.aggregate.uncertainty])
+ask_any := input.contract.escalation.ask_if_any_axis_over * contraction
+
+max_threshold(axis) := t if {
+  axis == "uncertainty"
+  t := input.contract.thresholds.max_uncertainty
 }
 
-deny_axes[axis] {
-  axis := "temporal"
-  input.aggregate.temporal > input.contract.thresholds.max_temporal
+max_threshold(axis) := t if {
+  axis != "uncertainty"
+  t := input.contract.thresholds[sprintf("max_%s", [axis])] * contraction
 }
 
-deny_axes[axis] {
-  axis := "depth"
-  input.aggregate.depth > input.contract.thresholds.max_depth
+axis_exceeded[axis] if {
+  some axis in object.keys(input.aggregate)
+  axis != "n_steps"
+  input.aggregate[axis] > max_threshold(axis)
+}
+
+allowed_tools_violation if {
+  input.facts.allowed_tools_active
+  some vector in input.vectors
+  vector.tool != null
+  not vector.tool in input.contract.allowed_tools
+}
+
+forbidden_category_violation if {
+  some vector in input.vectors
+  vector.tool_category != null
+  vector.tool_category in input.contract.forbidden_tool_categories
 }
 
 exceeded[axis] := {
   "value": input.aggregate[axis],
-  "threshold": input.contract.thresholds[sprintf("max_%s", [axis])]
-} {
-  axis := deny_axes[_]
+  "threshold": max_threshold(axis),
+} if {
+  some axis in axis_exceeded
 }
 
-deny_reasons[r] {
-  axis := deny_axes[_]
-  r := sprintf("%s=%0.2f exceeds max %0.2f", [
-    axis,
-    input.aggregate[axis],
-    input.contract.thresholds[sprintf("max_%s", [axis])],
-  ])
+exceeded["allowed_tools"] := {"value": 1, "threshold": 0} if {
+  allowed_tools_violation
 }
 
-ask_uncertainty {
+exceeded["forbidden_tool_categories"] := {"value": 1, "threshold": 0} if {
+  forbidden_category_violation
+}
+
+denied_reasons[r] if {
+  some axis in axis_exceeded
+  r := sprintf("%s=%0.2f exceeds max %0.2f", [axis, input.aggregate[axis], max_threshold(axis)])
+}
+
+denied_reasons[r] if {
+  input.facts.allowed_tools_active
+  some vector in input.vectors
+  vector.tool != null
+  not vector.tool in input.contract.allowed_tools
+  r := sprintf("Tool '%s' not in contract.allowed_tools", [vector.tool])
+}
+
+denied_reasons[r] if {
+  some vector in input.vectors
+  vector.tool_category != null
+  vector.tool_category in input.contract.forbidden_tool_categories
+  r := sprintf("Tool category '%s' is forbidden by contract", [vector.tool_category])
+}
+
+ask_fields[axis] := val if {
+  some axis in object.keys(input.aggregate)
+  axis != "n_steps"
+  val := input.aggregate[axis]
+  val > ask_any
+}
+
+ask_fields["uncertainty"] := input.aggregate.uncertainty if {
   input.aggregate.uncertainty > input.contract.escalation.ask_if_uncertainty_over
 }
 
-ask_fields := {"uncertainty": input.aggregate.uncertainty} {
-  ask_uncertainty
+ask_fields["tool_category"] := 1 if {
+  count(input.facts.present_high_risk_categories) > 0
 }
 
-ask_reasons := ["Within max thresholds but triggers escalation/uncertainty thresholds"] {
-  ask_uncertainty
+ask_fields["read_before_write"] := 1 if {
+  input.facts.missing_initial_read
+}
+
+ask_fields["validation_after_write"] := 1 if {
+  input.facts.missing_validation_after_write
+}
+
+ask_reasons[r] if {
+  some category in input.facts.present_high_risk_categories
+  r := sprintf("Tool category '%s' triggers ASK by escalation rules", [category])
+}
+
+ask_reasons[r] if {
+  input.facts.missing_initial_read
+  r := "SWE write step appears before any read-only step; ask for initial inspection"
+}
+
+ask_reasons[r] if {
+  input.facts.missing_validation_after_write
+  r := "SWE write step is missing a downstream validation/test step"
 }
 
 decision := {
   "decision": "DENY",
-  "reasons": deny_reasons,
+  "reasons": [r | r := denied_reasons[_]],
   "exceeded": exceeded,
-  "asked": {}
-} {
-  count(deny_axes) > 0
+  "asked": {},
+} if {
+  count(exceeded) > 0
 }
 
 decision := {
   "decision": "ASK",
-  "reasons": ask_reasons,
+  "reasons": reasons,
   "exceeded": {},
-  "asked": ask_fields
-} {
-  count(deny_axes) == 0
-  ask_uncertainty
+  "asked": ask_fields,
+} if {
+  count(exceeded) == 0
+  count(ask_fields) > 0
+  reasons := [r | r := ask_reasons[_]]
+  count(reasons) > 0
+}
+
+decision := {
+  "decision": "ASK",
+  "reasons": ["Within max thresholds but triggers escalation/uncertainty thresholds"],
+  "exceeded": {},
+  "asked": ask_fields,
+} if {
+  count(exceeded) == 0
+  count(ask_fields) > 0
+  count([r | r := ask_reasons[_]]) == 0
 }
