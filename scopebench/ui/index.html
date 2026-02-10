@@ -122,6 +122,33 @@
         text-align: left;
         vertical-align: top;
       }
+      .wizard-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .wizard-grid input,
+      .wizard-grid select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+      }
+      .step-list {
+        margin-top: 10px;
+        display: grid;
+        gap: 8px;
+      }
+      .wizard-step {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px;
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr) 180px;
+        gap: 8px;
+        align-items: center;
+      }
       @media (max-width: 900px) {
         .two-col { grid-template-columns: 1fr; }
       }
@@ -142,6 +169,27 @@
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
         </div>
       </div>
+
+      <section class="card" style="margin-top: 16px">
+        <h3>Plan Generation Wizard</h3>
+        <p class="muted">Pick a domain preset and variant, then generate/edit a baseline plan from templates.</p>
+        <div class="wizard-grid">
+          <input id="wizard-goal" placeholder="Goal (e.g., Stabilize flaky checkout tests)" />
+          <select id="wizard-domain"></select>
+          <select id="wizard-variant"></select>
+          <select id="wizard-preset">
+            <option value="">(template default)</option>
+            <option value="team">team</option>
+            <option value="enterprise">enterprise</option>
+            <option value="regulated">regulated</option>
+          </select>
+        </div>
+        <div class="controls" style="margin-top: 10px">
+          <button id="wizard-generate" class="secondary">Generate baseline</button>
+          <button id="wizard-apply">Apply to editor</button>
+        </div>
+        <div id="wizard-steps" class="step-list"></div>
+      </section>
 
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
@@ -242,6 +290,11 @@
       const calibrationDashboardEl = el("calibration-dashboard");
       const templateSelectEl = el("template-select");
       const autoRunEl = el("auto-run");
+      const wizardGoalEl = el("wizard-goal");
+      const wizardDomainEl = el("wizard-domain");
+      const wizardVariantEl = el("wizard-variant");
+      const wizardPresetEl = el("wizard-preset");
+      const wizardStepsEl = el("wizard-steps");
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
         ["legal", "legal_exposure"],
@@ -253,6 +306,8 @@
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
+      let wizardTemplates = [];
+      let wizardDraft = null;
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -469,12 +524,64 @@
         });
       }
 
+
+      function renderWizardVariantOptions() {
+        const picked = wizardTemplates.find((item) => item.domain === wizardDomainEl.value);
+        const variants = Object.keys(picked?.variants || {}).sort();
+        wizardVariantEl.innerHTML = variants.map((v) => `<option value="${v}">${v}</option>`).join("");
+      }
+
+      function renderWizardSteps(plan) {
+        wizardStepsEl.innerHTML = "";
+        (plan.steps || []).forEach((step, idx) => {
+          const row = document.createElement("div");
+          row.className = "wizard-step";
+          row.innerHTML = `
+            <strong>${step.id || `step-${idx + 1}`}</strong>
+            <input data-step="${idx}" data-field="description" value="${(step.description || "").replace(/"/g, "&quot;")}" />
+            <input data-step="${idx}" data-field="tool" value="${(step.tool || "analysis").replace(/"/g, "&quot;")}" />
+          `;
+          wizardStepsEl.appendChild(row);
+        });
+        wizardStepsEl.querySelectorAll("input[data-step]").forEach((node) => {
+          node.addEventListener("input", (ev) => {
+            if (!wizardDraft) return;
+            const stepIndex = Number(ev.target.dataset.step);
+            const field = ev.target.dataset.field;
+            wizardDraft.plan.steps[stepIndex][field] = ev.target.value;
+          });
+        });
+      }
+
+      function generateWizardDraft() {
+        const domain = wizardDomainEl.value;
+        const variant = wizardVariantEl.value;
+        const pickedDomain = wizardTemplates.find((item) => item.domain === domain);
+        const pickedVariant = pickedDomain?.variants?.[variant]?.content;
+        if (!pickedVariant?.contract || !pickedVariant?.plan) return;
+
+        const contract = JSON.parse(JSON.stringify(pickedVariant.contract));
+        const plan = JSON.parse(JSON.stringify(pickedVariant.plan));
+        const goal = wizardGoalEl.value.trim() || contract.goal || plan.task || "";
+        const preset = wizardPresetEl.value || contract.preset || "team";
+
+        contract.goal = goal;
+        contract.domain = domain;
+        contract.preset = preset;
+        plan.task = goal;
+
+        wizardDraft = { contract, plan };
+        renderWizardSteps(plan);
+      }
+
       async function loadCatalog() {
         const [templates, tools, cases] = await Promise.all([
           fetch("/templates").then((r) => r.json()),
           fetch("/tools").then((r) => r.json()),
           fetch("/cases").then((r) => r.json()).catch(() => ({ count: 0, datasets: [], domains: [] }))
         ]);
+
+        wizardTemplates = templates.templates || [];
 
         const options = [];
         (templates.templates || []).forEach((domain) => {
@@ -489,6 +596,13 @@
           .map((opt) => `<option value="${opt.key}">${opt.key}</option>`)
           .join("");
         templateSelectEl._options = options;
+
+        wizardDomainEl.innerHTML = wizardTemplates
+          .map((item) => `<option value="${item.domain}">${item.domain}</option>`)
+          .join("");
+        if (!wizardDomainEl.value && wizardTemplates.length) wizardDomainEl.value = wizardTemplates[0].domain;
+        renderWizardVariantOptions();
+        generateWizardDraft();
         knownTools = (tools.tools || []).map((item) => item.tool).filter(Boolean).sort();
 
         catalogEl.textContent = JSON.stringify(
@@ -581,13 +695,28 @@
 
       renderDag(defaultPlan);
       renderWhatIfEditors(defaultPlan);
-      loadCatalog().catch((err) => {
+      wizardDomainEl.addEventListener("change", () => {
+        renderWizardVariantOptions();
+        generateWizardDraft();
+      });
+      wizardVariantEl.addEventListener("change", () => generateWizardDraft());
+      wizardGoalEl.addEventListener("input", () => generateWizardDraft());
+      wizardPresetEl.addEventListener("change", () => generateWizardDraft());
+      el("wizard-generate").addEventListener("click", () => generateWizardDraft());
+      el("wizard-apply").addEventListener("click", () => {
+        if (!wizardDraft) return;
+        contractEl.value = JSON.stringify(wizardDraft.contract, null, 2);
+        planEl.value = JSON.stringify(wizardDraft.plan, null, 2);
+        renderDag(wizardDraft.plan);
+        renderWhatIfEditors(wizardDraft.plan);
+        scheduleAutoEvaluate();
+      });
+
+      loadCatalog().then(() => runEvaluation()).catch((err) => {
         catalogEl.textContent = `Catalog load error: ${err.message}`;
       });
       loadCalibrationDashboard().catch((err) => {
         calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
-      runEvaluation().catch((err) => {
-        resultEl.textContent = `Error: ${err.message}`;
       });
     </script>
   </body>

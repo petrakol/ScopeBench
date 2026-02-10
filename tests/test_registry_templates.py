@@ -74,3 +74,27 @@ def test_cli_template_commands() -> None:
     assert generated.exit_code == 0
     assert "contract:" in generated.stdout
     assert "plan:" in generated.stdout
+
+
+def test_cli_template_wizard_non_interactive() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "template",
+            "wizard",
+            "--domain",
+            "health",
+            "--variant",
+            "medical_data",
+            "--goal",
+            "Generate baseline de-identification workflow",
+            "--preset",
+            "regulated",
+            "--no-edit-steps",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Generate baseline de-identification workflow" in result.stdout
+    assert "domain: health" in result.stdout
+    assert "preset: regulated" in result.stdout

@@ -76,6 +76,13 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
     return raw
 
 
+def _load_template_bundle(domain: str, variant: str) -> Dict[str, Dict[str, Any]]:
+    return {
+        "contract": _read_yaml(_template_file(domain, variant, "contract")),
+        "plan": _read_yaml(_template_file(domain, variant, "plan")),
+    }
+
+
 def _resolve_template_name(name: str) -> Tuple[str, str, str]:
     segments = [part for part in name.split("/") if part]
     if not segments:
@@ -258,6 +265,76 @@ def template_show(name: str = typer.Argument(..., help="Template name: <domain>[
 def template_generate(name: str = typer.Argument(..., help="Template name: <domain>[/kind]")) -> None:
     """Generate valid YAML from a bundled template."""
     template_show(name)
+
+
+@template_app.command("wizard")
+def template_wizard(
+    goal: str | None = typer.Option(None, "--goal", help="Goal/task statement to place in contract and plan."),
+    domain: str | None = typer.Option(None, "--domain", help="Template domain (swe|ops|finance|health|marketing)."),
+    variant: str | None = typer.Option(None, "--variant", help="Template variant inside the selected domain."),
+    preset: str | None = typer.Option(None, "--preset", help="Contract preset override (team|enterprise|regulated|...)."),
+    edit_steps: bool = typer.Option(
+        True,
+        "--edit-steps/--no-edit-steps",
+        help="Interactively edit generated step descriptions/tools before printing YAML.",
+    ),
+) -> None:
+    """Interactive wizard that scaffolds a contract+plan from domain templates."""
+    domains = _template_domains()
+    if not domains:
+        raise typer.BadParameter("No templates found.")
+
+    selected_domain = domain or typer.prompt("Domain", default=domains[0], show_default=True)
+    if selected_domain not in domains:
+        raise typer.BadParameter(f"Unknown domain '{selected_domain}'. Available: {', '.join(domains)}")
+
+    variants = _template_variants(selected_domain)
+    selected_variant = variant or typer.prompt("Variant", default="default", show_default=True)
+    if selected_variant not in variants:
+        raise typer.BadParameter(
+            f"Unknown variant '{selected_variant}' in domain '{selected_domain}'. Available: {', '.join(variants)}"
+        )
+
+    bundle = _load_template_bundle(selected_domain, selected_variant)
+    contract = bundle["contract"]
+    plan = bundle["plan"]
+
+    selected_goal = goal or typer.prompt(
+        "Goal",
+        default=str(contract.get("goal") or plan.get("task") or ""),
+        show_default=True,
+    )
+    selected_preset = preset or typer.prompt(
+        "Preset",
+        default=str(contract.get("preset") or "team"),
+        show_default=True,
+    )
+
+    contract["goal"] = selected_goal
+    contract["domain"] = selected_domain
+    contract["preset"] = selected_preset
+    plan["task"] = selected_goal
+
+    if edit_steps:
+        for index, step in enumerate(plan.get("steps") or []):
+            step_id = step.get("id") or f"step-{index + 1}"
+            step["description"] = typer.prompt(
+                f"Step {step_id} description",
+                default=str(step.get("description") or ""),
+                show_default=True,
+            )
+            step["tool"] = typer.prompt(
+                f"Step {step_id} tool",
+                default=str(step.get("tool") or "analysis"),
+                show_default=True,
+            )
+
+    console.print(
+        yaml.safe_dump(
+            {"contract": contract, "plan": plan},
+            sort_keys=False,
+        )
+    )
 
 
 @app.command()
