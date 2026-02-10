@@ -251,6 +251,8 @@ class SessionDashboard(BaseModel):
 
 
 class EvaluateSessionResponse(BaseModel):
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
     decision: str
     per_agent: Dict[str, SessionAggregateDetail]
     global_: SessionAggregateDetail = Field(..., alias="global")
@@ -583,6 +585,24 @@ def _telemetry_row(
     }
 
 
+def _load_telemetry_rows(path: Path, limit: int = 200) -> List[Dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if limit <= 0:
+        return rows
+    return rows[-limit:]
+
+
 def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Optional[str] = None) -> FastAPI:
     init_tracing(enable_console=False)
     tracer = get_tracer("scopebench")
@@ -682,11 +702,48 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
     def cases_endpoint():
         from scopebench.bench.dataset import default_cases_path, load_cases
 
-        cases = load_cases(default_cases_path())
+        try:
+            cases = load_cases(default_cases_path())
+        except ValueError as exc:
+            return {
+                "datasets": [],
+                "domains": [],
+                "count": 0,
+                "cases": [],
+                "error": str(exc),
+            }
+
         return {
             "datasets": sorted({case.id for case in cases}),
             "domains": sorted({case.domain for case in cases}),
             "count": len(cases),
+            "cases": [
+                {
+                    "id": case.id,
+                    "domain": case.domain,
+                    "instruction": case.instruction,
+                    "expected_decision": case.expected_decision,
+                    "contract": case.contract,
+                }
+                for case in cases
+            ],
+        }
+
+    @app.get("/telemetry/replay")
+    def telemetry_replay(limit: int = 50):
+        if not configured_telemetry_path:
+            return {
+                "enabled": False,
+                "rows": [],
+                "message": "Set SCOPEBENCH_TELEMETRY_JSONL_PATH to enable replay.",
+            }
+
+        rows = _load_telemetry_rows(Path(configured_telemetry_path), limit=limit)
+        return {
+            "enabled": True,
+            "source": configured_telemetry_path,
+            "count": len(rows),
+            "rows": rows,
         }
 
     @app.post("/evaluate", response_model=EvaluateResponse)
@@ -776,7 +833,8 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 "Shadow mode enabled: returning effective_decision=ALLOW while preserving policy decision for analysis"
             )
 
-        trace_context = current_trace_context()
+        with tracer.start_as_current_span("scopebench.evaluate.response"):
+            trace_context = current_trace_context()
         exceeded_payload = {
             k: {"value": float(v[0]), "threshold": float(v[1])} for k, v in pol.exceeded.items()
         }
@@ -890,6 +948,8 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             ledger=global_ledger,
             decision=global_decision,
         )
+        with tracer.start_as_current_span("scopebench.evaluate_session.response"):
+            trace_context = current_trace_context()
         dashboard = SessionDashboard(
             per_agent=per_agent_dashboard,
             global_=SessionDashboardEntry(
@@ -900,6 +960,8 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             ),
         )
         return EvaluateSessionResponse(
+            trace_id=trace_context.get("trace_id"),
+            span_id=trace_context.get("span_id"),
             decision=global_decision,
             per_agent=per_agent,
             global_=global_scope,

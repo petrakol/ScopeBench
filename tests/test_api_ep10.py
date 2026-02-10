@@ -62,13 +62,12 @@ def test_templates_tools_cases_endpoints() -> None:
     assert tools["normalized_schema"]["type"] == "object"
     assert len(tools["tools"]) > 0
 
-    try:
-        cases = _endpoint(app, "/cases")()
-    except ValueError as exc:
-        assert "case_schema_version" in str(exc)
-    else:
-        assert cases["count"] >= 1
+    cases = _endpoint(app, "/cases")()
+    assert "count" in cases
+    if cases["count"] > 0:
         assert len(cases["domains"]) >= 1
+    else:
+        assert "error" in cases
 
 
 def test_plan_patch_suggestions_cover_new_rules() -> None:
@@ -104,7 +103,14 @@ def test_plan_patch_suggestions_cover_new_rules() -> None:
     assert "split_plan" in patch_ops
 
 
-def test_ui_endpoint_serves_minimal_page() -> None:
+def test_ui_endpoint_serves_interactive_page() -> None:
     app = create_app()
     html = _endpoint(app, "/ui")()
-    assert "ScopeBench — Minimal UI" in html
+    assert "ScopeBench Interactive Workbench" in html
+    assert "Replay telemetry" in html
+
+
+def test_telemetry_replay_endpoint_without_configuration() -> None:
+    app = create_app(telemetry_jsonl_path=None)
+    replay = _endpoint(app, "/telemetry/replay")()
+    assert replay["enabled"] is False

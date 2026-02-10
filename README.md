@@ -162,13 +162,15 @@ Response includes:
 - `reasons`, `exceeded`, `asked`
 - aggregate scores and step count
 - optional `summary`, `next_steps`, `plan_patch_suggestion`, and `telemetry`
+- trace context fields (`trace_id`, `span_id`) for observability
 
 ### Additional catalog endpoints
 
 - `GET /templates` returns template metadata and full content for each domain, grouped by variants (default + named domain presets).
 - `GET /tools` returns tool registry entries plus a normalized schema payload.
-- `GET /cases` returns benchmark dataset ids (case ids) and available domains.
-- `GET /ui` serves a minimal local web UI for contract/plan authoring and evaluation.
+- `GET /cases` returns benchmark metadata (ids, domains, instructions, expected decisions, and contract payloads).
+- `GET /telemetry/replay` replays recent telemetry rows from `SCOPEBENCH_TELEMETRY_JSONL_PATH`.
+- `GET /ui` serves an interactive web workbench for contract/plan authoring, DAG visualization, axis/rationale inspection, and telemetry replay.
 
 Template variants are also available in the CLI using `<domain>/<variant>/<kind>` naming, e.g.
 `scopebench template show finance/payments/plan` for payments or
@@ -230,7 +232,12 @@ Use `scopebench.integrations.guard(...)` to intercept agent plans before executi
 - exceeded/asked axis signals
 - recommended plan patch transformations
 
-See `docs/integrations/python_sdk.md` for a mock agent loop.
+The SDK also includes lightweight adapters for popular agent framework plan/message payloads:
+
+- `from_langchain_plan(...)`
+- `from_autogen_messages(...)`
+
+See `docs/integrations/python_sdk.md` for usage examples.
 
 ---
 
