@@ -37,3 +37,15 @@ def init_tracing(service_name: str = "scopebench", enable_console: Optional[bool
 
 def get_tracer(name: str = "scopebench"):
     return trace.get_tracer(name)
+
+
+def current_trace_context() -> dict[str, str]:
+    """Return current trace/span identifiers when an active span is recording."""
+    span = trace.get_current_span()
+    ctx = span.get_span_context()
+    if not ctx.is_valid:
+        return {}
+    return {
+        "trace_id": f"{ctx.trace_id:032x}",
+        "span_id": f"{ctx.span_id:016x}",
+    }

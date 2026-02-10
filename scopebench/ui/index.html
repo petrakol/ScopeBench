@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ScopeBench UI</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 24px; color: #111; }
+      textarea { width: 100%; min-height: 160px; font-family: monospace; }
+      pre { background: #f5f5f5; padding: 12px; overflow-x: auto; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
+      button { padding: 8px 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>ScopeBench — Minimal UI</h1>
+    <p>Author contract + plan, visualize DAG, run evaluation, inspect scores/rationales.</p>
+
+    <div class="row">
+      <div class="card">
+        <h3>Contract (JSON)</h3>
+        <textarea id="contract"></textarea>
+      </div>
+      <div class="card">
+        <h3>Plan (JSON)</h3>
+        <textarea id="plan"></textarea>
+      </div>
+    </div>
+
+    <p><button id="run">Run /evaluate</button></p>
+
+    <div class="card">
+      <h3>DAG</h3>
+      <pre id="dag"></pre>
+    </div>
+
+    <div class="card">
+      <h3>Decision + Axes</h3>
+      <pre id="result"></pre>
+    </div>
+
+    <script>
+      const defaultContract = {
+        goal: "Fix failing unit test",
+        preset: "team"
+      };
+      const defaultPlan = {
+        task: "Fix failing unit test",
+        steps: [
+          { id: "1", description: "Read failing test and source", tool: "git_read" },
+          { id: "2", description: "Apply minimal patch", tool: "git_patch", depends_on: ["1"] },
+          { id: "3", description: "Run targeted test", tool: "pytest", depends_on: ["2"] }
+        ]
+      };
+
+      const contractEl = document.getElementById("contract");
+      const planEl = document.getElementById("plan");
+      const dagEl = document.getElementById("dag");
+      const resultEl = document.getElementById("result");
+
+      contractEl.value = JSON.stringify(defaultContract, null, 2);
+      planEl.value = JSON.stringify(defaultPlan, null, 2);
+
+      function renderDag(plan) {
+        const nodes = (plan.steps || []).map((s) => `${s.id} [${s.tool || "none"}]`).join("\n");
+        const edges = (plan.steps || [])
+          .flatMap((s) => (s.depends_on || []).map((dep) => `${dep} -> ${s.id}`))
+          .join("\n");
+        dagEl.textContent = `nodes:\n${nodes || "(none)"}\n\nedges:\n${edges || "(none)"}`;
+      }
+
+      document.getElementById("run").addEventListener("click", async () => {
+        try {
+          const contract = JSON.parse(contractEl.value);
+          const plan = JSON.parse(planEl.value);
+          renderDag(plan);
+
+          const res = await fetch("/evaluate", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              contract,
+              plan,
+              include_summary: true,
+              include_steps: true,
+              include_telemetry: true
+            })
+          });
+          const payload = await res.json();
+
+          const topAxes = Object.entries(payload.aggregate || {})
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 3)
+            .map(([axis, value]) => `${axis}: ${value.toFixed(3)}`)
+            .join("\n");
+
+          const stepRationales = (payload.steps || [])
+            .map((step) => {
+              const axes = step.axes || {};
+              const entries = Object.entries(axes).sort((a, b) => b[1].value - a[1].value);
+              const top = entries[0];
+              if (!top) return `${step.step_id}: (no rationale)`;
+              return `${step.step_id}: ${top[0]} => ${top[1].rationale || "n/a"}`;
+            })
+            .join("\n");
+
+          resultEl.textContent = [
+            `decision: ${payload.decision}`,
+            `effective_decision: ${payload.effective_decision}`,
+            `trace_id: ${payload.trace_id || "n/a"}`,
+            `span_id: ${payload.span_id || "n/a"}`,
+            "",
+            "top_axes:",
+            topAxes,
+            "",
+            "step_rationales:",
+            stepRationales || "(none)"
+          ].join("\n");
+        } catch (err) {
+          resultEl.textContent = `Error: ${err.message}`;
+        }
+      });
+
+      renderDag(defaultPlan);
+    </script>
+  </body>
+</html>

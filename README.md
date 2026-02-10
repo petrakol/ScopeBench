@@ -163,6 +163,12 @@ Response includes:
 - aggregate scores and step count
 - optional `summary`, `next_steps`, `plan_patch_suggestion`, and `telemetry`
 
+### Additional catalog endpoints
+
+- `GET /templates` returns template metadata and full content for each domain.
+- `GET /tools` returns tool registry entries plus a normalized schema payload.
+- `GET /cases` returns benchmark dataset ids (case ids) and available domains.
+- `GET /ui` serves a minimal local web UI for contract/plan authoring and evaluation.
 
 ### `POST /evaluate_session`
 
@@ -207,6 +213,18 @@ Run the test suite:
 ```bash
 pytest
 ```
+
+---
+
+## Integrations SDK (Python)
+
+Use `scopebench.integrations.guard(...)` to intercept agent plans before execution and receive:
+
+- decision + effective decision
+- exceeded/asked axis signals
+- recommended plan patch transformations
+
+See `docs/integrations/python_sdk.md` for a mock agent loop.
 
 ---
 
