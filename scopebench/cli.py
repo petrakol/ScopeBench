@@ -17,6 +17,7 @@ from scopebench.bench.community import (
     validate_cases_file,
 )
 from scopebench.bench.plugin_harness import run_plugin_test_harness
+from scopebench.bench.dataset import default_cases_path
 from scopebench.bench.continuous_learning import (
     analyze_continuous_learning,
     apply_learning_to_registry,
@@ -716,6 +717,38 @@ def serve(
 
 
 
+def _parse_tool_definitions(domain: str, raw_tools: str | None, raw_tool_defs: str | None) -> Dict[str, Dict[str, Any]]:
+    tools: Dict[str, Dict[str, Any]] = {}
+
+    if raw_tools:
+        for tool in [item.strip() for item in raw_tools.split(",") if item.strip()]:
+            tools[tool] = {
+                "category": f"{domain}_operations",
+                "domains": [domain],
+                "risk_class": "moderate",
+                "priors": {"uncertainty": 0.3, "dependency_creation": 0.2},
+            }
+
+    if raw_tool_defs:
+        parsed = yaml.safe_load(raw_tool_defs)
+        if not isinstance(parsed, list):
+            raise typer.BadParameter("--tool-definitions must parse to a YAML/JSON list")
+        for idx, row in enumerate(parsed):
+            if not isinstance(row, dict):
+                raise typer.BadParameter(f"--tool-definitions[{idx}] must be an object")
+            name = row.get("tool")
+            if not isinstance(name, str) or not name.strip():
+                raise typer.BadParameter(f"--tool-definitions[{idx}].tool must be a non-empty string")
+            tools[name.strip()] = {
+                "category": str(row.get("category") or f"{domain}_operations"),
+                "domains": row.get("domains") if isinstance(row.get("domains"), list) else [domain],
+                "risk_class": str(row.get("risk_class") or "moderate"),
+                "priors": row.get("priors") if isinstance(row.get("priors"), dict) else {"uncertainty": 0.3},
+            }
+
+    return tools
+
+
 @app.command("plugin-lint")
 def plugin_lint(
     bundle_path: Path = typer.Argument(..., help="Path to plugin bundle JSON/YAML to validate."),
@@ -746,6 +779,7 @@ def plugin_generate(
     plugin_name: str | None = typer.Option(None, "--name", help="Bundle name."),
     version: str = typer.Option("0.1.0", "--version", help="Semver bundle version."),
     tools_csv: str | None = typer.Option(None, "--tools", help="Comma-separated tool ids."),
+    tool_definitions: str | None = typer.Option(None, "--tool-definitions", help="YAML/JSON list of explicit tool definitions."),
     effect_mappings: int = typer.Option(1, "--effect-mappings", min=0, help="Number of effect mappings to scaffold."),
     policy_rules: int = typer.Option(1, "--policy-rules", min=0, help="Number of policy rules to scaffold."),
     key_id: str = typer.Option("community-main", "--key-id", help="Signing key id."),
@@ -764,7 +798,8 @@ def plugin_generate(
     tool_values = tools_csv
     if tool_values is None and not non_interactive:
         tool_values = typer.prompt("Tool ids (comma-separated)", default="analysis_extension")
-    tools = [item.strip() for item in (tool_values or "").split(",") if item.strip()]
+    tool_specs = _parse_tool_definitions(picked_domain, tool_values, tool_definitions)
+    tools = sorted(tool_specs.keys())
 
     mappings = []
     for idx in range(effect_mappings):
@@ -807,13 +842,7 @@ def plugin_generate(
         },
     }
 
-    for tool in tools:
-        bundle["tools"][tool] = {
-            "category": f"{picked_domain}_operations",
-            "domains": [picked_domain],
-            "risk_class": "moderate",
-            "priors": {"uncertainty": 0.3, "dependency_creation": 0.2},
-        }
+    bundle["tools"] = tool_specs
 
     lint_errors = lint_plugin_bundle(bundle)
     if lint_errors:
@@ -829,6 +858,13 @@ def plugin_generate(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(yaml.safe_dump(signed_bundle, sort_keys=False), encoding="utf-8")
 
+    harness = run_plugin_test_harness(
+        output_path,
+        keys_json=json.dumps({key_id: signing_secret}),
+        golden_cases_path=default_cases_path(),
+        max_golden_cases=3,
+    ).to_dict()
+
     console.print_json(json.dumps({
         "ok": True,
         "output_path": str(output_path),
@@ -836,6 +872,7 @@ def plugin_generate(
         "domain": picked_domain,
         "tools": tools,
         "lint_errors": [],
+        "harness": harness,
         "publish_guidance": bundle["metadata"]["publish_guidance"],
     }))
 

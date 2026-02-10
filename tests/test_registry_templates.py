@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import sys
 
 import pytest
@@ -130,6 +131,8 @@ def test_cli_plugin_generate_and_lint(tmp_path: Path) -> None:
             "robotics-starter",
             "--tools",
             "move_arm,scan_area",
+            "--tool-definitions",
+            '[{"tool":"scan_area","risk_class":"high","priors":{"uncertainty":0.4}}]',
             "--effect-mappings",
             "1",
             "--policy-rules",
@@ -140,6 +143,8 @@ def test_cli_plugin_generate_and_lint(tmp_path: Path) -> None:
     )
     assert generated.exit_code == 0
     assert out.exists()
+    payload = json.loads(generated.stdout)
+    assert payload["harness"]["passed"] is True
 
     linted = runner.invoke(app, ["plugin-lint", str(out)])
     assert linted.exit_code == 0

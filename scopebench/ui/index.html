@@ -389,6 +389,11 @@
           <label>Signing Secret<input id="plugin-wizard-secret" type="text" value="" placeholder="required for signing" /></label>
         </div>
         <label>Tools (comma-separated)<input id="plugin-wizard-tools" type="text" value="move_arm,calibrate_sensor" /></label>
+        <label>Tool definitions JSON (optional)
+          <textarea id="plugin-wizard-tool-definitions" style="min-height:120px">[
+  {"tool":"move_arm","category":"robotics_operations","risk_class":"high","domains":["robotics"],"priors":{"irreversibility":0.6,"uncertainty":0.2}}
+]</textarea>
+        </label>
         <label>Effects mappings JSON
           <textarea id="plugin-wizard-effects" style="min-height:120px">[
   {"trigger":"move_arm","axes":{"irreversibility":0.5,"stakeholder_radius":0.3}}
@@ -402,6 +407,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <button id="plugin-wizard-generate">Generate signed skeleton</button>
         </div>
         <pre id="plugin-wizard-output"></pre>
+        <pre id="plugin-wizard-lint-output"></pre>
         <h3>Policy Editing Workbench</h3>
         <p class="muted">View backend policy assets + signed plugin rules, tune thresholds, propose rule edits, and test safely before apply.</p>
         <div class="field-grid">
@@ -614,8 +620,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const pluginWizardSecretEl = el("plugin-wizard-secret");
       const pluginWizardToolsEl = el("plugin-wizard-tools");
       const pluginWizardEffectsEl = el("plugin-wizard-effects");
+      const pluginWizardToolDefinitionsEl = el("plugin-wizard-tool-definitions");
       const pluginWizardPolicyEl = el("plugin-wizard-policy");
       const pluginWizardOutputEl = el("plugin-wizard-output");
+      const pluginWizardLintOutputEl = el("plugin-wizard-lint-output");
       const templateSelectEl = el("template-select");
       const autoRunEl = el("auto-run");
       const wizardGoalEl = el("wizard-goal");
@@ -1406,6 +1414,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       async function generatePluginWizardBundle() {
         const tools = pluginWizardToolsEl.value.split(",").map((item) => item.trim()).filter(Boolean);
         const effects = JSON.parse(pluginWizardEffectsEl.value || "[]");
+        const toolDefinitions = JSON.parse(pluginWizardToolDefinitionsEl.value || "[]");
         const policyTemplates = pluginWizardPolicyEl.value.split("\n").map((line) => line.trim()).filter(Boolean);
         const payload = {
           domain: pluginWizardDomainEl.value.trim(),
@@ -1415,6 +1424,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           key_id: pluginWizardKeyIdEl.value.trim() || "community-main",
           secret: pluginWizardSecretEl.value,
           tools,
+          tool_definitions: toolDefinitions,
           effects_mappings: effects,
           policy_rule_templates: policyTemplates,
         };
@@ -1424,6 +1434,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
           body: JSON.stringify(payload)
         }).then((r) => r.json());
         pluginWizardOutputEl.textContent = JSON.stringify(response, null, 2);
+
+        const lintResponse = await fetch("/plugins/lint", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(response.bundle || {})
+        }).then((r) => r.json());
+        pluginWizardLintOutputEl.textContent = JSON.stringify(lintResponse, null, 2);
       }
 
       async function uninstallPluginBundle() {
