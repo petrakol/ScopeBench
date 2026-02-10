@@ -77,9 +77,13 @@ class PluginManager:
 
     @classmethod
     def from_environment(cls) -> "PluginManager":
-        manager = cls()
         plugin_dirs = [p.strip() for p in os.getenv("SCOPEBENCH_PLUGIN_DIRS", "").split(os.pathsep) if p.strip()]
         keyring = cls._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", ""))
+        return cls.from_dirs(plugin_dirs, keyring)
+
+    @classmethod
+    def from_dirs(cls, plugin_dirs: List[str], keyring: Dict[str, str]) -> "PluginManager":
+        manager = cls()
         for raw_dir in plugin_dirs:
             path = Path(raw_dir)
             if not path.exists() or not path.is_dir():

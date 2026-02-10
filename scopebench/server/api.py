@@ -24,6 +24,8 @@ from scopebench.scoring.calibration import (
 from scopebench.scoring.rules import build_budget_ledger
 from scopebench.plugins import PluginManager
 from scopebench.session import MultiAgentSession
+from scopebench.bench.community import suggest_case
+from scopebench.bench.dataset import validate_case_object
 from scopebench.tracing.otel import current_trace_context, get_tracer, init_tracing
 
 SWE_READ_TOOLS = {"git_read", "file_read"}
@@ -240,6 +242,35 @@ class EvaluateSessionRequest(BaseModel):
     )
 
 
+class DatasetValidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case: Dict[str, Any] = Field(..., description="Single benchmark case object")
+
+
+class DatasetValidateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    case_id: str
+
+
+class DatasetSuggestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    domain: str
+    instruction: str
+    contract: Dict[str, Any]
+    plan: Dict[str, Any]
+    expected_decision: str
+    expected_rationale: str
+    notes: Optional[str] = None
+    policy_backend: str = "python"
+
+
+class DatasetSuggestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case: Dict[str, Any]
+
+
 class StreamingPlanEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event_id: str = Field(..., min_length=1)
@@ -290,6 +321,7 @@ class StreamStepDelta(BaseModel):
     model_config = ConfigDict(extra="forbid")
     step_id: str
     changed_axes: List[str]
+    axis_deltas: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class StreamingEvaluationSnapshot(BaseModel):
@@ -464,12 +496,21 @@ def _step_detail_payload(vectors, plan: PlanDAG) -> List[StepDetail]:
     return details
 
 
-def _vector_axes_by_step(vectors: List[Any]) -> Dict[str, Dict[str, float]]:
-    payload: Dict[str, Dict[str, float]] = {}
+def _vector_axes_by_step(vectors: List[Any]) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    payload: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for vector in vectors:
         if not vector.step_id:
             continue
-        payload[vector.step_id] = vector.as_dict
+        step_axes: Dict[str, Dict[str, Any]] = {}
+        for axis in SCOPE_AXES:
+            detail = getattr(vector, axis, None)
+            if detail is None:
+                continue
+            step_axes[axis] = {
+                "value": float(getattr(detail, "value", 0.0)),
+                "rationale": str(getattr(detail, "rationale", "") or ""),
+            }
+        payload[vector.step_id] = step_axes
     return payload
 
 
@@ -486,13 +527,35 @@ def _judge_output_deltas(
         previous_axes = previous.get(step_id)
         if previous_axes is None:
             continue
+        axis_deltas: List[Dict[str, Any]] = []
         changed_axes = [
             axis
-            for axis, value in current_axes.items()
-            if abs(float(value) - float(previous_axes.get(axis, 0.0))) > 1e-6
+            for axis, detail in current_axes.items()
+            if (
+                abs(float(detail.get("value", 0.0)) - float(previous_axes.get(axis, {}).get("value", 0.0))) > 1e-6
+                or str(detail.get("rationale", "")) != str(previous_axes.get(axis, {}).get("rationale", ""))
+            )
         ]
+        for axis in changed_axes:
+            before = previous_axes.get(axis, {})
+            after = current_axes.get(axis, {})
+            axis_deltas.append(
+                {
+                    "axis": axis,
+                    "previous": float(before.get("value", 0.0)),
+                    "current": float(after.get("value", 0.0)),
+                    "previous_rationale": str(before.get("rationale", "") or ""),
+                    "current_rationale": str(after.get("rationale", "") or ""),
+                }
+            )
         if changed_axes:
-            deltas.append(StreamStepDelta(step_id=step_id, changed_axes=sorted(changed_axes)))
+            deltas.append(
+                StreamStepDelta(
+                    step_id=step_id,
+                    changed_axes=sorted(changed_axes),
+                    axis_deltas=sorted(axis_deltas, key=lambda item: str(item.get("axis", ""))),
+                )
+            )
     return sorted(deltas, key=lambda item: item.step_id)
 
 
@@ -1216,6 +1279,66 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         ui_path = Path(__file__).resolve().parents[1] / "ui" / "index.html"
         return ui_path.read_text(encoding="utf-8")
 
+
+    @app.get("/plugin_marketplace")
+    def plugin_marketplace_endpoint():
+        from pathlib import Path
+        import yaml
+
+        marketplace_path = Path(__file__).resolve().parents[2] / "docs" / "plugin_marketplace.yaml"
+        if not marketplace_path.exists():
+            return {"plugins": [], "count": 0, "source": str(marketplace_path), "error": "marketplace file not found"}
+        payload = yaml.safe_load(marketplace_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(payload, dict):
+            return {"plugins": [], "count": 0, "source": str(marketplace_path), "error": "invalid marketplace format"}
+        domains = payload.get("domains") if isinstance(payload.get("domains"), list) else []
+        rows = [row for row in domains if isinstance(row, dict)]
+        return {"plugins": rows, "count": len(rows), "source": str(marketplace_path), "version": payload.get("version"), "updated_utc": payload.get("updated_utc")}
+
+    @app.get("/plugins")
+    def plugins_endpoint():
+        return {
+            "plugins": plugin_manager.bundles_payload(),
+            "count": len(plugin_manager.bundles_payload()),
+            "configured_plugin_dirs": [p.strip() for p in os.getenv("SCOPEBENCH_PLUGIN_DIRS", "").split(os.pathsep) if p.strip()],
+        }
+
+    @app.post("/plugins/install")
+    def plugins_install_endpoint(payload: Dict[str, Any]):
+        source_path = payload.get("source_path") if isinstance(payload, dict) else None
+        plugin_dir = payload.get("plugin_dir") if isinstance(payload, dict) else None
+        if not isinstance(source_path, str) or not source_path.strip():
+            return {"ok": False, "error": "source_path is required"}
+        if not isinstance(plugin_dir, str) or not plugin_dir.strip():
+            return {"ok": False, "error": "plugin_dir is required"}
+
+        src = Path(source_path).expanduser().resolve()
+        if not src.exists() or not src.is_file():
+            return {"ok": False, "error": f"source_path not found: {src}"}
+
+        target_dir = Path(plugin_dir).expanduser().resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / src.name
+        target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
+        check = PluginManager.from_dirs([str(target_dir)], PluginManager._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", "")))
+        installed = next((item for item in check.bundles_payload() if Path(item.get("source_path", "")).name == src.name), None)
+        if installed is None:
+            target.unlink(missing_ok=True)
+            return {"ok": False, "error": "bundle failed to load"}
+        return {"ok": True, "installed": installed, "target_path": str(target)}
+
+    @app.post("/plugins/uninstall")
+    def plugins_uninstall_endpoint(payload: Dict[str, Any]):
+        source_path = payload.get("source_path") if isinstance(payload, dict) else None
+        if not isinstance(source_path, str) or not source_path.strip():
+            return {"ok": False, "error": "source_path is required"}
+        target = Path(source_path).expanduser().resolve()
+        if not target.exists():
+            return {"ok": False, "error": f"bundle not found: {target}"}
+        target.unlink()
+        return {"ok": True, "removed": str(target)}
+
     @app.get("/templates")
     def templates_endpoint():
         from pathlib import Path
@@ -1418,6 +1541,36 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             count=sum(item.runs for item in entries),
             domains=entries,
         )
+
+    @app.post("/dataset/validate", response_model=DatasetValidateResponse)
+    def dataset_validate_endpoint(req: DatasetValidateRequest):
+        validated = validate_case_object(req.case)
+        return DatasetValidateResponse(ok=True, case_id=validated.id)
+
+    @app.post("/dataset/suggest", response_model=DatasetSuggestResponse)
+    def dataset_suggest_endpoint(req: DatasetSuggestRequest):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            contract_path = tmp_dir / "contract.yaml"
+            plan_path = tmp_dir / "plan.yaml"
+            import yaml
+
+            contract_path.write_text(yaml.safe_dump(req.contract, sort_keys=False), encoding="utf-8")
+            plan_path.write_text(yaml.safe_dump(req.plan, sort_keys=False), encoding="utf-8")
+            case = suggest_case(
+                case_id=req.id,
+                domain=req.domain,
+                instruction=req.instruction,
+                contract_path=contract_path,
+                plan_path=plan_path,
+                expected_decision=req.expected_decision,
+                expected_rationale=req.expected_rationale,
+                notes=req.notes,
+                policy_backend=req.policy_backend,
+            )
+        return DatasetSuggestResponse(case=case)
 
     @app.post("/evaluate", response_model=EvaluateResponse)
     @app.post(
