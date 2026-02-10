@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -79,6 +80,55 @@ class PlanStep(BaseModel):
     est_time_days: Optional[float] = Field(default=None, ge=0)
     est_benefit: Optional[float] = Field(default=None, ge=0)
     benefit_unit: Optional[str] = None
+    est_labor_hours: Optional[float] = Field(default=None, ge=0)
+    realtime_estimates: List["RealtimeEstimate"] = Field(default_factory=list)
+
+    def _latest_metric(self, metric: "EstimateMetric") -> Optional[float]:
+        matches = [entry for entry in self.realtime_estimates if entry.metric == metric]
+        if not matches:
+            return None
+        ordered = sorted(
+            matches,
+            key=lambda entry: entry.captured_at or datetime.min,
+            reverse=True,
+        )
+        return float(ordered[0].value)
+
+    def resolved_cost_usd(self) -> Optional[float]:
+        latest = self._latest_metric(EstimateMetric.COST_USD)
+        return latest if latest is not None else self.est_cost_usd
+
+    def resolved_time_days(self) -> Optional[float]:
+        latest = self._latest_metric(EstimateMetric.TIME_DAYS)
+        return latest if latest is not None else self.est_time_days
+
+    def resolved_labor_hours(self) -> Optional[float]:
+        latest = self._latest_metric(EstimateMetric.LABOR_HOURS)
+        return latest if latest is not None else self.est_labor_hours
+
+
+class EstimateMetric(str, Enum):
+    COST_USD = "cost_usd"
+    TIME_DAYS = "time_days"
+    LABOR_HOURS = "labor_hours"
+
+
+class EstimateSource(str, Enum):
+    PLANNER = "planner"
+    AWS_COST_EXPLORER = "aws_cost_explorer"
+    GCP_BILLING = "gcp_billing"
+    AZURE_COST_MANAGEMENT = "azure_cost_management"
+    STRIPE = "stripe"
+    MANUAL = "manual"
+
+
+class RealtimeEstimate(BaseModel):
+    metric: EstimateMetric
+    value: float = Field(..., ge=0)
+    source: EstimateSource = EstimateSource.MANUAL
+    captured_at: Optional[datetime] = None
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class PlanDAG(BaseModel):
