@@ -80,7 +80,7 @@ def evaluate(
             span.set_attribute(f"scopebench.aggregate.{axis}", float(val))
         span.set_attribute("scopebench.n_steps", agg.n_steps)
 
-        policy = evaluate_policy(contract, agg, step_vectors=vectors)
+        policy = evaluate_policy(contract, agg, step_vectors=vectors, plan=plan)
         span.set_attribute("scopebench.decision", policy.decision.value)
 
         return EvaluationResult(

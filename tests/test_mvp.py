@@ -139,3 +139,153 @@ def test_uncertainty_contracts_thresholds():
     )
     policy = evaluate_policy(contract, agg)
     assert policy.decision.value == "DENY"
+
+
+def test_swe_write_without_read_triggers_ask():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix bug",
+            "steps": [
+                {"id": "1", "description": "Apply patch immediately.", "tool": "git_patch"},
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    assert res.policy.decision.value in {"ASK", "DENY"}
+    assert "read_before_write" in res.policy.asked
+
+
+def test_swe_read_before_write_allows():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix bug",
+            "steps": [
+                {"id": "1", "description": "Read the failing test.", "tool": "git_read"},
+                {"id": "2", "description": "Apply patch after reading.", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    assert "read_before_write" not in res.policy.asked
+
+
+def test_swe_read_in_parallel_branch_still_requires_initial_read():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix bug",
+            "steps": [
+                {"id": "1", "description": "Kick off workflow.", "tool": "analysis"},
+                {"id": "2", "description": "Read files in a side branch.", "tool": "git_read", "depends_on": ["1"]},
+                {"id": "3", "description": "Patch core code immediately.", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    assert "read_before_write" in res.policy.asked
+
+
+def test_read_before_write_works_when_tool_category_missing():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix bug",
+            "steps": [
+                {"id": "1", "description": "Apply patch immediately.", "tool": "git_patch"},
+            ],
+        }
+    )
+    agg = ScopeAggregate(
+        spatial=0.1,
+        temporal=0.1,
+        depth=0.1,
+        irreversibility=0.1,
+        resource_intensity=0.1,
+        legal_exposure=0.1,
+        dependency_creation=0.1,
+        stakeholder_radius=0.1,
+        power_concentration=0.1,
+        uncertainty=0.1,
+        n_steps=1,
+    )
+    vectors = [
+        ScopeVector(
+            step_id="1",
+            tool="git_patch",
+            tool_category=None,
+            spatial=AxisScore(value=0.1, confidence=0.8),
+            temporal=AxisScore(value=0.1, confidence=0.8),
+            depth=AxisScore(value=0.1, confidence=0.8),
+            irreversibility=AxisScore(value=0.1, confidence=0.8),
+            resource_intensity=AxisScore(value=0.1, confidence=0.8),
+            legal_exposure=AxisScore(value=0.1, confidence=0.8),
+            dependency_creation=AxisScore(value=0.1, confidence=0.8),
+            stakeholder_radius=AxisScore(value=0.1, confidence=0.8),
+            power_concentration=AxisScore(value=0.1, confidence=0.8),
+            uncertainty=AxisScore(value=0.1, confidence=0.8),
+        )
+    ]
+    policy = evaluate_policy(contract, agg, step_vectors=vectors, plan=plan)
+    assert "read_before_write" in policy.asked
+
+
+def test_read_before_write_prefers_plan_metadata_over_vectors():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix bug",
+            "steps": [
+                {"id": "1", "description": "Read source first.", "tool": "git_read"},
+                {"id": "2", "description": "Patch after read.", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        }
+    )
+    agg = ScopeAggregate(
+        spatial=0.1,
+        temporal=0.1,
+        depth=0.1,
+        irreversibility=0.1,
+        resource_intensity=0.1,
+        legal_exposure=0.1,
+        dependency_creation=0.1,
+        stakeholder_radius=0.1,
+        power_concentration=0.1,
+        uncertainty=0.1,
+        n_steps=2,
+    )
+    vectors = [
+        ScopeVector(
+            step_id="1",
+            tool="analysis",
+            tool_category="analysis",
+            spatial=AxisScore(value=0.1, confidence=0.8),
+            temporal=AxisScore(value=0.1, confidence=0.8),
+            depth=AxisScore(value=0.1, confidence=0.8),
+            irreversibility=AxisScore(value=0.1, confidence=0.8),
+            resource_intensity=AxisScore(value=0.1, confidence=0.8),
+            legal_exposure=AxisScore(value=0.1, confidence=0.8),
+            dependency_creation=AxisScore(value=0.1, confidence=0.8),
+            stakeholder_radius=AxisScore(value=0.1, confidence=0.8),
+            power_concentration=AxisScore(value=0.1, confidence=0.8),
+            uncertainty=AxisScore(value=0.1, confidence=0.8),
+        ),
+        ScopeVector(
+            step_id="2",
+            tool="analysis",
+            tool_category="analysis",
+            spatial=AxisScore(value=0.1, confidence=0.8),
+            temporal=AxisScore(value=0.1, confidence=0.8),
+            depth=AxisScore(value=0.1, confidence=0.8),
+            irreversibility=AxisScore(value=0.1, confidence=0.8),
+            resource_intensity=AxisScore(value=0.1, confidence=0.8),
+            legal_exposure=AxisScore(value=0.1, confidence=0.8),
+            dependency_creation=AxisScore(value=0.1, confidence=0.8),
+            stakeholder_radius=AxisScore(value=0.1, confidence=0.8),
+            power_concentration=AxisScore(value=0.1, confidence=0.8),
+            uncertainty=AxisScore(value=0.1, confidence=0.8),
+        ),
+    ]
+    policy = evaluate_policy(contract, agg, step_vectors=vectors, plan=plan)
+    assert "read_before_write" not in policy.asked
