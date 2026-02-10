@@ -6,6 +6,13 @@ ScopeBench supports pluggable policy backends selected by:
 - CLI flag `--policy-backend`
 - API request field `policy_backend`
 
+When `opa` or `cedar` is selected, the external engine decision is authoritative. ScopeBench sends
+normalized policy input to the engine and uses the returned `decision/reasons/exceeded/asked`
+verbatim as the policy result.
+
+`SCOPEBENCH_POLICY_FAIL_OPEN=1` switches external backends to fail-open (`ASK`) behavior if the
+engine is unreachable. Default is fail-closed (`DENY`).
+
 ## OPA quickstart
 
 ```bash
@@ -22,3 +29,4 @@ curl -s http://localhost:8080/evaluate \
 - `scopebench/policy/cedar/schema.json`
 
 The Cedar backend loads versioned policy files at runtime and reports `policy_hash` in API responses.
+Default Cedar endpoint: `SCOPEBENCH_CEDAR_URL=http://localhost:8182/v1/decision`.

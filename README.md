@@ -12,6 +12,21 @@ It is designed for a specific failure mode:
 
 Instead of only asking *"is this intent safe?"*, ScopeBench asks *"is this plan proportionate to the task contract?"*.
 
+## Table of Contents
+
+- [Why ScopeBench](#why-scopebench)
+- [Features](#features)
+- [Installation](#installation)
+- [Quickstart](#quickstart)
+- [CLI Reference](#cli-reference)
+- [API Usage](#api-usage)
+- [Examples Included](#examples-included)
+- [Testing](#testing)
+- [Integrations SDK (Python)](#integrations-sdk-python)
+- [Project Structure](#project-structure)
+- [Development](#development)
+- [License](#license)
+
 ---
 
 ## Why ScopeBench
@@ -34,7 +49,7 @@ ScopeBench helps you enforce bounded execution before actions run by combining:
 - Coding-task policy checks such as:
   - `read_before_write`
   - `validation_after_write`
-- CLI modes for one-off runs, quickstarts, weekly calibration, and API serving.
+- CLI modes for one-off runs, quickstarts, red-team stress tests, weekly calibration, and API serving.
 - HTTP API with optional:
   - step-level vectors
   - summary + next-step guidance
@@ -59,6 +74,16 @@ pip install -U pip
 pip install -e ".[dev]"
 ```
 
+### Optional policy backends
+
+ScopeBench supports multiple policy backends:
+
+- `python` (default): no extra runtime dependency.
+- `opa`: requires a running OPA server (see [Run with OPA backend](#4-run-with-opa-backend)).
+- `cedar`: available through CLI/API backend selection for Cedar-based policy evaluation.
+
+If you do not explicitly set a backend, ScopeBench uses `python`.
+
 ---
 
 ## Quickstart
@@ -70,6 +95,12 @@ scopebench run examples/phone_charge.contract.yaml examples/phone_charge.plan.ya
 ```
 
 Expected result: a `DENY` decision with axis-specific reasons.
+
+For machine-readable output:
+
+```bash
+scopebench run examples/phone_charge.contract.yaml examples/phone_charge.plan.yaml --json
+```
 
 ### 2) Try built-in shortcuts
 
@@ -88,6 +119,14 @@ Health check:
 
 ```bash
 curl -s http://localhost:8080/health
+```
+
+Discover available templates/tools/cases from the API:
+
+```bash
+curl -s http://localhost:8080/templates | jq '.count'
+curl -s http://localhost:8080/tools | jq '.count'
+curl -s http://localhost:8080/cases | jq '.count'
 ```
 
 ---
@@ -123,6 +162,8 @@ scopebench run <contract.yaml> <plan.yaml> [--json] [--compact-json] [--otel-con
 scopebench quickstart [--json] [--compact-json] [--otel-console]
 scopebench coding-quickstart [--json] [--compact-json] [--otel-console]
 scopebench weekly-calibrate <telemetry.jsonl> [--json]
+python -m scopebench.redteam.generate --count 120 --seed 7 --output scopebench/bench/cases/redteam.jsonl
+scopebench judge-bench scopebench/bench/cases/redteam.jsonl --judge heuristic
 scopebench serve [--host 127.0.0.1] [--port 8080] [--policy-backend python|opa|cedar]
 ```
 
@@ -162,13 +203,25 @@ Response includes:
 - `reasons`, `exceeded`, `asked`
 - aggregate scores and step count
 - optional `summary`, `next_steps`, `plan_patch_suggestion`, and `telemetry`
+- trace context fields (`trace_id`, `span_id`) for observability
+
+### Useful request toggles
+
+When calling `POST /evaluate`, these flags are especially useful during integration:
+
+- `include_summary`: include a concise natural-language explanation.
+- `include_next_steps`: include suggested proportionate follow-up actions.
+- `include_patch`: include a patch-style plan transformation suggestion.
+- `include_telemetry`: include telemetry payload fields for logging/replay.
+- `shadow_mode`: run checks in shadow mode while preserving production behavior.
 
 ### Additional catalog endpoints
 
 - `GET /templates` returns template metadata and full content for each domain, grouped by variants (default + named domain presets).
 - `GET /tools` returns tool registry entries plus a normalized schema payload.
-- `GET /cases` returns benchmark dataset ids (case ids) and available domains.
-- `GET /ui` serves a minimal local web UI for contract/plan authoring and evaluation.
+- `GET /cases` returns benchmark metadata (ids, domains, instructions, expected decisions, and contract payloads).
+- `GET /telemetry/replay` replays recent telemetry rows from `SCOPEBENCH_TELEMETRY_JSONL_PATH`.
+- `GET /ui` serves an interactive web workbench for contract/plan authoring, DAG visualization, axis/rationale inspection, and telemetry replay.
 
 Template variants are also available in the CLI using `<domain>/<variant>/<kind>` naming, e.g.
 `scopebench template show finance/payments/plan` for payments or
@@ -176,7 +229,7 @@ Template variants are also available in the CLI using `<domain>/<variant>/<kind>
 
 ### `POST /evaluate_session`
 
-Evaluate a multi-agent session with a shared global contract, per-agent plans, and global budget enforcement.
+Evaluate a multi-agent session with a shared global contract, per-agent plans, global budget enforcement, and cross-agent scope laundering detection.
 
 Example:
 
@@ -191,6 +244,8 @@ Response includes:
 - `decision` (global)
 - `per_agent.<agent_id>.aggregate` and `per_agent.<agent_id>.ledger`
 - `global.aggregate` and `global.ledger`
+- `laundering_signals` for cross-agent envelope bypass attempts
+- `dashboard.per_agent` / `dashboard.global` budget consumption + utilization summaries
 
 
 ---
@@ -207,6 +262,12 @@ The `examples/` folder includes scenarios such as:
 - operations key rotation
 
 These are useful for demos, CI checks, and policy tuning.
+
+You can also list generated benchmark cases via API:
+
+```bash
+curl -s http://localhost:8080/cases | jq '.cases[0]'
+```
 
 ---
 
@@ -235,6 +296,12 @@ Run the test suite:
 pytest
 ```
 
+Run a narrower, faster loop while iterating:
+
+```bash
+pytest tests/test_cli.py -q
+```
+
 ---
 
 ## Integrations SDK (Python)
@@ -245,7 +312,12 @@ Use `scopebench.integrations.guard(...)` to intercept agent plans before executi
 - exceeded/asked axis signals
 - recommended plan patch transformations
 
-See `docs/integrations/python_sdk.md` for a mock agent loop.
+The SDK also includes lightweight adapters for popular agent framework plan/message payloads:
+
+- `from_langchain_plan(...)`
+- `from_autogen_messages(...)`
+
+See `docs/integrations/python_sdk.md` for usage examples.
 
 ---
 
