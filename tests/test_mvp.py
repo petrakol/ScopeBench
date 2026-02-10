@@ -1113,6 +1113,7 @@ def test_evaluate_session_dashboard_reports_budget_consumption():
     dashboard = body["dashboard"]
     assert dashboard["per_agent"]["agent-a"]["budget_consumption"]["cost_usd"] == pytest.approx(5.0)
     assert dashboard["global"]["budget_utilization"]["cost_usd"] == pytest.approx(0.05)
+    assert dashboard["global"]["budget_projection"]["cost_usd"] >= dashboard["global"]["budget_consumption"]["cost_usd"]
 
 def test_evaluate_session_is_deterministic_for_same_input():
     pytest.importorskip("httpx")
@@ -1467,3 +1468,53 @@ def test_structured_default_effects_v1_shape_is_respected():
     vec = score_step(plan.steps[0], registry)
     assert vec.resource_intensity.value >= 0.95
     assert "effects.resources.magnitude" in vec.resource_intensity.rationale
+
+
+def test_plan_step_realtime_estimates_override_static_values():
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Compute plan",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Run cloud workload",
+                    "tool": "analysis",
+                    "est_cost_usd": 1.0,
+                    "est_time_days": 0.1,
+                    "realtime_estimates": [
+                        {"metric": "cost_usd", "value": 9.0, "source": "manual"},
+                        {"metric": "time_days", "value": 3.0, "source": "manual"},
+                    ],
+                }
+            ],
+        }
+    )
+
+    step = plan.steps[0]
+    assert step.resolved_cost_usd() == pytest.approx(9.0)
+    assert step.resolved_time_days() == pytest.approx(3.0)
+
+
+def test_realtime_estimates_feed_temporal_and_resource_axes():
+    from scopebench.scoring.rules import ToolRegistry, score_step
+
+    step = PlanDAG.model_validate(
+        {
+            "task": "Run cloud job",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Do analysis",
+                    "tool": "analysis",
+                    "realtime_estimates": [
+                        {"metric": "cost_usd", "value": 50.0, "source": "manual"},
+                        {"metric": "time_days", "value": 20.0, "source": "manual"},
+                    ],
+                }
+            ],
+        }
+    ).steps[0]
+
+    vec = score_step(step, ToolRegistry.load_default())
+    assert vec.resource_intensity.value >= 0.65
+    assert vec.temporal.value >= 0.65

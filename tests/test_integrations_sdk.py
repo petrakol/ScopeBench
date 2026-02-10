@@ -6,7 +6,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from scopebench.integrations import from_autogen_messages, from_langchain_plan, guard
+from scopebench.integrations import (
+    apply_realtime_estimates,
+    default_cost_connectors,
+    from_autogen_messages,
+    from_langchain_plan,
+    guard,
+)
+from scopebench.plan import PlanDAG
 
 
 def test_guard_entrypoint_returns_decision_and_patch() -> None:
@@ -49,3 +56,20 @@ def test_framework_adapters_produce_scopebench_plan() -> None:
     assert autogen_plan["task"] == "incident mitigation"
     assert len(autogen_plan["steps"]) == 2
     assert autogen_plan["steps"][1]["depends_on"] == ["1"]
+
+
+def test_default_cost_connectors_apply_realtime_estimates() -> None:
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Update billing pipeline",
+            "steps": [
+                {"id": "1", "description": "Process invoices for customers", "tool": "billing_sync"},
+                {"id": "2", "description": "Deploy infra update", "tool": "infra_deploy", "depends_on": ["1"]},
+            ],
+        }
+    )
+
+    enriched = apply_realtime_estimates(plan, default_cost_connectors())
+    assert len(enriched.steps[0].realtime_estimates) >= 1
+    assert len(enriched.steps[1].realtime_estimates) >= 1
+    assert enriched.steps[1].resolved_cost_usd() is not None

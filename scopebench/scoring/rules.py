@@ -396,19 +396,46 @@ class ToolRegistry:
 def plan_budget_consumption(plan: PlanDAG) -> Dict[str, float]:
     """Estimate budget consumption from a plan."""
     return {
-        "cost_usd": float(sum(step.est_cost_usd or 0.0 for step in plan.steps)),
-        "time_horizon_days": float(sum(step.est_time_days or 0.0 for step in plan.steps)),
+        "cost_usd": float(sum((step.resolved_cost_usd() or 0.0) for step in plan.steps)),
+        "time_horizon_days": float(sum((step.resolved_time_days() or 0.0) for step in plan.steps)),
         "max_tool_calls": float(len(plan.steps)),
     }
 
 
+
+
+def _projected_budget_consumption(plan: PlanDAG) -> Dict[str, float]:
+    projected_cost = 0.0
+    projected_time = 0.0
+    for step in plan.steps:
+        step_cost = step.resolved_cost_usd() or 0.0
+        step_time = step.resolved_time_days() or 0.0
+
+        cost_confidences = [entry.confidence for entry in step.realtime_estimates if entry.metric.value == "cost_usd"]
+        time_confidences = [entry.confidence for entry in step.realtime_estimates if entry.metric.value == "time_days"]
+
+        cost_conf = max(cost_confidences) if cost_confidences else 0.6
+        time_conf = max(time_confidences) if time_confidences else 0.6
+
+        projected_cost += step_cost * (1.0 + (1.0 - float(cost_conf)) * 0.25)
+        projected_time += step_time * (1.0 + (1.0 - float(time_conf)) * 0.25)
+
+    return {
+        "cost_usd": float(projected_cost),
+        "time_horizon_days": float(projected_time),
+        "max_tool_calls": float(len(plan.steps)),
+    }
+
 def build_budget_ledger(contract: TaskContract, plans: List[PlanDAG]) -> Dict[str, Dict[str, float]]:
     """Return consumed/budget/remaining/exceeded for budget dimensions."""
     consumed = {"cost_usd": 0.0, "time_horizon_days": 0.0, "max_tool_calls": 0.0}
+    projected = {"cost_usd": 0.0, "time_horizon_days": 0.0, "max_tool_calls": 0.0}
     for plan in plans:
         plan_consumed = plan_budget_consumption(plan)
+        plan_projected = _projected_budget_consumption(plan)
         for key in consumed:
             consumed[key] += float(plan_consumed[key])
+            projected[key] += float(plan_projected[key])
 
     budgets = {
         "cost_usd": float(contract.budgets.cost_usd),
@@ -420,11 +447,16 @@ def build_budget_ledger(contract: TaskContract, plans: List[PlanDAG]) -> Dict[st
     for key, budget in budgets.items():
         used = float(consumed[key])
         remaining = budget - used
+        projected_used = float(projected[key])
+        projected_remaining = budget - projected_used
         ledger[key] = {
             "budget": budget,
             "consumed": used,
             "remaining": remaining,
+            "projected": projected_used,
+            "projected_remaining": projected_remaining,
             "exceeded": 1.0 if used > budget else 0.0,
+            "projected_exceeded": 1.0 if projected_used > budget else 0.0,
         }
     return ledger
 
@@ -630,6 +662,31 @@ def _keyword_axis(
     return AxisScore(value=float(best), rationale=rationale, confidence=conf)
 
 
+
+
+def _cost_to_resource_intensity(cost_usd: float) -> float:
+    if cost_usd <= 0:
+        return 0.0
+    if cost_usd <= 5:
+        return 0.2
+    if cost_usd <= 20:
+        return 0.4
+    if cost_usd <= 100:
+        return 0.65
+    return 0.85
+
+
+def _time_to_temporal_score(time_days: float) -> float:
+    if time_days <= 0:
+        return 0.0
+    if time_days <= 1:
+        return 0.2
+    if time_days <= 7:
+        return 0.45
+    if time_days <= 30:
+        return 0.65
+    return 0.85
+
 def score_step(step: PlanStep, tool_registry: ToolRegistry) -> ScopeVector:
     text = step.description
     tool_info = tool_registry.get(step.tool)
@@ -639,9 +696,23 @@ def score_step(step: PlanStep, tool_registry: ToolRegistry) -> ScopeVector:
     # Keyword-based
     spatial = _keyword_axis(text, _SPATIAL, default=0.20)
     temporal = _keyword_axis(text, _TEMPORAL, default=0.20)
+
+    resolved_time_days = step.resolved_time_days()
+    if resolved_time_days is not None:
+        temporal.value = min(1.0, max(temporal.value, _time_to_temporal_score(resolved_time_days)))
+        note = f"real-time duration estimate={resolved_time_days:.2f} days"
+        temporal.rationale = f"{temporal.rationale}; {note}" if temporal.rationale else note
+        temporal.confidence = max(temporal.confidence, 0.8)
     depth = _keyword_axis(text, _DEPTH, default=0.20)
     irreversibility = _keyword_axis(text, _IRREV, default=0.10)
     resource_intensity = _keyword_axis(text, _RESOURCE, default=0.15)
+
+    resolved_cost_usd = step.resolved_cost_usd()
+    if resolved_cost_usd is not None:
+        resource_intensity.value = min(1.0, max(resource_intensity.value, _cost_to_resource_intensity(resolved_cost_usd)))
+        note = f"real-time cost estimate=${resolved_cost_usd:.2f}"
+        resource_intensity.rationale = f"{resource_intensity.rationale}; {note}" if resource_intensity.rationale else note
+        resource_intensity.confidence = max(resource_intensity.confidence, 0.8)
     legal_exposure = _keyword_axis(text, _LEGAL, default=0.10)
     dependency_creation = _keyword_axis(text, _DEPEND, default=0.10)
     stakeholder_radius = _keyword_axis(text, _STAKEHOLDERS, default=0.20)
@@ -688,6 +759,12 @@ def score_step(step: PlanStep, tool_registry: ToolRegistry) -> ScopeVector:
             axis_score.value = effect_override.value
             axis_score.rationale = effect_override.rationale
             axis_score.confidence = effect_override.confidence
+
+    # Keep real-time estimates as floor even when effects are present.
+    if resolved_cost_usd is not None:
+        resource_intensity.value = min(1.0, max(resource_intensity.value, _cost_to_resource_intensity(resolved_cost_usd)))
+    if resolved_time_days is not None:
+        temporal.value = min(1.0, max(temporal.value, _time_to_temporal_score(resolved_time_days)))
 
     laundering_tactics = _laundering_tactics(text)
     if laundering_tactics:
