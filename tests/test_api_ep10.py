@@ -277,6 +277,11 @@ def test_calibration_dashboard_and_adjustment_endpoints(tmp_path: Path) -> None:
     assert dashboard.enabled is True
     domains = {entry.domain for entry in dashboard.domains}
     assert "bug_fix" in domains
+    bug_fix = next(entry for entry in dashboard.domains if entry.domain == "bug_fix")
+    assert "axis_distributions" in bug_fix.calibration
+    assert "preset_thresholds" in bug_fix.calibration
+    assert "rates" in bug_fix.calibration
+    assert "telemetry_delta" in bug_fix.calibration
 
     adjust_endpoint = _endpoint(app, "/calibration/adjust")
     adjusted = adjust_endpoint(
