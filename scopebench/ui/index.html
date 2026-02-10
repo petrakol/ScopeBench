@@ -43,6 +43,33 @@
         border: 1px solid #e5e7eb;
         border-radius: 6px;
       }
+      .effect-row-header {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 8px;
+      }
+      .effect-row-rank {
+        display: inline-flex;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        color: #0f172a;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .axis-order-controls {
+        display: inline-flex;
+        gap: 6px;
+      }
+      .axis-order-controls button {
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
       .inline-label {
         display: flex;
         justify-content: space-between;
@@ -239,7 +266,7 @@
 
       <section class="card" style="margin-top: 16px">
         <h3>Effect-axis weighting and precedence lab</h3>
-        <p class="muted">Tune axis weights and signal precedence to run sensitivity analysis on a sample plan grounded in the effects guide.</p>
+        <p class="muted">Tune axis weights, ordering, and signal precedence to run sensitivity analysis on a sample plan grounded in the effects guide.</p>
         <div class="field-grid">
           <label>Signal precedence mode
             <select id="effect-lab-mode">
@@ -256,6 +283,8 @@
           <div></div>
           <div></div>
         </div>
+        <h4 style="margin: 10px 0 6px">Category weighting and precedence order</h4>
+        <p class="muted">Drag priority via up/down. Higher-ranked categories receive stronger precedence multipliers in adjusted scoring.</p>
         <div id="effect-lab-weights" class="slider-grid"></div>
         <div class="grid two-col" style="margin-top:12px">
           <div>
@@ -645,6 +674,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let latestEvaluation = null;
       let allCases = [];
       let selectedCaseId = null;
+      let effectLabAxisOrder = EFFECT_AXES.map(([, axis]) => axis);
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -707,13 +737,38 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       function renderAggregate(aggregate = {}) { axisTableEl.innerHTML = ""; Object.entries(aggregate).sort((a, b) => b[1] - a[1]).forEach(([axis, score]) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${axis}</td><td>${Number(score).toFixed(3)}</td>`; axisTableEl.appendChild(tr); }); }
 
+      function moveEffectLabAxis(axisKey, direction) {
+        const index = effectLabAxisOrder.indexOf(axisKey);
+        if (index < 0) return;
+        const nextIndex = direction === "up" ? index - 1 : index + 1;
+        if (nextIndex < 0 || nextIndex >= effectLabAxisOrder.length) return;
+        const reordered = [...effectLabAxisOrder];
+        [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
+        effectLabAxisOrder = reordered;
+        renderEffectLabWeightControls();
+        renderEffectLabComparison();
+      }
+
       function renderEffectLabWeightControls() {
-        effectLabWeightsEl.innerHTML = EFFECT_AXES.map(([, axisKey]) => `
-          <div class="slider-row"> 
-            <div class="inline-label"><strong>${axisKey}</strong><span data-axis-value="${axisKey}">1.00x</span></div>
-            <input type="range" min="0" max="2.5" step="0.1" value="1" data-axis-weight="${axisKey}" />
-          </div>
-        `).join("");
+        const axisWeightState = Object.fromEntries(
+          Array.from(effectLabWeightsEl.querySelectorAll("input[data-axis-weight]")).map((node) => [node.dataset.axisWeight, Number(node.value || 1)])
+        );
+        effectLabWeightsEl.innerHTML = effectLabAxisOrder.map((axisKey, rankIndex) => {
+          const sliderValue = Number(axisWeightState[axisKey] || 1);
+          return `
+            <div class="slider-row">
+              <div class="effect-row-header">
+                <span class="effect-row-rank" title="precedence rank">${rankIndex + 1}</span>
+                <div class="inline-label"><strong>${axisKey}</strong><span data-axis-value="${axisKey}">${sliderValue.toFixed(2)}x</span></div>
+                <div class="axis-order-controls">
+                  <button class="secondary" type="button" data-axis-move="up" data-axis-key="${axisKey}" ${rankIndex === 0 ? "disabled" : ""}>↑</button>
+                  <button class="secondary" type="button" data-axis-move="down" data-axis-key="${axisKey}" ${rankIndex === effectLabAxisOrder.length - 1 ? "disabled" : ""}>↓</button>
+                </div>
+              </div>
+              <input type="range" min="0" max="2.5" step="0.1" value="${sliderValue}" data-axis-weight="${axisKey}" />
+            </div>
+          `;
+        }).join("");
         effectLabWeightsEl.querySelectorAll("input[data-axis-weight]").forEach((node) => {
           node.addEventListener("input", (ev) => {
             const axis = ev.target.dataset.axisWeight;
@@ -723,16 +778,27 @@ Require rollback plan before high-irreversibility actions.</textarea>
             renderEffectLabComparison();
           });
         });
+        effectLabWeightsEl.querySelectorAll("button[data-axis-move]").forEach((node) => {
+          node.addEventListener("click", (ev) => {
+            moveEffectLabAxis(ev.target.dataset.axisKey, ev.target.dataset.axisMove);
+          });
+        });
       }
 
       function getEffectLabState() {
         const axisWeights = Object.fromEntries(Array.from(effectLabWeightsEl.querySelectorAll("input[data-axis-weight]")).map((node) => [node.dataset.axisWeight, Number(node.value || 1)]));
+        const axisPrecedence = Object.fromEntries(effectLabAxisOrder.map((axis, index) => {
+          const multiplier = 1 + ((effectLabAxisOrder.length - 1 - index) * 0.05);
+          return [axis, Number(multiplier.toFixed(2))];
+        }));
         return {
           mode: effectLabModeEl.value,
           explicitWeight: Number(effectLabExplicitEl.value || 0),
           priorsWeight: Number(effectLabPriorsEl.value || 0),
           heuristicsWeight: Number(effectLabHeuristicsEl.value || 0),
-          axisWeights
+          axisWeights,
+          axisOrder: [...effectLabAxisOrder],
+          axisPrecedence
         };
       }
 
@@ -781,7 +847,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
             const denom = Math.max(0.001, state.explicitWeight + state.priorsWeight + state.heuristicsWeight);
             signalBlend = ((explicit * state.explicitWeight) + (priors * state.priorsWeight) + (heuristics * state.heuristicsWeight)) / denom;
           }
-          adjusted[axis] = Math.max(0, Math.min(1.5, signalBlend * Number(state.axisWeights[axis] || 1)));
+          const precedenceBoost = Number(state.axisPrecedence?.[axis] || 1);
+          adjusted[axis] = Math.max(0, Math.min(1.5, signalBlend * Number(state.axisWeights[axis] || 1) * precedenceBoost));
         });
         return { adjusted, signals, state };
       }
@@ -804,10 +871,14 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const { adjusted, state } = applyEffectLabWeighting(baseline, plan);
         const baseDecision = effectLabDecision(baseline);
         const adjustedDecision = effectLabDecision(adjusted);
+        const maxAdjustedAxis = Object.entries(adjusted).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0]?.[0] || "n/a";
         effectLabSummaryEl.textContent = JSON.stringify({
           precedence_mode: state.mode,
+          axis_order: state.axisOrder,
+          axis_precedence_multipliers: state.axisPrecedence,
           baseline_decision: baseDecision,
           adjusted_decision: adjustedDecision,
+          dominant_adjusted_axis: maxAdjustedAxis,
           note: "Explicit effects can dominate in strict mode, or be blended/overridden for domain-specific sensitivity analysis."
         }, null, 2);
         effectLabTableEl.innerHTML = "";
