@@ -12,12 +12,20 @@ Each step can include:
 - `irreversible_actions`
 - `geo_scope`
 - `time_horizon`
+- `macro_consequences`
 
 Each category has:
 
 - `magnitude`: one of `none | low | medium | high | extreme`
 - optional `rationale`
 - optional category-specific list fields (`kinds`, `regimes`, `groups`, `actions`, `regions`, `horizons`)
+
+`macro_consequences` entries have:
+
+- `concept`: knowledge-graph concept id
+- `channel`: transmission channel (e.g., `climate`, `regulatory`, `social`)
+- `confidence`: value in `[0,1]`
+- optional `rationale`
 
 Example:
 
@@ -35,6 +43,11 @@ steps:
       stakeholders:
         magnitude: medium
         groups: [customers]
+      macro_consequences:
+        - concept: public_trust
+          channel: social
+          confidence: 0.74
+          rationale: "kg:stakeholders (broad trust and legitimacy impact)"
 ```
 
 ## Scoring precedence
@@ -60,3 +73,14 @@ If a step does not specify `effects`, ScopeBench can infer defaults from `tool_r
 These defaults are merged into the step at scoring time.
 
 This lets neutral descriptions still reflect macro consequences implied by the selected tool.
+
+
+## Causal abstraction layer
+
+ScopeBench now supports a causal abstraction layer in `effects_v1`:
+
+- Every tool in `tool_registry.yaml` declares `default_effects` as structured `effects_v1` fields.
+- Scoring infers additional `macro_consequences` from step text using a built-in knowledge-graph mapping (concept -> effect axis + channel).
+- For covered axes, precedence remains: explicit effects > macro consequence inference > tool priors > keywords.
+
+This means scoring can prioritize declared effects and causal consequence mappings over tool priors and keyword-only heuristics.

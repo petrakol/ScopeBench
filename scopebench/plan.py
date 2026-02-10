@@ -43,6 +43,13 @@ class TimeHorizonEffect(EffectCategory):
     horizons: List[str] = Field(default_factory=list)
 
 
+class MacroConsequence(BaseModel):
+    concept: str = Field(..., min_length=1)
+    channel: str = Field(..., min_length=1)
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    rationale: Optional[str] = None
+
+
 class EffectSpec(BaseModel):
     version: str = Field(default="effects_v1", pattern=r"^effects_v1$")
     resources: Optional[ResourceEffect] = None
@@ -51,6 +58,7 @@ class EffectSpec(BaseModel):
     irreversible_actions: Optional[IrreversibleActionEffect] = None
     geo_scope: Optional[GeoScopeEffect] = None
     time_horizon: Optional[TimeHorizonEffect] = None
+    macro_consequences: List[MacroConsequence] = Field(default_factory=list)
 
 
 class PlanStep(BaseModel):
