@@ -3,13 +3,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from scopebench.contracts import TaskContract
 from scopebench.plan import PlanDAG
 from scopebench.runtime.guard import evaluate
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
-from scopebench.tracing.otel import init_tracing
+from scopebench.tracing.otel import current_trace_context, init_tracing
 
 SWE_READ_TOOLS = {"git_read", "file_read"}
 SWE_WRITE_TOOLS = {"git_patch", "git_rewrite", "file_write"}
@@ -70,6 +71,8 @@ class TelemetryDetail(BaseModel):
 
 
 class EvaluateResponse(BaseModel):
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
     decision: str
     policy_backend: str
     policy_version: str
@@ -125,6 +128,7 @@ def _next_steps_from_policy(policy) -> List[str]:
 
 def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
     patches: List[Dict[str, Any]] = []
+    triggered = set(policy.exceeded.keys()) | set(policy.asked.keys())
     if "read_before_write" in policy.asked:
         first_write = next((step for step in plan.steps if step.tool in SWE_WRITE_TOOLS), None)
         if first_write is not None:
@@ -151,6 +155,96 @@ def _suggest_plan_patch(policy, plan: PlanDAG) -> List[Dict[str, Any]]:
                         "description": "Run targeted tests for modified behavior.",
                         "tool": "analysis",
                     },
+                }
+            )
+
+    if "dependency_creation" in triggered:
+        high_dependency = next(
+            (
+                step
+                for step in plan.steps
+                if (step.tool_category or "") in {"infra", "payments", "finance", "health"}
+            ),
+            None,
+        )
+        if high_dependency is not None:
+            patches.append(
+                {
+                    "op": "replace",
+                    "target_step_id": high_dependency.id,
+                    "step": {
+                        "id": f"{high_dependency.id}_reduced_tooling",
+                        "description": "Use lower-risk analysis-first workflow before introducing external dependencies.",
+                        "tool": "analysis",
+                    },
+                    "rationale": "Reduce tool category risk and defer new dependency creation.",
+                }
+            )
+
+    if "depth" in triggered and len(plan.steps) >= 2:
+        split_after = max(1, len(plan.steps) // 2)
+        patches.append(
+            {
+                "op": "split_plan",
+                "after_step_id": plan.steps[split_after - 1].id,
+                "chunks": [
+                    {
+                        "name": "phase_1_safe_discovery",
+                        "step_ids": [step.id for step in plan.steps[:split_after]],
+                    },
+                    {
+                        "name": "phase_2_execution",
+                        "step_ids": [step.id for step in plan.steps[split_after:]],
+                    },
+                ],
+                "rationale": "Split high-depth execution into staged checkpoints.",
+            }
+        )
+
+    if "power_concentration" in triggered:
+        first_privileged = next(
+            (
+                step
+                for step in plan.steps
+                if (step.tool_category or "") in {"iam", "infra", "payments"}
+            ),
+            None,
+        )
+        if first_privileged is not None:
+            patches.append(
+                {
+                    "op": "insert_before",
+                    "target_step_id": first_privileged.id,
+                    "step": {
+                        "id": "approval_gate",
+                        "description": "Request human approval with blast-radius summary before privileged action.",
+                        "tool": "analysis",
+                    },
+                    "rationale": "Add approval gate before high-power operations.",
+                }
+            )
+
+    if "irreversibility" in triggered:
+        irreversible = next(
+            (
+                step
+                for step in plan.steps
+                if (step.tool_category or "") in {"infra", "iam", "payments", "health"}
+                or any(keyword in step.description.lower() for keyword in ("delete", "destroy", "drop", "rotate"))
+            ),
+            None,
+        )
+        if irreversible is not None:
+            patches.append(
+                {
+                    "op": "replace",
+                    "target_step_id": irreversible.id,
+                    "step": {
+                        "id": f"{irreversible.id}_reversible_preview",
+                        "description": "Run dry-run/preview and create rollback artifact before applying irreversible change.",
+                        "tool": "analysis",
+                    },
+                    "rationale": "Reduce irreversible operations by introducing reversible preview.",
                 }
             )
     return patches
@@ -227,6 +321,85 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
     def health():
         return {"ok": True}
 
+    @app.get("/ui", response_class=HTMLResponse)
+    def ui_index():
+        from pathlib import Path
+
+        ui_path = Path(__file__).resolve().parents[1] / "ui" / "index.html"
+        return ui_path.read_text(encoding="utf-8")
+
+    @app.get("/templates")
+    def templates_endpoint():
+        from pathlib import Path
+        import yaml
+
+        templates_root = Path(__file__).resolve().parents[1] / "templates"
+        payload: List[Dict[str, Any]] = []
+        for domain_dir in sorted(p for p in templates_root.iterdir() if p.is_dir()):
+            contract = domain_dir / "contract.yaml"
+            plan = domain_dir / "plan.yaml"
+            notes = domain_dir / "notes.md"
+            payload.append(
+                {
+                    "domain": domain_dir.name,
+                    "metadata": {
+                        "has_contract": contract.exists(),
+                        "has_plan": plan.exists(),
+                        "has_notes": notes.exists(),
+                    },
+                    "content": {
+                        "contract": yaml.safe_load(contract.read_text(encoding="utf-8")) if contract.exists() else None,
+                        "plan": yaml.safe_load(plan.read_text(encoding="utf-8")) if plan.exists() else None,
+                        "notes": notes.read_text(encoding="utf-8") if notes.exists() else None,
+                    },
+                }
+            )
+        return {"templates": payload}
+
+    @app.get("/tools")
+    def tools_endpoint():
+        from scopebench.scoring.rules import ToolRegistry
+
+        registry = ToolRegistry.load_default()
+        tools = []
+        for tool_name, tool_info in sorted(registry._tools.items()):  # noqa: SLF001
+            tools.append(
+                {
+                    "tool": tool_name,
+                    "category": tool_info.category,
+                    "domains": list(tool_info.domains),
+                    "risk_class": tool_info.risk_class,
+                    "priors": dict(tool_info.priors),
+                    "default_effects": dict(tool_info.default_effects),
+                }
+            )
+
+        schema = {
+            "type": "object",
+            "required": ["tool", "category", "domains", "risk_class", "priors", "default_effects"],
+            "properties": {
+                "tool": {"type": "string"},
+                "category": {"type": "string"},
+                "domains": {"type": "array", "items": {"type": "string"}},
+                "risk_class": {"type": "string", "enum": ["low", "moderate", "high", "critical"]},
+                "priors": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0.0, "maximum": 1.0}},
+                "default_effects": {"type": "object"},
+            },
+            "additionalProperties": False,
+        }
+        return {"tools": tools, "normalized_schema": schema}
+
+    @app.get("/cases")
+    def cases_endpoint():
+        from scopebench.bench.dataset import default_cases_path, load_cases
+
+        cases = load_cases(default_cases_path())
+        return {
+            "datasets": sorted({case.id for case in cases}),
+            "domains": sorted({case.domain for case in cases}),
+            "count": len(cases),
+        }
+
     @app.post("/evaluate", response_model=EvaluateResponse)
     def evaluate_endpoint(req: EvaluateRequest):
         contract = TaskContract.model_validate(req.contract)
@@ -286,7 +459,11 @@ def create_app(default_policy_backend: str = "python") -> FastAPI:
                 "Shadow mode enabled: returning effective_decision=ALLOW while preserving policy decision for analysis"
             )
 
+        trace_context = current_trace_context()
+
         return EvaluateResponse(
+            trace_id=trace_context.get("trace_id"),
+            span_id=trace_context.get("span_id"),
             decision=decision,
             policy_backend=pol.policy_backend,
             policy_version=pol.policy_version,
