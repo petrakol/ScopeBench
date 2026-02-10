@@ -1816,7 +1816,23 @@ def create_app(
     configured_telemetry_path = telemetry_jsonl_path or os.getenv(
         "SCOPEBENCH_TELEMETRY_JSONL_PATH"
     )
-    plugin_manager = PluginManager.from_environment()
+    runtime_plugin_dirs = [
+        p.strip() for p in os.getenv("SCOPEBENCH_PLUGIN_DIRS", "").split(os.pathsep) if p.strip()
+    ]
+    plugin_manager = PluginManager.from_dirs(
+        runtime_plugin_dirs,
+        PluginManager._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", "")),
+    )
+
+    def _reload_plugins() -> None:
+        nonlocal plugin_manager
+        plugin_manager = PluginManager.from_dirs(
+            runtime_plugin_dirs,
+            PluginManager._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", "")),
+        )
+
+    def _sync_plugin_dirs_env() -> None:
+        os.environ["SCOPEBENCH_PLUGIN_DIRS"] = os.pathsep.join(runtime_plugin_dirs)
 
     @app.get("/health")
     def health():
@@ -1856,9 +1872,30 @@ def create_app(
             payload.get("domains") if isinstance(payload.get("domains"), list) else []
         )
         rows = [row for row in domains if isinstance(row, dict)]
+        installed_by_bundle = {
+            f"{item.get('publisher')}::{item.get('name')}": item for item in plugin_manager.bundles_payload()
+        }
+        enriched_rows = []
+        for row in rows:
+            key = f"{row.get('publisher', row.get('maintainer', 'community'))}::{row.get('plugin_bundle')}"
+            installed = installed_by_bundle.get(key)
+            enriched_rows.append(
+                {
+                    **row,
+                    "domain_focus": row.get("domain_focus") or row.get("title") or row.get("slug"),
+                    "version": row.get("version") or (installed.get("version") if installed else None),
+                    "signature_status": (
+                        "valid"
+                        if installed and installed.get("signed") and installed.get("signature_valid")
+                        else "unsigned_or_unverified"
+                    ),
+                    "installed": installed is not None,
+                    "installed_bundle": installed,
+                }
+            )
         return {
-            "plugins": rows,
-            "count": len(rows),
+            "plugins": enriched_rows,
+            "count": len(enriched_rows),
             "source": str(marketplace_path),
             "version": payload.get("version"),
             "updated_utc": payload.get("updated_utc"),
@@ -1938,14 +1975,19 @@ def create_app(
 
     @app.get("/plugins")
     def plugins_endpoint():
+        bundles = plugin_manager.bundles_payload()
         return {
-            "plugins": plugin_manager.bundles_payload(),
-            "count": len(plugin_manager.bundles_payload()),
-            "configured_plugin_dirs": [
-                p.strip()
-                for p in os.getenv("SCOPEBENCH_PLUGIN_DIRS", "").split(os.pathsep)
-                if p.strip()
-            ],
+            "plugins": bundles,
+            "count": len(bundles),
+            "configured_plugin_dirs": runtime_plugin_dirs,
+            "merged_environment": {
+                "tools": len(plugin_manager.tools),
+                "cases": len(plugin_manager.cases),
+                "tool_categories": len(plugin_manager.tool_categories),
+                "effects_mappings": len(plugin_manager.effects_mappings),
+                "scoring_axes": len(plugin_manager.scoring_axes),
+                "policy_rules": len(plugin_manager.policy_rules),
+            },
         }
 
     @app.post("/plugins/install")
@@ -1955,7 +1997,7 @@ def create_app(
         if not isinstance(source_path, str) or not source_path.strip():
             return {"ok": False, "error": "source_path is required"}
         if not isinstance(plugin_dir, str) or not plugin_dir.strip():
-            return {"ok": False, "error": "plugin_dir is required"}
+            plugin_dir = ".scopebench/plugins"
 
         src = Path(source_path).expanduser().resolve()
         if not src.exists() or not src.is_file():
@@ -1966,22 +2008,33 @@ def create_app(
         target = target_dir / src.name
         target.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
-        check = PluginManager.from_dirs(
-            [str(target_dir)],
-            PluginManager._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", "")),
-        )
+        if str(target_dir) not in runtime_plugin_dirs:
+            runtime_plugin_dirs.append(str(target_dir))
+            _sync_plugin_dirs_env()
+
+        _reload_plugins()
         installed = next(
             (
                 item
-                for item in check.bundles_payload()
+                for item in plugin_manager.bundles_payload()
                 if Path(item.get("source_path", "")).name == src.name
             ),
             None,
         )
         if installed is None:
             target.unlink(missing_ok=True)
+            _reload_plugins()
             return {"ok": False, "error": "bundle failed to load"}
-        return {"ok": True, "installed": installed, "target_path": str(target)}
+        return {
+            "ok": True,
+            "installed": installed,
+            "target_path": str(target),
+            "configured_plugin_dirs": runtime_plugin_dirs,
+            "merged_environment": {
+                "tools": len(plugin_manager.tools),
+                "cases": len(plugin_manager.cases),
+            },
+        }
 
     @app.post("/plugins/uninstall")
     def plugins_uninstall_endpoint(payload: Dict[str, Any]):
@@ -1992,7 +2045,16 @@ def create_app(
         if not target.exists():
             return {"ok": False, "error": f"bundle not found: {target}"}
         target.unlink()
-        return {"ok": True, "removed": str(target)}
+        _reload_plugins()
+        return {
+            "ok": True,
+            "removed": str(target),
+            "configured_plugin_dirs": runtime_plugin_dirs,
+            "merged_environment": {
+                "tools": len(plugin_manager.tools),
+                "cases": len(plugin_manager.cases),
+            },
+        }
 
     @app.get("/templates")
     def templates_endpoint():
