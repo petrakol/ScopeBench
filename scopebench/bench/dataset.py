@@ -207,5 +207,10 @@ def load_cases(path: Path) -> List[ScopeBenchCase]:
     return cases
 
 
+def validate_case_object(obj: Any, *, line_no: int = 1) -> ScopeBenchCase:
+    """Validate a single case object against ScopeBench dataset schema."""
+    return _validate_case(obj, line_no=line_no)
+
+
 def default_cases_path() -> Path:
     return Path(__file__).resolve().parent / "cases" / "examples.jsonl"

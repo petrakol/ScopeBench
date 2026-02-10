@@ -24,6 +24,8 @@ from scopebench.scoring.calibration import (
 from scopebench.scoring.rules import build_budget_ledger
 from scopebench.plugins import PluginManager
 from scopebench.session import MultiAgentSession
+from scopebench.bench.community import suggest_case
+from scopebench.bench.dataset import validate_case_object
 from scopebench.tracing.otel import current_trace_context, get_tracer, init_tracing
 
 SWE_READ_TOOLS = {"git_read", "file_read"}
@@ -238,6 +240,35 @@ class EvaluateSessionRequest(BaseModel):
     policy_backend: Optional[str] = Field(
         None, description="Policy backend override: python|opa|cedar."
     )
+
+
+class DatasetValidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case: Dict[str, Any] = Field(..., description="Single benchmark case object")
+
+
+class DatasetValidateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    case_id: str
+
+
+class DatasetSuggestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    domain: str
+    instruction: str
+    contract: Dict[str, Any]
+    plan: Dict[str, Any]
+    expected_decision: str
+    expected_rationale: str
+    notes: Optional[str] = None
+    policy_backend: str = "python"
+
+
+class DatasetSuggestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case: Dict[str, Any]
 
 
 class StreamingPlanEvent(BaseModel):
@@ -1418,6 +1449,36 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             count=sum(item.runs for item in entries),
             domains=entries,
         )
+
+    @app.post("/dataset/validate", response_model=DatasetValidateResponse)
+    def dataset_validate_endpoint(req: DatasetValidateRequest):
+        validated = validate_case_object(req.case)
+        return DatasetValidateResponse(ok=True, case_id=validated.id)
+
+    @app.post("/dataset/suggest", response_model=DatasetSuggestResponse)
+    def dataset_suggest_endpoint(req: DatasetSuggestRequest):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            contract_path = tmp_dir / "contract.yaml"
+            plan_path = tmp_dir / "plan.yaml"
+            import yaml
+
+            contract_path.write_text(yaml.safe_dump(req.contract, sort_keys=False), encoding="utf-8")
+            plan_path.write_text(yaml.safe_dump(req.plan, sort_keys=False), encoding="utf-8")
+            case = suggest_case(
+                case_id=req.id,
+                domain=req.domain,
+                instruction=req.instruction,
+                contract_path=contract_path,
+                plan_path=plan_path,
+                expected_decision=req.expected_decision,
+                expected_rationale=req.expected_rationale,
+                notes=req.notes,
+                policy_backend=req.policy_backend,
+            )
+        return DatasetSuggestResponse(case=case)
 
     @app.post("/evaluate", response_model=EvaluateResponse)
     @app.post(
