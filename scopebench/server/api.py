@@ -22,6 +22,7 @@ from scopebench.scoring.calibration import (
     compute_domain_calibration_from_telemetry,
 )
 from scopebench.scoring.rules import build_budget_ledger
+from scopebench.plugins import PluginManager
 from scopebench.session import MultiAgentSession
 from scopebench.tracing.otel import current_trace_context, get_tracer, init_tracing
 
@@ -1202,6 +1203,7 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
     tracer = get_tracer("scopebench")
     app = FastAPI(title="ScopeBench", version="0.1.0")
     configured_telemetry_path = telemetry_jsonl_path or os.getenv("SCOPEBENCH_TELEMETRY_JSONL_PATH")
+    plugin_manager = PluginManager.from_environment()
 
     @app.get("/health")
     def health():
@@ -1264,8 +1266,11 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
         from scopebench.scoring.rules import ToolRegistry
 
         registry = ToolRegistry.load_default()
+        merged_tools = dict(registry._tools)  # noqa: SLF001
+        merged_tools.update(plugin_manager.tools)
+
         tools = []
-        for tool_name, tool_info in sorted(registry._tools.items()):  # noqa: SLF001
+        for tool_name, tool_info in sorted(merged_tools.items()):
             tools.append(
                 {
                     "tool": tool_name,
@@ -1290,14 +1295,25 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             },
             "additionalProperties": False,
         }
-        return {"tools": tools, "normalized_schema": schema}
+        return {
+            "tools": tools,
+            "count": len(tools),
+            "normalized_schema": schema,
+            "extensions": {
+                "tool_categories": plugin_manager.tool_categories,
+                "effects_mappings": plugin_manager.effects_mappings,
+                "scoring_axes": plugin_manager.scoring_axes,
+                "policy_rules": plugin_manager.policy_rules,
+            },
+            "plugins": plugin_manager.bundles_payload(),
+        }
 
     @app.get("/cases")
     def cases_endpoint():
         from scopebench.bench.dataset import default_cases_path, load_cases
 
         try:
-            cases = load_cases(default_cases_path())
+            builtin_cases = load_cases(default_cases_path())
         except ValueError as exc:
             return {
                 "datasets": [],
@@ -1305,12 +1321,14 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                 "count": 0,
                 "cases": [],
                 "error": str(exc),
+                "plugins": plugin_manager.bundles_payload(),
             }
 
+        all_cases = list(builtin_cases) + list(plugin_manager.cases)
         return {
-            "datasets": sorted({case.id for case in cases}),
-            "domains": sorted({case.domain for case in cases}),
-            "count": len(cases),
+            "datasets": sorted({case.id for case in all_cases}),
+            "domains": sorted({case.domain for case in all_cases}),
+            "count": len(all_cases),
             "cases": [
                 {
                     "id": case.id,
@@ -1319,8 +1337,9 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
                     "expected_decision": case.expected_decision,
                     "contract": case.contract,
                 }
-                for case in cases
+                for case in all_cases
             ],
+            "plugins": plugin_manager.bundles_payload(),
         }
 
     @app.get("/telemetry/replay")

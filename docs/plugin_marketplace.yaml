@@ -1,0 +1,33 @@
+version: 1
+updated_utc: "2026-02-10T00:00:00Z"
+domains:
+  - slug: robotics
+    title: Robotics and Industrial Automation
+    maintainer: community-robotics
+    plugin_bundle: robotics-starter
+    repo: https://example.org/scopebench/plugins/robotics
+    status: incubating
+  - slug: biotech
+    title: Biotech and Wet-Lab Operations
+    maintainer: community-biotech
+    plugin_bundle: biotech-safety-pack
+    repo: https://example.org/scopebench/plugins/biotech
+    status: incubating
+  - slug: supply-chain
+    title: Supply Chain and Logistics
+    maintainer: community-supply-chain
+    plugin_bundle: supplychain-resilience
+    repo: https://example.org/scopebench/plugins/supply-chain
+    status: incubating
+  - slug: fintech-risk
+    title: FinTech Risk and Controls
+    maintainer: community-fintech
+    plugin_bundle: fintech-risk-controls
+    repo: https://example.org/scopebench/plugins/fintech
+    status: incubating
+  - slug: public-sector
+    title: Public Sector Service Delivery
+    maintainer: community-govtech
+    plugin_bundle: gov-service-ops
+    repo: https://example.org/scopebench/plugins/public-sector
+    status: incubating

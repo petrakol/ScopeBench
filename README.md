@@ -23,6 +23,7 @@ Instead of only asking *"is this intent safe?"*, ScopeBench asks *"is this plan 
 - [Examples Included](#examples-included)
 - [Testing](#testing)
 - [Integrations SDK (Python)](#integrations-sdk-python)
+- [Plugin Ecosystem](#plugin-ecosystem)
 - [Project Structure](#project-structure)
 - [Development](#development)
 - [License](#license)
@@ -270,6 +271,19 @@ Response includes:
 - `laundering_signals` for cross-agent envelope bypass attempts
 - `dashboard.per_agent` / `dashboard.global` budget consumption + utilization summaries
 
+
+---
+
+
+## Plugin Ecosystem
+
+ScopeBench supports runtime plugin bundles for third-party tool catalogs, dataset extensions, scoring metadata, and signed policy-rule contributions.
+
+- Configure plugin loading with `SCOPEBENCH_PLUGIN_DIRS` and `SCOPEBENCH_PLUGIN_KEYS_JSON`.
+- `GET /tools` returns merged built-in + plugin tools and contribution metadata (`tool_categories`, `effects_mappings`, `scoring_axes`, `policy_rules`) plus signature status.
+- `GET /cases` returns built-in benchmark cases plus plugin-provided dataset extensions.
+
+See [`docs/plugins.md`](docs/plugins.md) for authoring/signing/publishing guidance and [`docs/plugin_marketplace.yaml`](docs/plugin_marketplace.yaml) for community domain listings (robotics, biotech, supply-chain, and more).
 
 ---
 
