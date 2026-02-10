@@ -317,7 +317,19 @@
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Plugin Marketplace</h3>
-          <p class="muted">Community plugin listings from <code>docs/plugin_marketplace.yaml</code>.</p>
+          <p class="muted">Discover community plugins by domain focus, version, and signature status; install directly into your runtime environment.</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Bundle</th>
+                <th>Domain focus</th>
+                <th>Version</th>
+                <th>Signature</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="plugin-marketplace-table"></tbody>
+          </table>
           <pre id="plugin-marketplace"></pre>
         </div>
         <div class="card">
@@ -561,6 +573,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const calibrationPlanPresetEl = el("calibration-plan-preset");
       const streamingEl = el("streaming");
       const pluginMarketplaceEl = el("plugin-marketplace");
+      const pluginMarketplaceTableEl = el("plugin-marketplace-table");
       const pluginManagerEl = el("plugin-manager");
       const pluginSourceEl = el("plugin-source");
       const pluginTargetDirEl = el("plugin-target-dir");
@@ -1238,6 +1251,18 @@ Require rollback plan before high-irreversibility actions.</textarea>
           fetch("/plugin_marketplace").then((r) => r.json()),
           fetch("/plugins").then((r) => r.json())
         ]);
+        const rows = marketplace.plugins || [];
+        pluginMarketplaceTableEl.innerHTML = rows.map((row) => {
+          const signature = row.signature_status || "unknown";
+          const status = row.installed ? "installed" : (row.status || "listed");
+          return `<tr>
+            <td><code>${row.plugin_bundle || "n/a"}</code></td>
+            <td>${row.domain_focus || row.title || row.slug || "n/a"}</td>
+            <td>${row.version || "n/a"}</td>
+            <td>${signature}</td>
+            <td>${status}</td>
+          </tr>`;
+        }).join("") || '<tr><td colspan="5" class="muted">No marketplace plugins listed.</td></tr>';
         pluginMarketplaceEl.textContent = JSON.stringify(marketplace, null, 2);
         pluginManagerEl.textContent = JSON.stringify(installed, null, 2);
       }

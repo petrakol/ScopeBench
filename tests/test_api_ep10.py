@@ -455,12 +455,13 @@ def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
     app = create_app()
     marketplace = _endpoint(app, "/plugin_marketplace")()
     assert marketplace["count"] >= 1
-    plugin_bundles = {
-        item.get("plugin_bundle")
+    robotics = next(
+        item
         for item in marketplace["plugins"]
-        if isinstance(item, dict)
-    }
-    assert "robotics-starter" in plugin_bundles
+        if isinstance(item, dict) and item.get("plugin_bundle") == "robotics-starter"
+    )
+    assert robotics["domain_focus"]
+    assert "signature_status" in robotics
 
 
 def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) -> None:
@@ -494,6 +495,7 @@ def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) ->
         {"source_path": str(source_path), "plugin_dir": str(plugin_dir)}
     )
     assert install_result["ok"] is True
+    assert install_result["merged_environment"]["tools"] >= 1
     target_path = Path(install_result["target_path"])
     assert target_path.exists()
 
@@ -506,6 +508,34 @@ def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) ->
     )
     assert uninstall_result["ok"] is True
     assert target_path.exists() is False
+
+
+def test_plugins_install_uses_default_dir_when_not_provided(tmp_path: Path, monkeypatch) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    bundle = {
+        "name": "robotics-pack",
+        "version": "0.2.0",
+        "publisher": "community",
+        "tools": {
+            "robotic_probe": {
+                "category": "robotics_ops",
+                "domains": ["robotics"],
+                "risk_class": "moderate",
+                "priors": {"uncertainty": 0.2},
+            }
+        },
+    }
+    source_path = source_dir / "robotics.json"
+    source_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    monkeypatch.delenv("SCOPEBENCH_PLUGIN_DIRS", raising=False)
+    app = create_app()
+    install_result = _endpoint(app, "/plugins/install")({"source_path": str(source_path)})
+
+    assert install_result["ok"] is True
+    assert ".scopebench/plugins" in install_result["target_path"]
+    assert install_result["configured_plugin_dirs"]
 
 
 def test_plugin_wizard_and_lint_endpoints() -> None:
