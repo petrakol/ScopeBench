@@ -18,7 +18,7 @@ from scopebench.policy.backends.factory import get_policy_backend  # noqa: E402
 from scopebench.policy.engine import evaluate_policy  # noqa: E402
 from scopebench.runtime.guard import evaluate  # noqa: E402
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector  # noqa: E402
-from scopebench.scoring.rules import aggregate_scope  # noqa: E402
+from scopebench.scoring.rules import ToolRegistry, aggregate_scope, score_step  # noqa: E402
 from scopebench.server.api import (  # noqa: E402
     create_app,
     _build_telemetry,
@@ -532,3 +532,87 @@ def test_policy_input_v1_and_audit_metadata_in_api_response():
     assert body["policy_version"]
     assert body["policy_hash"]
     assert body["policy_input"]["policy_input_version"] == "v1"
+
+
+def test_effects_v1_schema_accepts_valid_and_rejects_invalid_version():
+    valid = PlanDAG.model_validate(
+        {
+            "task": "Effects schema check",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Proceed.",
+                    "effects": {
+                        "version": "effects_v1",
+                        "resources": {
+                            "magnitude": "medium",
+                            "kinds": ["compute"],
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    assert valid.steps[0].effects is not None
+
+    with pytest.raises(ValueError):
+        PlanDAG.model_validate(
+            {
+                "task": "Effects schema check",
+                "steps": [
+                    {
+                        "id": "1",
+                        "description": "Proceed.",
+                        "effects": {
+                            "version": "effects_v0",
+                            "resources": {"magnitude": "medium"},
+                        },
+                    }
+                ],
+            }
+        )
+
+
+def test_effects_override_tool_priors_and_keywords():
+    registry = ToolRegistry.load_default()
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Effect override",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "run tests now",  # keyword baseline low
+                    "tool": "infra_provision",  # prior for resource is high (0.95)
+                    "effects": {
+                        "version": "effects_v1",
+                        "resources": {
+                            "magnitude": "low",
+                            "rationale": "dry-run only",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    vec = score_step(plan.steps[0], registry)
+    assert vec.resource_intensity.value == pytest.approx(0.25)
+    assert "effects.resources.magnitude" in vec.resource_intensity.rationale
+
+
+def test_tool_default_effects_are_used_when_step_effects_missing():
+    registry = ToolRegistry.load_default()
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Default effects inference",
+            "steps": [
+                {
+                    "id": "1",
+                    "description": "Proceed with operation.",
+                    "tool": "card_tokenize",
+                }
+            ],
+        }
+    )
+    vec = score_step(plan.steps[0], registry)
+    assert vec.legal_exposure.value >= 0.8
+    assert "effects.legal.magnitude" in vec.legal_exposure.rationale
