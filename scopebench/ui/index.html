@@ -138,6 +138,7 @@
           <select id="template-select"></select>
           <button id="run">Run /evaluate</button>
           <button id="replay" class="secondary">Replay telemetry</button>
+          <button id="calibration" class="secondary">Calibration dashboard</button>
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
         </div>
       </div>
@@ -207,6 +208,12 @@
           <pre id="telemetry"></pre>
         </div>
       </section>
+      <section class="grid" style="margin-top: 16px">
+        <div class="card">
+          <h3>Calibration Dashboard</h3>
+          <pre id="calibration-dashboard"></pre>
+        </div>
+      </section>
     </main>
 
     <script>
@@ -232,6 +239,7 @@
       const whatIfEditorsEl = el("whatif-editors");
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
+      const calibrationDashboardEl = el("calibration-dashboard");
       const templateSelectEl = el("template-select");
       const autoRunEl = el("auto-run");
       const EFFECT_AXES = [
@@ -509,7 +517,8 @@
             plan,
             include_summary: true,
             include_steps: true,
-            include_telemetry: true
+            include_telemetry: true,
+            calibration_domain: contract.domain || null
           })
         });
         const payload = await res.json();
@@ -536,6 +545,11 @@
         telemetryEl.textContent = JSON.stringify(replay, null, 2);
       }
 
+      async function loadCalibrationDashboard() {
+        const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
+        calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
+      }
+
       el("load-template").addEventListener("click", () => {
         const picked = (templateSelectEl._options || []).find((opt) => opt.key === templateSelectEl.value);
         if (!picked) return;
@@ -550,6 +564,9 @@
       }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => {
         telemetryEl.textContent = `Error: ${err.message}`;
+      }));
+      el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
+        calibrationDashboardEl.textContent = `Error: ${err.message}`;
       }));
       planEl.addEventListener("input", () => {
         try {
@@ -567,6 +584,8 @@
       loadCatalog().catch((err) => {
         catalogEl.textContent = `Catalog load error: ${err.message}`;
       });
+      loadCalibrationDashboard().catch((err) => {
+        calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
       runEvaluation().catch((err) => {
         resultEl.textContent = `Error: ${err.message}`;
       });

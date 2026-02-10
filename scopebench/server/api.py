@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,11 +14,16 @@ from scopebench.contracts import TaskContract
 from scopebench.plan import PlanDAG, RealtimeEstimate
 from scopebench.runtime.guard import evaluate
 from scopebench.scoring.axes import SCOPE_AXES, combine_aggregates
-from scopebench.scoring.calibration import CalibratedDecisionThresholds
-from scopebench.tracing.otel import current_trace_context, init_tracing
+from scopebench.scoring.calibration import (
+    DEFAULT_DOMAIN,
+    CalibratedDecisionThresholds,
+    apply_manual_adjustments,
+    calibration_to_dict,
+    compute_domain_calibration_from_telemetry,
+)
 from scopebench.scoring.rules import build_budget_ledger
 from scopebench.session import MultiAgentSession
-from scopebench.tracing.otel import get_tracer, init_tracing
+from scopebench.tracing.otel import current_trace_context, get_tracer, init_tracing
 
 SWE_READ_TOOLS = {"git_read", "file_read"}
 SWE_WRITE_TOOLS = {"git_patch", "git_rewrite", "file_write"}
@@ -85,6 +90,14 @@ class EvaluateRequest(BaseModel):
     )
     calibration_scale: Optional[float] = Field(
         None, ge=0.0, description="Optional scale for aggregate scores."
+    )
+    calibration_domain: Optional[str] = Field(
+        None,
+        description="Optional telemetry domain/task_type used for adaptive calibration.",
+    )
+    calibration_manual_adjustments: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Optional manual threshold adjustments (axis deltas + abstain delta).",
     )
     policy_backend: Optional[str] = Field(
         None, description="Policy backend override: python|opa|cedar."
@@ -254,6 +267,28 @@ class SessionDashboard(BaseModel):
     global_: SessionDashboardEntry = Field(..., alias="global")
 
     model_config = {"populate_by_name": True}
+
+
+class CalibrationAdjustmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    domain: str = Field(..., description="Domain/task_type to adjust.")
+    axis_threshold_factor_delta: Dict[str, float] = Field(default_factory=dict)
+    axis_scale_delta: Dict[str, float] = Field(default_factory=dict)
+    abstain_uncertainty_threshold_delta: Optional[float] = None
+
+
+class CalibrationDashboardEntry(BaseModel):
+    domain: str
+    runs: int
+    calibration: Dict[str, Any]
+    stats: Dict[str, Dict[str, int]]
+
+
+class CalibrationDashboardResponse(BaseModel):
+    enabled: bool
+    source: Optional[str] = None
+    count: int
+    domains: List[CalibrationDashboardEntry]
 
 
 class EvaluateSessionResponse(BaseModel):
@@ -626,6 +661,62 @@ def _load_telemetry_rows(path: Path, limit: int = 200) -> List[Dict[str, Any]]:
     return rows[-limit:]
 
 
+
+def _build_calibration_dashboard(path: Path) -> CalibrationDashboardResponse:
+    domain_payload = compute_domain_calibration_from_telemetry(path)
+    entries: List[CalibrationDashboardEntry] = []
+    for domain, (calibration, stats) in sorted(domain_payload.items()):
+        entries.append(
+            CalibrationDashboardEntry(
+                domain=domain,
+                runs=stats.runs,
+                calibration=calibration_to_dict(calibration),
+                stats={
+                    "triggered": stats.triggered,
+                    "false_alarms": stats.false_alarms,
+                    "overrides": stats.overrides,
+                    "failures": stats.failures,
+                },
+            )
+        )
+    return CalibrationDashboardResponse(
+        enabled=True,
+        source=str(path),
+        count=sum(item.runs for item in entries),
+        domains=entries,
+    )
+
+
+def _resolve_adaptive_calibration(
+    req: EvaluateRequest,
+    telemetry_path: Optional[str],
+) -> Optional[CalibratedDecisionThresholds]:
+    calibration: Optional[CalibratedDecisionThresholds] = None
+    if req.calibration_scale is not None:
+        calibration = CalibratedDecisionThresholds(global_scale=req.calibration_scale)
+
+    if telemetry_path:
+        domain_payload = compute_domain_calibration_from_telemetry(Path(telemetry_path))
+        domain_key = req.calibration_domain or DEFAULT_DOMAIN
+        picked = domain_payload.get(domain_key)
+        if picked is None and req.calibration_domain:
+            picked = domain_payload.get(DEFAULT_DOMAIN)
+        if picked is not None:
+            domain_calibration = picked[0]
+            if calibration is not None:
+                domain_calibration = CalibratedDecisionThresholds(
+                    global_scale=calibration.global_scale,
+                    axis_scale=domain_calibration.axis_scale,
+                    axis_bias=domain_calibration.axis_bias,
+                    axis_threshold_factor=domain_calibration.axis_threshold_factor,
+                    abstain_uncertainty_threshold=domain_calibration.abstain_uncertainty_threshold,
+                )
+            calibration = domain_calibration
+
+    calibration = apply_manual_adjustments(calibration, req.calibration_manual_adjustments) if calibration else calibration
+    return calibration
+
+
 def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Optional[str] = None) -> FastAPI:
     init_tracing(enable_console=False)
     tracer = get_tracer("scopebench")
@@ -769,6 +860,66 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
             "rows": rows,
         }
 
+
+    @app.get("/calibration/dashboard", response_model=CalibrationDashboardResponse)
+    def calibration_dashboard_endpoint():
+        if not configured_telemetry_path:
+            return CalibrationDashboardResponse(
+                enabled=False,
+                source=None,
+                count=0,
+                domains=[],
+            )
+        path = Path(configured_telemetry_path)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Telemetry path not found")
+        return _build_calibration_dashboard(path)
+
+    @app.post("/calibration/adjust", response_model=CalibrationDashboardResponse)
+    def calibration_adjust_endpoint(req: CalibrationAdjustmentRequest):
+        if not configured_telemetry_path:
+            raise HTTPException(status_code=400, detail="Telemetry path not configured")
+        path = Path(configured_telemetry_path)
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Telemetry path not found")
+
+        domain_payload = compute_domain_calibration_from_telemetry(path)
+        picked = domain_payload.get(req.domain)
+        if picked is None:
+            raise HTTPException(status_code=404, detail=f"Domain '{req.domain}' not found")
+        calibration, _ = picked
+        adjusted = apply_manual_adjustments(
+            calibration,
+            {
+                "axis_threshold_factor_delta": req.axis_threshold_factor_delta,
+                "axis_scale_delta": req.axis_scale_delta,
+                "abstain_uncertainty_threshold_delta": req.abstain_uncertainty_threshold_delta,
+            },
+        )
+        domain_payload[req.domain] = (adjusted, picked[1])
+
+        entries: List[CalibrationDashboardEntry] = []
+        for domain, (calibration, stats) in sorted(domain_payload.items()):
+            entries.append(
+                CalibrationDashboardEntry(
+                    domain=domain,
+                    runs=stats.runs,
+                    calibration=calibration_to_dict(calibration),
+                    stats={
+                        "triggered": stats.triggered,
+                        "false_alarms": stats.false_alarms,
+                        "overrides": stats.overrides,
+                        "failures": stats.failures,
+                    },
+                )
+            )
+        return CalibrationDashboardResponse(
+            enabled=True,
+            source=str(path),
+            count=sum(item.runs for item in entries),
+            domains=entries,
+        )
+
     @app.post("/evaluate", response_model=EvaluateResponse)
     @app.post(
         "/evaluate",
@@ -795,9 +946,7 @@ def create_app(default_policy_backend: str = "python", telemetry_jsonl_path: Opt
     def evaluate_endpoint(req: EvaluateRequest):
         contract = TaskContract.model_validate(req.contract)
         plan = PlanDAG.model_validate(req.plan)
-        calibration = None
-        if req.calibration_scale is not None:
-            calibration = CalibratedDecisionThresholds(global_scale=req.calibration_scale)
+        calibration = _resolve_adaptive_calibration(req, configured_telemetry_path)
         backend = req.policy_backend or default_policy_backend
         res = evaluate(contract, plan, calibration=calibration, policy_backend=backend)
         pol = res.policy
