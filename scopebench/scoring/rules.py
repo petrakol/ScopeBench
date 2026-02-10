@@ -4,7 +4,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -33,7 +33,11 @@ class ToolRegistry:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         tools = {}
         for tool, info in (raw.get("tools") or {}).items():
-            tools[tool] = ToolInfo(tool=tool, category=info.get("category") or "unknown", priors=info.get("priors") or {})
+            tools[tool] = ToolInfo(
+                tool=tool,
+                category=info.get("category") or "unknown",
+                priors=info.get("priors") or {},
+            )
         return cls(tools)
 
     def get(self, tool: Optional[str]) -> Optional[ToolInfo]:
@@ -50,64 +54,168 @@ class ToolRegistry:
 # These are intentionally interpretable; you can later replace with learned classifiers.
 
 _SPATIAL = [
-    (re.compile(r"\b(global|worldwide|planet|international|another continent|continent)\b", re.I), 0.95, "global-scale language"),
-    (re.compile(r"\b(nationwide|countrywide|across the country|national)\b", re.I), 0.75, "national-scale language"),
-    (re.compile(r"\b(statewide|regional|across the region)\b", re.I), 0.55, "regional-scale language"),
+    (
+        re.compile(
+            r"\b(global|worldwide|planet|international|another continent|continent)\b", re.I
+        ),
+        0.95,
+        "global-scale language",
+    ),
+    (
+        re.compile(r"\b(nationwide|countrywide|across the country|national)\b", re.I),
+        0.75,
+        "national-scale language",
+    ),
+    (
+        re.compile(r"\b(statewide|regional|across the region)\b", re.I),
+        0.55,
+        "regional-scale language",
+    ),
     (re.compile(r"\b(citywide|across the city)\b", re.I), 0.40, "city-scale language"),
-    (re.compile(r"\b(local|nearby|my house|my office|this device)\b", re.I), 0.15, "local language"),
+    (
+        re.compile(r"\b(local|nearby|my house|my office|this device)\b", re.I),
+        0.15,
+        "local language",
+    ),
 ]
 
 _TEMPORAL = [
-    (re.compile(r"\b(decade|decades|50 years|100 years|century|permanent)\b", re.I), 0.95, "decade+ horizon"),
+    (
+        re.compile(r"\b(decade|decades|50 years|100 years|century|permanent)\b", re.I),
+        0.95,
+        "decade+ horizon",
+    ),
     (re.compile(r"\b(years|multi-year|long-term)\b", re.I), 0.75, "multi-year horizon"),
     (re.compile(r"\b(months|quarter|12 months)\b", re.I), 0.55, "months horizon"),
     (re.compile(r"\b(weeks|week)\b", re.I), 0.35, "weeks horizon"),
-    (re.compile(r"\b(today|now|immediately|right away|this hour)\b", re.I), 0.10, "immediate horizon"),
+    (
+        re.compile(r"\b(today|now|immediately|right away|this hour)\b", re.I),
+        0.10,
+        "immediate horizon",
+    ),
 ]
 
 _DEPTH = [
-    (re.compile(r"\b(rewrite|re-architect|redesign|rebuild|overhaul|replace the system)\b", re.I), 0.90, "structural redesign language"),
-    (re.compile(r"\b(migrate|replatform|refactor.*major|break.*api)\b", re.I), 0.70, "major change language"),
-    (re.compile(r"\b(refactor|optimize module|clean up architecture)\b", re.I), 0.45, "refactor language"),
-    (re.compile(r"\b(patch|hotfix|small change|minimal change|one-line|surgical)\b", re.I), 0.15, "minor change language"),
+    (
+        re.compile(
+            r"\b(rewrite|re-architect|redesign|rebuild|overhaul|replace the system)\b", re.I
+        ),
+        0.90,
+        "structural redesign language",
+    ),
+    (
+        re.compile(r"\b(migrate|replatform|refactor.*major|break.*api)\b", re.I),
+        0.70,
+        "major change language",
+    ),
+    (
+        re.compile(r"\b(refactor|optimize module|clean up architecture)\b", re.I),
+        0.45,
+        "refactor language",
+    ),
+    (
+        re.compile(r"\b(patch|hotfix|small change|minimal change|one-line|surgical)\b", re.I),
+        0.15,
+        "minor change language",
+    ),
 ]
 
 _IRREV = [
-    (re.compile(r"\b(delete|drop database|decommission|terminate|destroy)\b", re.I), 0.85, "destructive/irreversible verb"),
-    (re.compile(r"\b(migrate|rotate keys|invalidate|remove access)\b", re.I), 0.55, "hard-to-reverse operation"),
-    (re.compile(r"\b(create|provision|deploy|install)\b", re.I), 0.45, "creates long-lived artifacts"),
+    (
+        re.compile(r"\b(delete|drop database|decommission|terminate|destroy)\b", re.I),
+        0.85,
+        "destructive/irreversible verb",
+    ),
+    (
+        re.compile(r"\b(migrate|rotate keys|invalidate|remove access)\b", re.I),
+        0.55,
+        "hard-to-reverse operation",
+    ),
+    (
+        re.compile(r"\b(create|provision|deploy|install)\b", re.I),
+        0.45,
+        "creates long-lived artifacts",
+    ),
 ]
 
 _RESOURCE = [
-    (re.compile(r"\b(build (?:a )?(?:datacenter|factory|power plant|solar farm)|solar farm|grid)\b", re.I), 0.95, "infrastructure-scale resource usage"),
-    (re.compile(r"\b(provision|scale up|purchase|buy|roll out)\b", re.I), 0.65, "resource-expanding action"),
+    (
+        re.compile(
+            r"\b(build (?:a )?(?:datacenter|factory|power plant|solar farm)|solar farm|grid)\b",
+            re.I,
+        ),
+        0.95,
+        "infrastructure-scale resource usage",
+    ),
+    (
+        re.compile(r"\b(provision|scale up|purchase|buy|roll out)\b", re.I),
+        0.65,
+        "resource-expanding action",
+    ),
     (re.compile(r"\b(run tests|analyze|calculate|estimate)\b", re.I), 0.10, "compute-only action"),
 ]
 
 _LEGAL = [
-    (re.compile(r"\b(hipaa|gdpr|pci|sox|regulation|compliance)\b", re.I), 0.80, "explicit regulatory domain"),
-    (re.compile(r"\b(contract|terms of service|license|copyright|pii|personal data)\b", re.I), 0.65, "legal exposure terms"),
+    (
+        re.compile(r"\b(hipaa|gdpr|pci|sox|regulation|compliance)\b", re.I),
+        0.80,
+        "explicit regulatory domain",
+    ),
+    (
+        re.compile(r"\b(contract|terms of service|license|copyright|pii|personal data)\b", re.I),
+        0.65,
+        "legal exposure terms",
+    ),
 ]
 
 _DEPEND = [
-    (re.compile(r"\b(add dependency|introduce new library|vendor|subscription|third-party service)\b", re.I), 0.75, "creates a dependency"),
-    (re.compile(r"\b(create service|new microservice|new database|new pipeline)\b", re.I), 0.65, "creates new system component"),
+    (
+        re.compile(
+            r"\b(add dependency|introduce new library|vendor|subscription|third-party service)\b",
+            re.I,
+        ),
+        0.75,
+        "creates a dependency",
+    ),
+    (
+        re.compile(r"\b(create service|new microservice|new database|new pipeline)\b", re.I),
+        0.65,
+        "creates new system component",
+    ),
 ]
 
 _STAKEHOLDERS = [
-    (re.compile(r"\b(public|everyone|society|customers|all users|entire company)\b", re.I), 0.85, "broad stakeholder language"),
+    (
+        re.compile(r"\b(public|everyone|society|customers|all users|entire company)\b", re.I),
+        0.85,
+        "broad stakeholder language",
+    ),
     (re.compile(r"\b(team|department|org)\b", re.I), 0.50, "org-level stakeholders"),
     (re.compile(r"\b(me|my|this user|single user)\b", re.I), 0.15, "single-user scope"),
 ]
 
 _POWER = [
-    (re.compile(r"\b(admin|root|superuser|owner|god mode)\b", re.I), 0.90, "privileged access language"),
-    (re.compile(r"\b(iam|role|permission|access key|credential|token)\b", re.I), 0.80, "credentials/permissions language"),
-    (re.compile(r"\b(create account|grant access|elevate privilege)\b", re.I), 0.75, "privilege escalation action"),
+    (
+        re.compile(r"\b(admin|root|superuser|owner|god mode)\b", re.I),
+        0.90,
+        "privileged access language",
+    ),
+    (
+        re.compile(r"\b(iam|role|permission|access key|credential|token)\b", re.I),
+        0.80,
+        "credentials/permissions language",
+    ),
+    (
+        re.compile(r"\b(create account|grant access|elevate privilege)\b", re.I),
+        0.75,
+        "privilege escalation action",
+    ),
 ]
 
 
-def _keyword_axis(text: str, patterns: List[Tuple[re.Pattern, float, str]], default: float = 0.0) -> AxisScore:
+def _keyword_axis(
+    text: str, patterns: List[Tuple[re.Pattern, float, str]], default: float = 0.0
+) -> AxisScore:
     t = text or ""
     best = default
     why = []
@@ -144,11 +252,21 @@ def score_step(step: PlanStep, tool_registry: ToolRegistry) -> ScopeVector:
     if tool_info:
         pri = tool_info.priors
         depth.value = min(1.0, max(depth.value, float(pri.get("depth", 0.0))))
-        irreversibility.value = min(1.0, max(irreversibility.value, float(pri.get("irreversibility", 0.0))))
-        resource_intensity.value = min(1.0, max(resource_intensity.value, float(pri.get("resource_intensity", 0.0))))
-        legal_exposure.value = min(1.0, max(legal_exposure.value, float(pri.get("legal_exposure", 0.0))))
-        dependency_creation.value = min(1.0, max(dependency_creation.value, float(pri.get("dependency_creation", 0.0))))
-        power_concentration.value = min(1.0, max(power_concentration.value, float(pri.get("power_concentration", 0.0))))
+        irreversibility.value = min(
+            1.0, max(irreversibility.value, float(pri.get("irreversibility", 0.0)))
+        )
+        resource_intensity.value = min(
+            1.0, max(resource_intensity.value, float(pri.get("resource_intensity", 0.0)))
+        )
+        legal_exposure.value = min(
+            1.0, max(legal_exposure.value, float(pri.get("legal_exposure", 0.0)))
+        )
+        dependency_creation.value = min(
+            1.0, max(dependency_creation.value, float(pri.get("dependency_creation", 0.0)))
+        )
+        power_concentration.value = min(
+            1.0, max(power_concentration.value, float(pri.get("power_concentration", 0.0)))
+        )
 
     # Uncertainty: high if tool is unknown or description is very short/ambiguous
     uncertainty_value = 0.25
@@ -199,7 +317,7 @@ _ACCUMULATE_AXES = {
 def _monotonic_step_increment(step: ScopeVector, axis: str) -> float:
     irreversibility = step.irreversibility.value
     irreversibility_factor = 1.0 + 0.5 * irreversibility
-    return getattr(step, axis).value * _ACCUMULATION_DECAY * irreversibility_factor
+    return step.as_dict[axis] * _ACCUMULATION_DECAY * irreversibility_factor
 
 
 def _aggregate_with_order(
@@ -219,14 +337,11 @@ def _aggregate_with_order(
             elif axis in _ACCUMULATE_AXES:
                 updated = baseline + _monotonic_step_increment(step, axis)
             else:
-                updated = max(baseline, getattr(step, axis).value)
+                updated = max(baseline, step.as_dict[axis])
             path_scope[step_id][axis] = min(1.0, updated)
     if not path_scope:
         raise ValueError("Cannot aggregate empty vectors.")
-    return {
-        axis: max(path_scope[step_id][axis] for step_id in path_scope)
-        for axis in SCOPE_AXES
-    }
+    return {axis: max(path_scope[step_id][axis] for step_id in path_scope) for axis in SCOPE_AXES}
 
 
 def _topo_order(plan: PlanDAG) -> List[str]:

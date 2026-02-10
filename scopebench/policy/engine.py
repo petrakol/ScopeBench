@@ -41,7 +41,9 @@ def _is_validation_step(tool: Optional[str], description: str) -> bool:
     return (tool in VALIDATION_TOOLS) or _looks_like_validation(description)
 
 
-def _has_read_ancestor(step_id: str, depends_on: Dict[str, List[str]], tool_by_id: Dict[str, Optional[str]]) -> bool:
+def _has_read_ancestor(
+    step_id: str, depends_on: Dict[str, List[str]], tool_by_id: Dict[str, Optional[str]]
+) -> bool:
     stack = list(depends_on.get(step_id, []))
     seen: Set[str] = set()
     while stack:
@@ -62,11 +64,15 @@ def _is_swe_write(tool: Optional[str], category: Optional[str]) -> bool:
 def _missing_initial_read(plan: PlanDAG, step_vectors: List[ScopeVector]) -> bool:
     """Return True when any SWE write step has no SWE read in its dependency ancestry."""
     vector_tool_by_id = {vector.step_id: vector.tool for vector in step_vectors if vector.step_id}
-    vector_category_by_id = {vector.step_id: vector.tool_category for vector in step_vectors if vector.step_id}
+    vector_category_by_id = {
+        vector.step_id: vector.tool_category for vector in step_vectors if vector.step_id
+    }
 
     # Prefer plan metadata (source of truth), but allow vector fallbacks for direct policy tests.
     tool_by_id = {step.id: step.tool or vector_tool_by_id.get(step.id) for step in plan.steps}
-    category_by_id = {step.id: step.tool_category or vector_category_by_id.get(step.id) for step in plan.steps}
+    category_by_id = {
+        step.id: step.tool_category or vector_category_by_id.get(step.id) for step in plan.steps
+    }
 
     depends_on = {step.id: list(step.depends_on) for step in plan.steps}
     for step in plan.steps:
@@ -83,10 +89,14 @@ def _missing_initial_read(plan: PlanDAG, step_vectors: List[ScopeVector]) -> boo
 def _missing_validation_after_write(plan: PlanDAG, step_vectors: List[ScopeVector]) -> bool:
     """Return True when a SWE write step has no validation successor in the plan graph."""
     vector_tool_by_id = {vector.step_id: vector.tool for vector in step_vectors if vector.step_id}
-    vector_category_by_id = {vector.step_id: vector.tool_category for vector in step_vectors if vector.step_id}
+    vector_category_by_id = {
+        vector.step_id: vector.tool_category for vector in step_vectors if vector.step_id
+    }
 
     tool_by_id = {step.id: step.tool or vector_tool_by_id.get(step.id) for step in plan.steps}
-    category_by_id = {step.id: step.tool_category or vector_category_by_id.get(step.id) for step in plan.steps}
+    category_by_id = {
+        step.id: step.tool_category or vector_category_by_id.get(step.id) for step in plan.steps
+    }
     step_by_id = {step.id: step for step in plan.steps}
 
     # Build child adjacency list for descendant traversal.
@@ -142,7 +152,11 @@ def evaluate_policy(
     # Tool allow/deny (per-step)
     if step_vectors:
         for v in step_vectors:
-            if contract.allowed_tools is not None and v.tool and v.tool not in contract.allowed_tools:
+            if (
+                contract.allowed_tools is not None
+                and v.tool
+                and v.tool not in contract.allowed_tools
+            ):
                 reasons.append(f"Tool '{v.tool}' not in contract.allowed_tools")
                 exceeded["allowed_tools"] = (1.0, 0.0)
             if v.tool_category and v.tool_category in contract.forbidden_tool_categories:
@@ -188,10 +202,14 @@ def evaluate_policy(
         for v in step_vectors:
             if v.tool_category and v.tool_category in high_risk_cats:
                 asked.setdefault("tool_category", 0.0)
-                reasons.append(f"Tool category '{v.tool_category}' triggers ASK by escalation rules")
+                reasons.append(
+                    f"Tool category '{v.tool_category}' triggers ASK by escalation rules"
+                )
         if plan is not None and _missing_initial_read(plan, step_vectors):
             asked.setdefault("read_before_write", 1.0)
-            reasons.append("SWE write step appears before any read-only step; ask for initial inspection")
+            reasons.append(
+                "SWE write step appears before any read-only step; ask for initial inspection"
+            )
         if plan is not None and _missing_validation_after_write(plan, step_vectors):
             asked.setdefault("validation_after_write", 1.0)
             reasons.append("SWE write step is missing a downstream validation/test step")

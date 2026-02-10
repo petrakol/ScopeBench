@@ -24,7 +24,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "pytest-cov>=5.0",
   "ruff>=0.4",
+  "mypy>=1.10",
+  "pre-commit>=3.7",
+  "pip-audit>=2.7",
+  "types-PyYAML>=6.0",
 ]
 
 [project.scripts]
@@ -37,3 +42,22 @@ include = ["scopebench*"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.pytest.ini_options]
+markers = [
+  "unit: fast, isolated tests",
+  "integration: tests that compose multiple modules or external boundaries",
+  "slow: longer-running tests",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+files = ["scopebench"]
+
+[tool.coverage.run]
+source = ["scopebench"]

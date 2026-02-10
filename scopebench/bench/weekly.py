@@ -68,7 +68,9 @@ def summarize_weekly_telemetry(path: Path) -> WeeklyCalibrationReport:
     )
 
 
-def replay_benchmark_slice(root: Path, cases: Optional[List[dict]] = None) -> List[BenchmarkReplayResult]:
+def replay_benchmark_slice(
+    root: Path, cases: Optional[List[dict]] = None
+) -> List[BenchmarkReplayResult]:
     if cases is None:
         cases = [
             {
