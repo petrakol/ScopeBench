@@ -134,6 +134,7 @@
           <button id="run-session">Run /evaluate_session</button>
           <button id="replay" class="secondary">Replay telemetry</button>
           <button id="calibration" class="secondary">Calibration dashboard</button>
+          <button id="cases-analytics" class="secondary">Cases analytics</button>
           <button id="dataset-validate" class="secondary">Validate case draft</button>
           <button id="dataset-suggest" class="secondary">Suggest vectors</button>
           <button id="stream" class="secondary">Stream /evaluate_stream</button>
@@ -407,6 +408,8 @@
         <div class="card"><h3>Telemetry Replay</h3><pre id="telemetry"></pre></div>
       </section>
       <section class="grid" style="margin-top: 16px">
+        <div class="card"><h3>Calibration Dashboard</h3><pre id="calibration-dashboard"></pre></div>
+        <div class="card"><h3>Cross-case Analytics Dashboard</h3><pre id="cases-analytics-dashboard"></pre></div>
         <div class="card">
           <h3>Calibration Dashboard</h3>
           <p class="muted">Interactive analytics for telemetry-driven calibration, thresholds, and simulated plan impact.</p>
@@ -467,6 +470,7 @@
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
       const calibrationDashboardEl = el("calibration-dashboard");
+      const casesAnalyticsDashboardEl = el("cases-analytics-dashboard");
       const calibrationDomainEl = el("calibration-domain");
       const calibrationControlsEl = el("calibration-controls");
       const calibrationDistributionsEl = el("calibration-distributions");
@@ -1306,6 +1310,7 @@
         calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2);
       }
       async function loadCalibrationDashboard() { const dashboard = await fetch("/calibration/dashboard").then((r) => r.json()); calibrationDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
+      async function loadCasesAnalyticsDashboard() { const dashboard = await fetch("/cases/analytics").then((r) => r.json()); casesAnalyticsDashboardEl.textContent = JSON.stringify(dashboard, null, 2); }
 
       async function loadCalibrationDashboard() {
         const dashboard = await fetch("/calibration/dashboard").then((r) => r.json());
@@ -1456,6 +1461,9 @@ ${body}`;
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => {
         calibrationDashboardEl.textContent = `Error: ${err.message}`;
       }));
+      el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => {
+        casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`;
+      }));
       calibrationDomainEl.addEventListener("change", (ev) => { calibrationSelection.domain = ev.target.value; renderCalibrationViews(); });
       calibrationPlanPresetEl.addEventListener("change", () => renderCalibrationViews());
       el("dataset-validate").addEventListener("click", () => validateCaseDraft().catch((err) => {
@@ -1519,6 +1527,7 @@ ${body}`;
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Error: ${err.message}`; }));
+      el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`; }));
       el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; }));
       el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
       el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => { pluginManagerEl.textContent = `Uninstall error: ${err.message}`; }));
@@ -1581,6 +1590,9 @@ ${body}`;
       loadCalibrationDashboard().catch((err) => {
         calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`;
       });
+      loadCasesAnalyticsDashboard().catch((err) => {
+        casesAnalyticsDashboardEl.textContent = `Analytics load error: ${err.message}`;
+      });
       runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Streaming load error: ${err.message}`;
       });
@@ -1588,6 +1600,8 @@ ${body}`;
       renderSessionBuilder();
       loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
       loadCalibrationDashboard().catch((err) => { calibrationDashboardEl.textContent = `Calibration load error: ${err.message}`; });
+      loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsDashboardEl.textContent = `Analytics load error: ${err.message}`; });
+      runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; });
       runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
       loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
       runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
