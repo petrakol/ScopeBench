@@ -1,0 +1,6 @@
+goal: Run consent-aware marketing outreach across segmented audiences
+preset: team
+thresholds:
+  max_resource_intensity: 0.50
+  max_legal_exposure: 0.30
+  max_dependency_creation: 0.35

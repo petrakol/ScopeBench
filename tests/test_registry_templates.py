@@ -60,12 +60,17 @@ def test_cli_template_commands() -> None:
     listed = runner.invoke(app, ["template", "list"])
     assert listed.exit_code == 0
     assert "finance" in listed.stdout
+    assert "payments" in listed.stdout
 
     shown = runner.invoke(app, ["template", "show", "finance/contract"])
     assert shown.exit_code == 0
     assert "goal:" in shown.stdout
 
-    generated = runner.invoke(app, ["template", "generate", "health"])
+    variant_plan = runner.invoke(app, ["template", "show", "finance/payments/plan"])
+    assert variant_plan.exit_code == 0
+    assert "refund_issue" in variant_plan.stdout
+
+    generated = runner.invoke(app, ["template", "generate", "health/medical_data"])
     assert generated.exit_code == 0
     assert "contract:" in generated.stdout
     assert "plan:" in generated.stdout

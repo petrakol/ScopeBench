@@ -1,0 +1,6 @@
+goal: Import and reconcile external lab data into patient charts
+preset: regulated
+thresholds:
+  max_legal_exposure: 0.20
+  max_irreversibility: 0.30
+  max_stakeholder_radius: 0.30

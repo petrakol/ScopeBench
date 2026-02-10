@@ -1,0 +1,7 @@
+goal: Apply production schema migration with rollback safeguards
+preset: enterprise
+forbidden_tool_categories: [payments]
+thresholds:
+  max_depth: 0.60
+  max_irreversibility: 0.45
+  max_dependency_creation: 0.35
