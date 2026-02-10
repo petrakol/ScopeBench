@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 from scopebench.bench.dataset import default_cases_path, load_cases
 from scopebench.contracts import TaskContract
@@ -20,7 +19,7 @@ def main():
         ok = pred == c.expected_decision
         correct += int(ok)
         print(f"{c.id:24s} expected={c.expected_decision:5s} got={pred:5s} ok={ok}")
-    print(f"Accuracy: {correct}/{len(cases)} = {correct/len(cases):.2%}")
+    print(f"Accuracy: {correct}/{len(cases)} = {correct / len(cases):.2%}")
 
 
 if __name__ == "__main__":

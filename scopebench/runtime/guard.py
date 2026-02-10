@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, cast
 
 import yaml
 
@@ -26,7 +26,8 @@ class EvaluationResult:
 
 def load_yaml(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    return cast(Dict[str, Any], data)
 
 
 def load_contract(path: str) -> TaskContract:
@@ -57,7 +58,10 @@ def evaluate(
             with tracer.start_as_current_span("scopebench.score_step") as step_span:
                 step_span.set_attribute("scopebench.step_id", step.id)
                 step_span.set_attribute("scopebench.tool", step.tool or "")
-                step_span.set_attribute("scopebench.tool_category", step.tool_category or tool_registry.category_of(step.tool) or "")
+                step_span.set_attribute(
+                    "scopebench.tool_category",
+                    step.tool_category or tool_registry.category_of(step.tool) or "",
+                )
 
                 v = score_step(step, tool_registry)
 
@@ -75,7 +79,9 @@ def evaluate(
         agg = aggregate_scope(vectors, plan=plan)
         if calibration is not None:
             agg = apply_calibration(agg, calibration)
-            span.set_attribute("scopebench.calibration.global_scale", float(calibration.global_scale))
+            span.set_attribute(
+                "scopebench.calibration.global_scale", float(calibration.global_scale)
+            )
         for axis, val in agg.as_dict().items():
             span.set_attribute(f"scopebench.aggregate.{axis}", float(val))
         span.set_attribute("scopebench.n_steps", agg.n_steps)

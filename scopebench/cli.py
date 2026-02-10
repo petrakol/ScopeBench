@@ -125,9 +125,15 @@ def run(
     contract_path: Path = typer.Argument(..., help="Path to contract YAML."),
     plan_path: Path = typer.Argument(..., help="Path to plan YAML."),
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
-    compact_json: bool = typer.Option(False, "--compact-json", help="Output compact JSON for chat/agent UX."),
-    otel_console: bool = typer.Option(False, "--otel-console", help="Enable console OpenTelemetry exporter."),
-    calibration_scale: float = typer.Option(1.0, "--calibration-scale", min=0.0, help="Scale aggregate scores."),
+    compact_json: bool = typer.Option(
+        False, "--compact-json", help="Output compact JSON for chat/agent UX."
+    ),
+    otel_console: bool = typer.Option(
+        False, "--otel-console", help="Enable console OpenTelemetry exporter."
+    ),
+    calibration_scale: float = typer.Option(
+        1.0, "--calibration-scale", min=0.0, help="Scale aggregate scores."
+    ),
 ):
     """Evaluate a plan against a task contract and print ALLOW/ASK/DENY."""
     init_tracing(enable_console=otel_console)
@@ -141,8 +147,12 @@ def run(
 @app.command()
 def quickstart(
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
-    compact_json: bool = typer.Option(False, "--compact-json", help="Output compact JSON for chat/agent UX."),
-    otel_console: bool = typer.Option(False, "--otel-console", help="Enable console OpenTelemetry exporter."),
+    compact_json: bool = typer.Option(
+        False, "--compact-json", help="Output compact JSON for chat/agent UX."
+    ),
+    otel_console: bool = typer.Option(
+        False, "--otel-console", help="Enable console OpenTelemetry exporter."
+    ),
 ):
     """Run the bundled phone-charge overreach example."""
     init_tracing(enable_console=otel_console)
@@ -153,13 +163,15 @@ def quickstart(
     _print_result(res, as_json=json_out, compact_json=compact_json)
 
 
-
-
 @app.command()
 def coding_quickstart(
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
-    compact_json: bool = typer.Option(False, "--compact-json", help="Output compact JSON for chat/agent UX."),
-    otel_console: bool = typer.Option(False, "--otel-console", help="Enable console OpenTelemetry exporter."),
+    compact_json: bool = typer.Option(
+        False, "--compact-json", help="Output compact JSON for chat/agent UX."
+    ),
+    otel_console: bool = typer.Option(
+        False, "--otel-console", help="Enable console OpenTelemetry exporter."
+    ),
 ):
     """Run the bundled coding bugfix quickstart example (read → patch → validate)."""
     init_tracing(enable_console=otel_console)
@@ -168,8 +180,6 @@ def coding_quickstart(
     plan_path = root / "examples" / "coding_bugfix.plan.yaml"
     res = evaluate_from_files(str(contract_path), str(plan_path))
     _print_result(res, as_json=json_out, compact_json=compact_json)
-
-
 
 
 @app.command()
@@ -204,7 +214,9 @@ def weekly_calibrate(
         console.print(f"Outcomes: {report.outcome_counts}")
         for item in replay:
             status = "PASS" if item.ok else "FAIL"
-            console.print(f" - {status} {item.name}: decision={item.decision} expected={sorted(item.expected)}")
+            console.print(
+                f" - {status} {item.name}: decision={item.decision} expected={sorted(item.expected)}"
+            )
 
     if not all(item.ok for item in replay):
         raise typer.Exit(code=1)

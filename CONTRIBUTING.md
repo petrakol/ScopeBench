@@ -2,24 +2,77 @@
 
 Thanks for contributing.
 
-## What is in-scope
-
-- New domains (SWE, ops, finance, health) via **tool registry** expansions
-- Better axis scoring (still explainable)
-- Better aggregation (scope laundering resistance)
-- Policy-as-code integrations (OPA/Cedar)
-- New ScopeBench cases + clearer labeling rubric
-- Better tracing / replay tools
-
-## What is intentionally out-of-scope (for MVP)
-
-- Training new foundation models
-- Content moderation policies (toxicity/jailbreak) — other tools already do this well
-
-## Development
+## Development setup
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
 pip install -e ".[dev]"
-pytest -q
-ruff check .
 ```
+
+## Local quality gates
+
+Run the same checks used in CI before opening a PR:
+
+```bash
+ruff check .
+ruff format --check .
+mypy scopebench
+pytest -q
+pytest --cov=scopebench --cov-report=term-missing
+```
+
+## Pre-commit hooks
+
+Install and run pre-commit locally:
+
+```bash
+pre-commit install
+pre-commit run --all-files
+```
+
+Configured hooks:
+
+- `ruff` + `ruff-format`
+- `check-yaml`
+- `end-of-file-fixer`
+- `trailing-whitespace`
+- `check-added-large-files`
+
+## Test markers
+
+Use pytest markers to focus local runs:
+
+- `unit` for fast, isolated tests
+- `integration` for cross-module behavior
+- `slow` for longer-running checks
+
+Examples:
+
+```bash
+pytest -q -m unit
+pytest -q -m "not slow"
+```
+
+## Useful commands
+
+- `make setup` — install package with dev dependencies
+- `make lint` — run Ruff lint
+- `make format` — format code with Ruff
+- `make typecheck` — run mypy on `scopebench/`
+- `make test` — run tests
+- `make audit` — run `pip-audit`
+- `make otel-replay` — replay examples with optional OTel console spans
+
+## CI and automation
+
+- CI runs lint, format checks, tests, packaging smoke test, and mypy.
+- Dependency audits run in CI via `pip-audit`.
+- Dependabot is configured for Python and GitHub Actions updates.
+- PRs use a template that captures problem, approach, validation, risk, and rollback.
+
+## ADRs
+
+Use `docs/adr/template.md` for changes that affect architecture, policy thresholds,
+scoring semantics, or telemetry contracts.

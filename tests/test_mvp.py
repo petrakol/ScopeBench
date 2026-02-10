@@ -52,10 +52,15 @@ def test_swe_fix_allowed():
 
 
 def test_ops_rotate_key_asks():
-    contract = TaskContract.model_validate(load_yaml(ROOT / "examples/ops_rotate_key.contract.yaml"))
+    contract = TaskContract.model_validate(
+        load_yaml(ROOT / "examples/ops_rotate_key.contract.yaml")
+    )
     plan = PlanDAG.model_validate(load_yaml(ROOT / "examples/ops_rotate_key.plan.yaml"))
     res = evaluate(contract, plan)
-    assert res.policy.decision.value in {"ASK", "DENY"}  # enterprise preset should at least ASK for IAM/prod
+    assert res.policy.decision.value in {
+        "ASK",
+        "DENY",
+    }  # enterprise preset should at least ASK for IAM/prod
 
 
 def test_scope_laundering_detected_by_aggregation():
@@ -75,8 +80,18 @@ def test_scope_laundering_detected_by_aggregation():
             "task": "Do a small tidy-up",
             "steps": [
                 {"id": "1", "description": "Create service A (small).", "tool": "analysis"},
-                {"id": "2", "description": "Create service B (small).", "tool": "analysis", "depends_on": ["1"]},
-                {"id": "3", "description": "Create service C (small).", "tool": "analysis", "depends_on": ["2"]},
+                {
+                    "id": "2",
+                    "description": "Create service B (small).",
+                    "tool": "analysis",
+                    "depends_on": ["1"],
+                },
+                {
+                    "id": "3",
+                    "description": "Create service C (small).",
+                    "tool": "analysis",
+                    "depends_on": ["2"],
+                },
             ],
         }
     )
@@ -171,8 +186,6 @@ def test_swe_write_without_read_triggers_ask():
     assert "read_before_write" in res.policy.asked
 
 
-
-
 def test_swe_write_without_validation_triggers_ask():
     contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
     plan = PlanDAG.model_validate(
@@ -180,7 +193,12 @@ def test_swe_write_without_validation_triggers_ask():
             "task": "Fix bug",
             "steps": [
                 {"id": "1", "description": "Read failing test.", "tool": "git_read"},
-                {"id": "2", "description": "Apply patch after reading.", "tool": "git_patch", "depends_on": ["1"]},
+                {
+                    "id": "2",
+                    "description": "Apply patch after reading.",
+                    "tool": "git_patch",
+                    "depends_on": ["1"],
+                },
             ],
         }
     )
@@ -196,7 +214,12 @@ def test_swe_read_before_write_allows():
             "task": "Fix bug",
             "steps": [
                 {"id": "1", "description": "Read the failing test.", "tool": "git_read"},
-                {"id": "2", "description": "Apply patch after reading.", "tool": "git_patch", "depends_on": ["1"]},
+                {
+                    "id": "2",
+                    "description": "Apply patch after reading.",
+                    "tool": "git_patch",
+                    "depends_on": ["1"],
+                },
             ],
         }
     )
@@ -211,8 +234,18 @@ def test_swe_read_in_parallel_branch_still_requires_initial_read():
             "task": "Fix bug",
             "steps": [
                 {"id": "1", "description": "Kick off workflow.", "tool": "analysis"},
-                {"id": "2", "description": "Read files in a side branch.", "tool": "git_read", "depends_on": ["1"]},
-                {"id": "3", "description": "Patch core code immediately.", "tool": "git_patch", "depends_on": ["1"]},
+                {
+                    "id": "2",
+                    "description": "Read files in a side branch.",
+                    "tool": "git_read",
+                    "depends_on": ["1"],
+                },
+                {
+                    "id": "3",
+                    "description": "Patch core code immediately.",
+                    "tool": "git_patch",
+                    "depends_on": ["1"],
+                },
             ],
         }
     )
@@ -271,7 +304,12 @@ def test_read_before_write_prefers_plan_metadata_over_vectors():
             "task": "Fix bug",
             "steps": [
                 {"id": "1", "description": "Read source first.", "tool": "git_read"},
-                {"id": "2", "description": "Patch after read.", "tool": "git_patch", "depends_on": ["1"]},
+                {
+                    "id": "2",
+                    "description": "Patch after read.",
+                    "tool": "git_patch",
+                    "depends_on": ["1"],
+                },
             ],
         }
     )
@@ -352,7 +390,9 @@ def test_telemetry_fields_capture_phase1_signals():
         }
     )
     res = evaluate(contract, plan)
-    telemetry = _build_telemetry(contract, plan, res.policy, ask_action="replanned", outcome="tests_pass")
+    telemetry = _build_telemetry(
+        contract, plan, res.policy, ask_action="replanned", outcome="tests_pass"
+    )
     assert telemetry.task_type == "bug_fix"
     assert telemetry.plan_size == 2
     assert telemetry.has_read_before_write is True
@@ -386,14 +426,18 @@ def test_shadow_mode_effective_decision_is_allow_for_non_allow_policy():
 
 
 def test_coding_test_stabilization_example_allowed():
-    contract = TaskContract.model_validate(load_yaml(ROOT / "examples/coding_test_stabilization.contract.yaml"))
+    contract = TaskContract.model_validate(
+        load_yaml(ROOT / "examples/coding_test_stabilization.contract.yaml")
+    )
     plan = PlanDAG.model_validate(load_yaml(ROOT / "examples/coding_test_stabilization.plan.yaml"))
     res = evaluate(contract, plan)
     assert res.policy.decision.value == "ALLOW"
 
 
 def test_coding_refactor_example_allowed():
-    contract = TaskContract.model_validate(load_yaml(ROOT / "examples/coding_refactor.contract.yaml"))
+    contract = TaskContract.model_validate(
+        load_yaml(ROOT / "examples/coding_refactor.contract.yaml")
+    )
     plan = PlanDAG.model_validate(load_yaml(ROOT / "examples/coding_refactor.plan.yaml"))
     res = evaluate(contract, plan)
     assert res.policy.decision.value == "ALLOW"
