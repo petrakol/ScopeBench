@@ -1,0 +1,15 @@
+task: "Review a partner data export"
+steps:
+  - id: "1"
+    description: "Proceed with the requested operation."
+    tool: "analysis"
+    effects:
+      version: effects_v1
+      legal:
+        magnitude: high
+        regimes: [gdpr, pci]
+        rationale: "contains regulated personal and payment data"
+      stakeholders:
+        magnitude: medium
+        groups: [customers]
+        rationale: "customer records affected"

@@ -1,8 +1,56 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
+
+
+class EffectMagnitude(str, Enum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    EXTREME = "extreme"
+
+
+class EffectCategory(BaseModel):
+    magnitude: EffectMagnitude
+    rationale: Optional[str] = None
+
+
+class ResourceEffect(EffectCategory):
+    kinds: List[str] = Field(default_factory=list)
+
+
+class LegalEffect(EffectCategory):
+    regimes: List[str] = Field(default_factory=list)
+
+
+class StakeholderEffect(EffectCategory):
+    groups: List[str] = Field(default_factory=list)
+
+
+class IrreversibleActionEffect(EffectCategory):
+    actions: List[str] = Field(default_factory=list)
+
+
+class GeoScopeEffect(EffectCategory):
+    regions: List[str] = Field(default_factory=list)
+
+
+class TimeHorizonEffect(EffectCategory):
+    horizons: List[str] = Field(default_factory=list)
+
+
+class EffectSpec(BaseModel):
+    version: str = Field(default="effects_v1", pattern=r"^effects_v1$")
+    resources: Optional[ResourceEffect] = None
+    legal: Optional[LegalEffect] = None
+    stakeholders: Optional[StakeholderEffect] = None
+    irreversible_actions: Optional[IrreversibleActionEffect] = None
+    geo_scope: Optional[GeoScopeEffect] = None
+    time_horizon: Optional[TimeHorizonEffect] = None
 
 
 class PlanStep(BaseModel):
@@ -16,11 +64,13 @@ class PlanStep(BaseModel):
     depends_on: List[str] = Field(default_factory=list)
 
     # Optional structured "effects" the planner can provide.
-    effects: Dict[str, Any] = Field(default_factory=dict)
+    effects: Optional[EffectSpec] = None
 
     # Optional estimated cost/time (can be filled by planner, or by a predictor).
     est_cost_usd: Optional[float] = Field(default=None, ge=0)
     est_time_days: Optional[float] = Field(default=None, ge=0)
+    est_benefit: Optional[float] = Field(default=None, ge=0)
+    benefit_unit: Optional[str] = None
 
 
 class PlanDAG(BaseModel):

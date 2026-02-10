@@ -12,7 +12,12 @@ from rich.table import Table
 from scopebench.bench.judge import run_judge_bench
 from scopebench.bench.weekly import replay_benchmark_slice, summarize_weekly_telemetry
 from scopebench.runtime.guard import evaluate, evaluate_from_files
-from scopebench.scoring.calibration import CalibratedDecisionThresholds
+from scopebench.scoring.calibration import (
+    CalibratedDecisionThresholds,
+    calibration_to_dict,
+    compute_axis_calibration_from_telemetry,
+    write_calibration_file,
+)
 from scopebench.scoring.llm_judge import JudgeMode
 from scopebench.tracing.otel import init_tracing
 
@@ -211,7 +216,10 @@ def run(
         False, "--otel-console", help="Enable console OpenTelemetry exporter."
     ),
     calibration_scale: float = typer.Option(
-        1.0, "--calibration-scale", min=0.0, help="Scale aggregate scores."
+        1.0, "--calibration-scale", min=0.0, help="Global scale for aggregate scores."
+    ),
+    calibration_file: Path | None = typer.Option(
+        None, "--calibration-file", help="Path to per-axis calibration JSON file."
     ),
     policy_backend: str = typer.Option(
         "python", "--policy-backend", help="Policy backend: python|opa|cedar."
@@ -226,7 +234,11 @@ def run(
     """Evaluate a plan against a task contract and print ALLOW/ASK/DENY."""
     init_tracing(enable_console=otel_console)
     calibration = None
-    if calibration_scale != 1.0:
+    if calibration_file is not None:
+        from scopebench.scoring.calibration import load_calibration_file
+
+        calibration = load_calibration_file(calibration_file)
+    elif calibration_scale != 1.0:
         calibration = CalibratedDecisionThresholds(global_scale=calibration_scale)
     res = evaluate_from_files(
         str(contract_path),
@@ -280,10 +292,13 @@ def coding_quickstart(
 @app.command()
 def weekly_calibrate(
     telemetry_jsonl: Path = typer.Argument(..., help="Path to telemetry JSONL file."),
+    output_path: Path = typer.Option("axis_calibration.json", "--out", help="Output calibration JSON path."),
     json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON report."),
 ):
-    """Summarize weekly telemetry and replay a fixed benchmark slice."""
+    """Summarize telemetry, replay benchmark slice, and generate per-axis calibration."""
     report = summarize_weekly_telemetry(telemetry_jsonl)
+    calibration, calibration_stats = compute_axis_calibration_from_telemetry(telemetry_jsonl)
+    write_calibration_file(output_path, calibration)
     root = Path(__file__).resolve().parents[1]
     replay = replay_benchmark_slice(root)
 
@@ -293,6 +308,14 @@ def weekly_calibrate(
         "top_triggered_rules": [{"rule": r, "count": c} for r, c in report.top_triggered_rules],
         "ask_action_counts": report.ask_action_counts,
         "outcome_counts": report.outcome_counts,
+        "calibration_file": str(output_path),
+        "calibration": calibration_to_dict(calibration),
+        "calibration_stats": {
+            "triggered": calibration_stats.triggered,
+            "false_alarms": calibration_stats.false_alarms,
+            "overrides": calibration_stats.overrides,
+            "failures": calibration_stats.failures,
+        },
         "benchmark_replay": [
             {"name": r.name, "decision": r.decision, "expected": sorted(r.expected), "ok": r.ok}
             for r in replay
@@ -307,6 +330,7 @@ def weekly_calibrate(
         console.print(f"Top triggered rules: {report.top_triggered_rules}")
         console.print(f"ASK actions: {report.ask_action_counts}")
         console.print(f"Outcomes: {report.outcome_counts}")
+        console.print(f"Calibration file: {output_path}")
         for item in replay:
             status = "PASS" if item.ok else "FAIL"
             console.print(

@@ -170,6 +170,25 @@ Response includes:
 - `GET /cases` returns benchmark dataset ids (case ids) and available domains.
 - `GET /ui` serves a minimal local web UI for contract/plan authoring and evaluation.
 
+### `POST /evaluate_session`
+
+Evaluate a multi-agent session with a shared global contract, per-agent plans, and global budget enforcement.
+
+Example:
+
+```bash
+curl -s http://localhost:8080/evaluate_session \
+  -H 'content-type: application/json' \
+  -d @examples/multi_agent_session.json
+```
+
+Response includes:
+
+- `decision` (global)
+- `per_agent.<agent_id>.aggregate` and `per_agent.<agent_id>.ledger`
+- `global.aggregate` and `global.ledger`
+
+
 ---
 
 ## Examples Included
@@ -219,7 +238,8 @@ See `docs/integrations/python_sdk.md` for a mock agent loop.
 - `scopebench/server/api.py` — FastAPI app and response shaping
 - `scopebench/bench/` — benchmark/telemetry utilities
 - `scopebench/tool_registry.yaml` — tool metadata used by scoring/policy
-- `examples/` — runnable scenario inputs
+- `examples/` — runnable scenario inputs (including `effects_v1` examples)
+- `docs/effects.md` — planner guide for structured effects and precedence
 - `docs/BLUEPRINT.md` — long-term architecture and roadmap
 
 ---

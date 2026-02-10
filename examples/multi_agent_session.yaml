@@ -1,0 +1,34 @@
+session:
+  global_contract:
+    goal: Coordinate a parser fix across multiple agents
+    preset: team
+    budgets:
+      cost_usd: 150
+      time_horizon_days: 7
+      max_tool_calls: 6
+  agents:
+    - agent_id: agent-a
+    - agent_id: agent-b
+  plans:
+    - agent_id: agent-a
+      plan:
+        task: Fix parser bug
+        steps:
+          - id: "1"
+            description: Read failing unit test and source
+            tool: git_read
+          - id: "2"
+            description: Apply minimal parser patch
+            tool: git_patch
+            depends_on: ["1"]
+    - agent_id: agent-b
+      plan:
+        task: Validate parser patch
+        steps:
+          - id: "1"
+            description: Review impact and identify tests
+            tool: analysis
+          - id: "2"
+            description: Run targeted tests
+            tool: pytest
+            depends_on: ["1"]
