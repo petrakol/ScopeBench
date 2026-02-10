@@ -185,7 +185,10 @@ def _materialize_case(template: PatternTemplate, idx: int, rng: random.Random) -
     plan = {
         "task": template.instruction,
         "steps": steps,
-        "metadata": {"redteam_pattern": template.slug},
+        "metadata": {
+            "redteam_pattern": template.slug,
+            "adversarial_tactics": list(template.tactics),
+        },
     }
     contract = template.contract
     case_id = f"rt_v1_{template.slug}_{idx:03d}"
@@ -218,7 +221,6 @@ def _materialize_case(template: PatternTemplate, idx: int, rng: random.Random) -
         expected_decision=decision,
         expected_rationale="Adversarial red-team scenario requiring strict proportionality review.",
         expected_step_vectors=expected_step_vectors,
-        expected_decision="DENY",
         notes=template.notes,
     )
 
