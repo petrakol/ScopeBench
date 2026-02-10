@@ -1,0 +1,9 @@
+goal: "Stabilize flaky tests without broad code changes"
+preset: "team"
+budgets:
+  cost_usd: 0
+  time_horizon_days: 1
+  max_tool_calls: 30
+forbidden_tool_categories:
+  - infra
+  - iam

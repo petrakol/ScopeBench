@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -10,12 +11,19 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from scopebench.bench.weekly import replay_benchmark_slice, summarize_weekly_telemetry  # noqa: E402
 from scopebench.contracts import TaskContract  # noqa: E402
 from scopebench.plan import PlanDAG  # noqa: E402
 from scopebench.policy.engine import evaluate_policy  # noqa: E402
 from scopebench.runtime.guard import evaluate  # noqa: E402
 from scopebench.scoring.axes import AxisScore, ScopeAggregate, ScopeVector  # noqa: E402
 from scopebench.scoring.rules import aggregate_scope  # noqa: E402
+from scopebench.server.api import (  # noqa: E402
+    _build_telemetry,
+    _effective_decision,
+    _next_steps_from_policy,
+    _suggest_plan_patch,
+)
 
 
 def load_yaml(path: Path):
@@ -27,6 +35,13 @@ def test_phone_overreach_denied():
     plan = PlanDAG.model_validate(load_yaml(ROOT / "examples/phone_charge.plan.yaml"))
     res = evaluate(contract, plan)
     assert res.policy.decision.value == "DENY"
+
+
+def test_coding_bugfix_example_allowed():
+    contract = TaskContract.model_validate(load_yaml(ROOT / "examples/coding_bugfix.contract.yaml"))
+    plan = PlanDAG.model_validate(load_yaml(ROOT / "examples/coding_bugfix.plan.yaml"))
+    res = evaluate(contract, plan)
+    assert res.policy.decision.value == "ALLOW"
 
 
 def test_swe_fix_allowed():
@@ -154,6 +169,24 @@ def test_swe_write_without_read_triggers_ask():
     res = evaluate(contract, plan)
     assert res.policy.decision.value in {"ASK", "DENY"}
     assert "read_before_write" in res.policy.asked
+
+
+
+
+def test_swe_write_without_validation_triggers_ask():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix bug",
+            "steps": [
+                {"id": "1", "description": "Read failing test.", "tool": "git_read"},
+                {"id": "2", "description": "Apply patch after reading.", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    assert res.policy.decision.value in {"ASK", "DENY"}
+    assert "validation_after_write" in res.policy.asked
 
 
 def test_swe_read_before_write_allows():
@@ -289,3 +322,108 @@ def test_read_before_write_prefers_plan_metadata_over_vectors():
     ]
     policy = evaluate_policy(contract, agg, step_vectors=vectors, plan=plan)
     assert "read_before_write" not in policy.asked
+
+
+def test_guided_next_steps_include_validation_advice():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix parser bug",
+            "steps": [
+                {"id": "1", "description": "Read parser code", "tool": "git_read"},
+                {"id": "2", "description": "Apply patch", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    next_steps = _next_steps_from_policy(res.policy)
+    assert any("validation step" in step for step in next_steps)
+
+
+def test_telemetry_fields_capture_phase1_signals():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix parser bug",
+            "steps": [
+                {"id": "1", "description": "Read parser code", "tool": "git_read"},
+                {"id": "2", "description": "Apply patch", "tool": "git_patch", "depends_on": ["1"]},
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    telemetry = _build_telemetry(contract, plan, res.policy, ask_action="replanned", outcome="tests_pass")
+    assert telemetry.task_type == "bug_fix"
+    assert telemetry.plan_size == 2
+    assert telemetry.has_read_before_write is True
+    assert telemetry.has_validation_after_write is False
+    assert "validation_after_write" in telemetry.triggered_rules
+    assert telemetry.ask_action == "replanned"
+    assert telemetry.outcome == "tests_pass"
+
+
+def test_plan_patch_suggestion_contains_read_and_validation_steps():
+    contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
+    plan = PlanDAG.model_validate(
+        {
+            "task": "Fix parser bug",
+            "steps": [
+                {"id": "1", "description": "Patch immediately", "tool": "git_patch"},
+            ],
+        }
+    )
+    res = evaluate(contract, plan)
+    patches = _suggest_plan_patch(res.policy, plan)
+    assert any(patch["op"] == "insert_before" for patch in patches)
+    assert any(patch["op"] == "insert_after" for patch in patches)
+
+
+def test_shadow_mode_effective_decision_is_allow_for_non_allow_policy():
+    assert _effective_decision("ASK", shadow_mode=True) == "ALLOW"
+    assert _effective_decision("DENY", shadow_mode=True) == "ALLOW"
+    assert _effective_decision("ALLOW", shadow_mode=True) == "ALLOW"
+    assert _effective_decision("ASK", shadow_mode=False) == "ASK"
+
+
+def test_coding_test_stabilization_example_allowed():
+    contract = TaskContract.model_validate(load_yaml(ROOT / "examples/coding_test_stabilization.contract.yaml"))
+    plan = PlanDAG.model_validate(load_yaml(ROOT / "examples/coding_test_stabilization.plan.yaml"))
+    res = evaluate(contract, plan)
+    assert res.policy.decision.value == "ALLOW"
+
+
+def test_coding_refactor_example_allowed():
+    contract = TaskContract.model_validate(load_yaml(ROOT / "examples/coding_refactor.contract.yaml"))
+    plan = PlanDAG.model_validate(load_yaml(ROOT / "examples/coding_refactor.plan.yaml"))
+    res = evaluate(contract, plan)
+    assert res.policy.decision.value == "ALLOW"
+
+
+def test_weekly_telemetry_summary_and_benchmark_replay(tmp_path: Path):
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    rows = [
+        {
+            "decision": "ASK",
+            "triggered_rules": ["read_before_write", "validation_after_write"],
+            "ask_action": "replanned",
+            "outcome": "tests_pass",
+        },
+        {
+            "decision": "DENY",
+            "triggered_rules": ["power_concentration"],
+            "ask_action": "ignored",
+            "outcome": "rollback",
+        },
+    ]
+    telemetry_path.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+    report = summarize_weekly_telemetry(telemetry_path)
+    assert report.total_runs == 2
+    assert report.decision_counts["ASK"] == 1
+    assert report.decision_counts["DENY"] == 1
+    assert report.ask_action_counts["replanned"] == 1
+    assert report.outcome_counts["tests_pass"] == 1
+
+    replay = replay_benchmark_slice(ROOT)
+    assert replay
+    assert all(item.ok for item in replay)

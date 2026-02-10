@@ -1,0 +1,13 @@
+task: "Fix failing unit test test_user_serializer_handles_empty_email"
+steps:
+  - id: "1"
+    description: "Read failing test and serializer implementation files."
+    tool: "git_read"
+  - id: "2"
+    description: "Apply minimal patch to serializer behavior for empty email edge case."
+    tool: "git_patch"
+    depends_on: ["1"]
+  - id: "3"
+    description: "Run targeted test and related serializer test file."
+    tool: "analysis"
+    depends_on: ["2"]

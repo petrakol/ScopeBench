@@ -45,6 +45,18 @@ Quickstart shortcut:
 scopebench quickstart
 ```
 
+Coding quickstart:
+
+```bash
+scopebench coding-quickstart
+```
+
+Weekly calibration (telemetry + benchmark replay):
+
+```bash
+scopebench weekly-calibrate <telemetry.jsonl>
+```
+
 ### 3) Start the API
 
 ```bash
@@ -57,7 +69,7 @@ Then:
 curl -s http://localhost:8080/health
 ```
 
-The `/evaluate` response can include a short `summary` and `next_steps` (set `include_summary=true`) to support UI/agent UX flows.
+The `/evaluate` response can include a short `summary` and `next_steps` (set `include_summary=true`), a `plan_patch_suggestion`, and lightweight telemetry fields (set `include_telemetry=true`, default) including optional `ask_action`/`outcome` feedback. You can also run in `shadow_mode=true` to return an `effective_decision` without blocking while still logging what enforcement would decide.
 
 ## Repository layout
 

@@ -7,6 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from scopebench.bench.weekly import replay_benchmark_slice, summarize_weekly_telemetry
 from scopebench.runtime.guard import evaluate_from_files
 from scopebench.scoring.calibration import CalibratedDecisionThresholds
 from scopebench.tracing.otel import init_tracing
@@ -150,6 +151,63 @@ def quickstart(
     plan_path = root / "examples" / "phone_charge.plan.yaml"
     res = evaluate_from_files(str(contract_path), str(plan_path))
     _print_result(res, as_json=json_out, compact_json=compact_json)
+
+
+
+
+@app.command()
+def coding_quickstart(
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+    compact_json: bool = typer.Option(False, "--compact-json", help="Output compact JSON for chat/agent UX."),
+    otel_console: bool = typer.Option(False, "--otel-console", help="Enable console OpenTelemetry exporter."),
+):
+    """Run the bundled coding bugfix quickstart example (read → patch → validate)."""
+    init_tracing(enable_console=otel_console)
+    root = Path(__file__).resolve().parents[1]
+    contract_path = root / "examples" / "coding_bugfix.contract.yaml"
+    plan_path = root / "examples" / "coding_bugfix.plan.yaml"
+    res = evaluate_from_files(str(contract_path), str(plan_path))
+    _print_result(res, as_json=json_out, compact_json=compact_json)
+
+
+
+
+@app.command()
+def weekly_calibrate(
+    telemetry_jsonl: Path = typer.Argument(..., help="Path to telemetry JSONL file."),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON report."),
+):
+    """Summarize weekly telemetry and replay a fixed benchmark slice."""
+    report = summarize_weekly_telemetry(telemetry_jsonl)
+    root = Path(__file__).resolve().parents[1]
+    replay = replay_benchmark_slice(root)
+
+    payload = {
+        "total_runs": report.total_runs,
+        "decision_counts": report.decision_counts,
+        "top_triggered_rules": [{"rule": r, "count": c} for r, c in report.top_triggered_rules],
+        "ask_action_counts": report.ask_action_counts,
+        "outcome_counts": report.outcome_counts,
+        "benchmark_replay": [
+            {"name": r.name, "decision": r.decision, "expected": sorted(r.expected), "ok": r.ok}
+            for r in replay
+        ],
+    }
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+    else:
+        console.print(f"[bold]Weekly calibration[/bold] runs={report.total_runs}")
+        console.print(f"Decision counts: {report.decision_counts}")
+        console.print(f"Top triggered rules: {report.top_triggered_rules}")
+        console.print(f"ASK actions: {report.ask_action_counts}")
+        console.print(f"Outcomes: {report.outcome_counts}")
+        for item in replay:
+            status = "PASS" if item.ok else "FAIL"
+            console.print(f" - {status} {item.name}: decision={item.decision} expected={sorted(item.expected)}")
+
+    if not all(item.ok for item in replay):
+        raise typer.Exit(code=1)
 
 
 @app.command()
