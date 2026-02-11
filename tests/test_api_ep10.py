@@ -574,6 +574,7 @@ def test_plugin_wizard_and_lint_endpoints() -> None:
     assert generated["ok"] is True
     assert generated["bundle"]["signature"]["key_id"] == "community-main"
     assert generated["harness"]["passed"] is True
+    assert any("/plugins/install" in item for item in generated["publish_guidance"])
 
     linted = _endpoint(app, "/plugins/lint")(generated["bundle"])
     assert linted["ok"] is True

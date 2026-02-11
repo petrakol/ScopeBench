@@ -145,7 +145,39 @@ def test_cli_plugin_generate_and_lint(tmp_path: Path) -> None:
     assert out.exists()
     payload = json.loads(generated.stdout)
     assert payload["harness"]["passed"] is True
+    assert "plugin-lint" in payload["commands"]["lint"]
+    assert "plugin-install" in payload["commands"]["install"]
 
     linted = runner.invoke(app, ["plugin-lint", str(out)])
     assert linted.exit_code == 0
     assert "passed" in linted.stdout.lower()
+
+
+def test_cli_plugin_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    source = tmp_path / "plugin.yaml"
+    source.write_text(
+        """
+name: robotics-pack
+version: 0.1.0
+publisher: community
+tools:
+  scan_area:
+    category: robotics_operations
+    domains: [robotics]
+    risk_class: moderate
+    priors:
+      uncertainty: 0.2
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    target_dir = tmp_path / "plugins"
+    monkeypatch.delenv("SCOPEBENCH_PLUGIN_DIRS", raising=False)
+
+    installed = runner.invoke(app, ["plugin-install", str(source), "--plugin-dir", str(target_dir), "--json"])
+    assert installed.exit_code == 0
+    payload = json.loads(installed.stdout)
+    assert payload["ok"] is True
+    assert (target_dir / source.name).exists()
+    assert str(target_dir.resolve()) in payload["configured_plugin_dirs"]

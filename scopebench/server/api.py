@@ -2089,6 +2089,7 @@ def create_app(
 
         guidance = [
             "Run /plugins/lint and plugin-harness before publishing.",
+            "Install locally via /plugins/install to validate runtime loading.",
             "Publish signed bundle in an immutable release artifact.",
             "Submit plugin listing update to docs/plugin_marketplace.yaml.",
         ]
