@@ -1769,7 +1769,10 @@ def _build_cases_analytics(
     )
 
 
-def _build_calibration_dashboard(path: Path) -> CalibrationDashboardResponse:
+def _build_calibration_dashboard(
+    path: Path,
+    calibration_overrides: Optional[Dict[str, CalibratedDecisionThresholds]] = None,
+) -> CalibrationDashboardResponse:
     domain_payload = compute_domain_calibration_from_telemetry(path)
     rows = _load_telemetry_rows(path, limit=0)
     rows_by_domain: Dict[str, List[Dict[str, Any]]] = {}
@@ -1779,7 +1782,12 @@ def _build_calibration_dashboard(path: Path) -> CalibrationDashboardResponse:
     preset_thresholds = _preset_thresholds()
 
     entries: List[CalibrationDashboardEntry] = []
-    for domain, (calibration, stats) in sorted(domain_payload.items()):
+    for domain, (base_calibration, stats) in sorted(domain_payload.items()):
+        calibration = (
+            calibration_overrides.get(domain, base_calibration)
+            if calibration_overrides
+            else base_calibration
+        )
         domain_rows = rows_by_domain.get(domain, [])
         distributions: Dict[str, Dict[str, Any]] = {}
         telemetry_delta: Dict[str, Dict[str, Any]] = {}
@@ -2507,26 +2515,11 @@ def create_app(
         )
         domain_payload[req.domain] = (adjusted, picked[1])
 
-        entries: List[CalibrationDashboardEntry] = []
-        for domain, (calibration, stats) in sorted(domain_payload.items()):
-            entries.append(
-                CalibrationDashboardEntry(
-                    domain=domain,
-                    runs=stats.runs,
-                    calibration=calibration_to_dict(calibration),
-                    stats={
-                        "triggered": stats.triggered,
-                        "false_alarms": stats.false_alarms,
-                        "overrides": stats.overrides,
-                        "failures": stats.failures,
-                    },
-                )
-            )
-        return CalibrationDashboardResponse(
-            enabled=True,
-            source=str(path),
-            count=sum(item.runs for item in entries),
-            domains=entries,
+        return _build_calibration_dashboard(
+            path,
+            calibration_overrides={
+                domain: calibration for domain, (calibration, _stats) in domain_payload.items()
+            },
         )
 
     @app.post("/dataset/validate", response_model=DatasetValidateResponse)
