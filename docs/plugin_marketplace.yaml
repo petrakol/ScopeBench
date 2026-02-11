@@ -3,31 +3,46 @@ updated_utc: "2026-02-10T00:00:00Z"
 domains:
   - slug: robotics
     title: Robotics and Industrial Automation
+    description: Safety-first controls for industrial robots, motion planning, and rollback-aware actuation.
+    risk_classes: [high, critical]
     maintainer: community-robotics
+    publisher: community
     plugin_bundle: robotics-starter
     repo: https://example.org/scopebench/plugins/robotics
     status: incubating
   - slug: biotech
     title: Biotech and Wet-Lab Operations
+    description: Lab protocol safeguards, sample tracking, and contamination-aware planning helpers.
+    risk_classes: [moderate, high]
     maintainer: community-biotech
+    publisher: community
     plugin_bundle: biotech-safety-pack
     repo: https://example.org/scopebench/plugins/biotech
     status: incubating
   - slug: supply-chain
     title: Supply Chain and Logistics
+    description: Demand/supplier risk tooling for disruption simulation and resilient routing operations.
+    risk_classes: [low, moderate]
     maintainer: community-supply-chain
+    publisher: community
     plugin_bundle: supplychain-resilience
     repo: https://example.org/scopebench/plugins/supply-chain
     status: incubating
   - slug: fintech-risk
     title: FinTech Risk and Controls
+    description: Financial controls for compliance checks, fraud triage, and audit-ready policy workflows.
+    risk_classes: [moderate, high]
     maintainer: community-fintech
+    publisher: community
     plugin_bundle: fintech-risk-controls
     repo: https://example.org/scopebench/plugins/fintech
     status: incubating
   - slug: public-sector
     title: Public Sector Service Delivery
+    description: Civic service automation with transparency controls, fairness checks, and review gates.
+    risk_classes: [low, moderate, high]
     maintainer: community-govtech
+    publisher: community
     plugin_bundle: gov-service-ops
     repo: https://example.org/scopebench/plugins/public-sector
     status: incubating

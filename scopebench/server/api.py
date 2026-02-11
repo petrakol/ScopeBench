@@ -1969,10 +1969,32 @@ def create_app(
         for row in rows:
             key = f"{row.get('publisher', row.get('maintainer', 'community'))}::{row.get('plugin_bundle')}"
             installed = installed_by_bundle.get(key)
+            installed_tools = (
+                installed.get("tools")
+                if installed and isinstance(installed.get("tools"), dict)
+                else {}
+            )
+            discovered_risk_classes = sorted(
+                {
+                    str(tool.get("risk_class")).strip().lower()
+                    for tool in installed_tools.values()
+                    if isinstance(tool, dict)
+                    and isinstance(tool.get("risk_class"), str)
+                    and tool.get("risk_class").strip()
+                }
+            )
+            listed_risk_classes = row.get("risk_classes")
+            risk_classes = (
+                listed_risk_classes
+                if isinstance(listed_risk_classes, list) and listed_risk_classes
+                else discovered_risk_classes
+            )
             enriched_rows.append(
                 {
                     **row,
                     "domain_focus": row.get("domain_focus") or row.get("title") or row.get("slug"),
+                    "description": row.get("description") or row.get("summary") or "",
+                    "risk_classes": risk_classes,
                     "version": row.get("version") or (installed.get("version") if installed else None),
                     "signature_status": (
                         "valid"

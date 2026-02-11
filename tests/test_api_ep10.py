@@ -468,6 +468,9 @@ def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
     )
     assert robotics["domain_focus"]
     assert "signature_status" in robotics
+    assert robotics["description"]
+    assert isinstance(robotics["risk_classes"], list)
+    assert "high" in robotics["risk_classes"]
 
 
 def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) -> None:

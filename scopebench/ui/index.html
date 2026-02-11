@@ -346,12 +346,14 @@
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Plugin Marketplace</h3>
-          <p class="muted">Discover community plugins by domain focus, version, and signature status; install directly into your runtime environment.</p>
+          <p class="muted">Browse domain plugins from the marketplace, including descriptions and risk classes, then inspect install status in one place.</p>
           <table>
             <thead>
               <tr>
                 <th>Bundle</th>
                 <th>Domain focus</th>
+                <th>Description</th>
+                <th>Risk classes</th>
                 <th>Version</th>
                 <th>Signature</th>
                 <th>Status</th>
@@ -370,7 +372,21 @@
           <div class="controls" style="margin-bottom: 8px;">
             <button id="plugin-install">Install bundle</button>
             <button id="plugin-uninstall" class="secondary">Uninstall bundle</button>
+            <button id="plugin-inspect" class="secondary">Inspect bundle</button>
           </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Plugin</th>
+                <th>Publisher</th>
+                <th>Version</th>
+                <th>Signature</th>
+                <th>Source path</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="plugin-manager-table"></tbody>
+          </table>
           <pre id="plugin-manager"></pre>
         </div>
       </section>
@@ -610,6 +626,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const pluginMarketplaceEl = el("plugin-marketplace");
       const pluginMarketplaceTableEl = el("plugin-marketplace-table");
       const pluginManagerEl = el("plugin-manager");
+      const pluginManagerTableEl = el("plugin-manager-table");
       const pluginSourceEl = el("plugin-source");
       const pluginTargetDirEl = el("plugin-target-dir");
       const pluginWizardDomainEl = el("plugin-wizard-domain");
@@ -1334,14 +1351,41 @@ Require rollback plan before high-irreversibility actions.</textarea>
         pluginMarketplaceTableEl.innerHTML = rows.map((row) => {
           const signature = row.signature_status || "unknown";
           const status = row.installed ? "installed" : (row.status || "listed");
+          const riskClasses = Array.isArray(row.risk_classes) && row.risk_classes.length ? row.risk_classes.join(", ") : "n/a";
+          const description = row.description || row.summary || "n/a";
           return `<tr>
             <td><code>${row.plugin_bundle || "n/a"}</code></td>
             <td>${row.domain_focus || row.title || row.slug || "n/a"}</td>
+            <td>${description}</td>
+            <td>${riskClasses}</td>
             <td>${row.version || "n/a"}</td>
             <td>${signature}</td>
             <td>${status}</td>
           </tr>`;
-        }).join("") || '<tr><td colspan="5" class="muted">No marketplace plugins listed.</td></tr>';
+        }).join("") || '<tr><td colspan="7" class="muted">No marketplace plugins listed.</td></tr>';
+
+        const installedRows = installed.plugins || [];
+        pluginManagerTableEl.innerHTML = installedRows.map((row) => {
+          const signature = row.signed ? (row.signature_valid ? "valid" : "invalid") : "unsigned";
+          return `<tr>
+            <td><code>${row.name || "n/a"}</code></td>
+            <td>${row.publisher || "n/a"}</td>
+            <td>${row.version || "n/a"}</td>
+            <td>${signature}</td>
+            <td><code>${row.source_path || "n/a"}</code></td>
+            <td><button class="secondary plugin-uninstall-inline" data-source-path="${row.source_path || ""}">Uninstall</button></td>
+          </tr>`;
+        }).join("") || '<tr><td colspan="6" class="muted">No installed plugins.</td></tr>';
+
+        pluginManagerTableEl.querySelectorAll(".plugin-uninstall-inline").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const sourcePath = btn.getAttribute("data-source-path") || "";
+            if (!sourcePath) return;
+            pluginSourceEl.value = sourcePath;
+            await uninstallPluginBundle();
+          });
+        });
+
         pluginMarketplaceEl.textContent = JSON.stringify(marketplace, null, 2);
         pluginManagerEl.textContent = JSON.stringify(installed, null, 2);
       }
@@ -1451,6 +1495,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
         }).then((r) => r.json());
         pluginManagerEl.textContent = JSON.stringify(response, null, 2);
         await loadPlugins();
+      }
+
+      async function inspectPluginBundle() {
+        const installed = await fetch("/plugins").then((r) => r.json());
+        const sourcePath = pluginSourceEl.value.trim();
+        const selected = (installed.plugins || []).find((item) => item.source_path === sourcePath || item.name === sourcePath);
+        pluginManagerEl.textContent = JSON.stringify(selected || installed, null, 2);
       }
 
       async function runEvaluation() {
@@ -1957,6 +2008,9 @@ ${body}`;
       el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => {
         pluginManagerEl.textContent = `Uninstall error: ${err.message}`;
       }));
+      el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Inspect error: ${err.message}`;
+      }));
       el("plugin-wizard-generate").addEventListener("click", () => generatePluginWizardBundle().catch((err) => {
         pluginWizardOutputEl.textContent = `Wizard error: ${err.message}`;
       }));
@@ -1981,6 +2035,7 @@ ${body}`;
       el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; }));
       el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
       el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => { pluginManagerEl.textContent = `Uninstall error: ${err.message}`; }));
+      el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => { pluginManagerEl.textContent = `Inspect error: ${err.message}`; }));
       el("add-agent").addEventListener("click", () => {
         const idx = sessionState.agents.length + 1;
         sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
