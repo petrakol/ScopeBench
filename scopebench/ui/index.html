@@ -203,6 +203,7 @@
           <button id="cases-analytics" class="secondary">Cases analytics</button>
           <button id="dataset-validate" class="secondary">Validate case draft</button>
           <button id="dataset-suggest" class="secondary">Suggest vectors</button>
+          <button id="suggest-effects" class="secondary">Suggest Effects</button>
           <button id="stream" class="secondary">Stream /evaluate_stream</button>
           <button id="refresh-plugins" class="secondary">Refresh plugins</button>
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
@@ -313,7 +314,7 @@
       <section class="card" style="margin-top: 16px">
         <h3>What-if Lab</h3>
         <p class="muted">Adjust descriptions, tools, and effect magnitudes. Updates flow into plan JSON and re-evaluate automatically.</p>
-        <div class="controls" style="margin-bottom:10px"><button id="suggest-effects" class="secondary">Suggest effects</button></div>
+        <p class="muted">Use Suggest Effects in the top action bar to auto-populate step-level effects_v1 annotations from LLM/tool heuristics.</p>
         <div id="whatif-editors"></div>
       </section>
 
@@ -968,6 +969,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderDag(updatedPlan);
         renderWhatIfEditors(updatedPlan);
         scheduleAutoEvaluate();
+        resultEl.textContent = "Suggested effects_v1 annotations were applied to the current plan.";
       }
 
       function renderWhatIfEditors(plan) {
