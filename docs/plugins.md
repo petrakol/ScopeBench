@@ -141,6 +141,8 @@ Validate schema correctness before publishing (the generator also runs lint + a 
 
 ```bash
 scopebench plugin-lint plugins/robotics-starter.yaml
+scopebench plugin-harness plugins/robotics-starter.yaml --keys-json '{"community-main":"supersecret"}'
+scopebench plugin-install plugins/robotics-starter.yaml --plugin-dir .scopebench/plugins
 ```
 
 The UI now includes **Plugin Authoring Wizard** at `/ui` and API endpoints:
