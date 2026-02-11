@@ -498,7 +498,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       <section class="card" style="margin-top: 16px">
         <h3>Dataset Contribution Draft</h3>
-        <p class="muted">Wizard flow: draft a case, auto-fill vectors via <code>/dataset/suggest</code>, validate with <code>/dataset/validate</code>, then export a ready-to-submit JSONL contribution.</p>
+        <p class="muted">Wizard flow: draft a case (instruction, contract, and plan), auto-fill vectors via <code>/dataset/suggest</code>, validate with <code>/dataset/validate</code>, then export a ready-to-submit YAML/JSON contribution file.</p>
         <div class="field-grid">
           <label>Case ID<input id="dataset-case-id" type="text" value="community_case_001" /></label>
           <label>Domain<input id="dataset-domain" type="text" value="engineering" /></label>
@@ -516,19 +516,21 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <div class="dataset-wizard-step"><strong>1</strong><span>Build draft from contract + plan</span><span class="status-chip" id="dataset-step-build">pending</span></div>
           <div class="dataset-wizard-step"><strong>2</strong><span>Auto-fill vectors from <code>/dataset/suggest</code></span><span class="status-chip" id="dataset-step-suggest">pending</span></div>
           <div class="dataset-wizard-step"><strong>3</strong><span>Validate schema with <code>/dataset/validate</code></span><span class="status-chip" id="dataset-step-validate">pending</span></div>
-          <div class="dataset-wizard-step"><strong>4</strong><span>Generate ready-to-submit JSONL contribution</span><span class="status-chip" id="dataset-step-generate">pending</span></div>
+          <div class="dataset-wizard-step"><strong>4</strong><span>Generate ready-to-submit YAML/JSON contribution</span><span class="status-chip" id="dataset-step-generate">pending</span></div>
         </div>
         <div class="controls" style="margin: 10px 0">
           <button id="dataset-run-wizard">Run full wizard</button>
           <button id="dataset-build" class="secondary">Build draft from contract+plan</button>
           <button id="dataset-validate-panel" class="secondary">Validate draft</button>
           <button id="dataset-suggest-panel" class="secondary">Auto-suggest vectors</button>
-          <button id="dataset-generate-file">Generate JSONL line</button>
+          <select id="dataset-export-format"><option value="json">JSON</option><option value="yaml">YAML</option></select>
+          <button id="dataset-generate-file">Download contribution file</button>
           <button id="dataset-generate-pr" class="secondary">Generate PR text</button>
         </div>
         <textarea id="case-draft" style="min-height: 220px"></textarea>
-        <h4 style="margin: 8px 0 6px">Contribution file preview</h4>
+        <h4 style="margin: 8px 0 6px">Contribution file preview + download</h4>
         <textarea id="dataset-contribution-file" style="min-height: 100px" readonly></textarea>
+        <a id="dataset-download-link" href="#" download="community_case_001.json" style="display:none">Download rendered file</a>
         <pre id="dataset-output"></pre>
       </section>
 
@@ -659,6 +661,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const datasetExpectedDecisionEl = el("dataset-expected-decision");
       const datasetExpectedRationaleEl = el("dataset-expected-rationale");
       const datasetContributionFileEl = el("dataset-contribution-file");
+      const datasetExportFormatEl = el("dataset-export-format");
+      const datasetDownloadLinkEl = el("dataset-download-link");
       const datasetStepEls = {
         build: el("dataset-step-build"),
         suggest: el("dataset-step-suggest"),
@@ -1831,12 +1835,25 @@ Require rollback plan before high-irreversibility actions.</textarea>
         datasetExpectedRationaleEl.value = draft.expected_rationale || datasetExpectedRationaleEl.value;
       }
 
-      function generateDatasetJsonlLine() {
+      async function generateDatasetContributionFile() {
         const draft = buildCaseDraftFromInputs();
-        const jsonlLine = JSON.stringify(draft);
-        datasetContributionFileEl.value = `${jsonlLine}\n`;
-        setDatasetWizardStep("generate", "done", "jsonl ready");
-        datasetOutputEl.textContent = jsonlLine;
+        setDatasetWizardStep("generate", "running", "rendering");
+        datasetDownloadLinkEl.style.display = "none";
+        const format = (datasetExportFormatEl.value || "json").toLowerCase();
+        const res = await fetch("/dataset/render", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ case: draft, format })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        datasetContributionFileEl.value = data.content;
+        const blob = new Blob([data.content], { type: data.content_type || "text/plain" });
+        datasetDownloadLinkEl.href = URL.createObjectURL(blob);
+        datasetDownloadLinkEl.download = data.filename || `${draft.id}.${format === "yaml" ? "yaml" : "json"}`;
+        datasetDownloadLinkEl.style.display = "inline-block";
+        setDatasetWizardStep("generate", "done", `${format.toUpperCase()} ready`);
+        datasetOutputEl.textContent = `Contribution file rendered: ${datasetDownloadLinkEl.download}`;
       }
 
       async function runDatasetContributionWizard() {
@@ -1847,7 +1864,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           buildCaseDraftFromInputs();
           await suggestCaseVectors();
           await validateCaseDraft();
-          generateDatasetJsonlLine();
+          await generateDatasetContributionFile();
           datasetOutputEl.textContent = "Wizard complete: draft built, vectors suggested, validation passed, contribution file generated.";
         } catch (err) {
           if (datasetStepEls.build.textContent === "running") setDatasetWizardStep("build", "error", "error");
@@ -1867,9 +1884,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
           `- Instruction: ${draft.instruction}`,
           `- Expected decision: ${draft.expected_decision}`,
           ``,
-          `## Case JSONL`,
+          `## Case file`,
           "```json",
-          JSON.stringify(draft),
+          JSON.stringify(draft, null, 2),
           "```",
           ``,
           `## Validation`,
@@ -1930,8 +1947,7 @@ ${body}`;
         suggestCaseVectors().catch((err) => { setDatasetWizardStep("suggest", "error", "error"); datasetOutputEl.textContent = `Suggestion error: ${err.message}`; });
       });
       el("dataset-generate-file").addEventListener("click", () => {
-        try { generateDatasetJsonlLine(); }
-        catch (err) { setDatasetWizardStep("generate", "error", "error"); datasetOutputEl.textContent = `Generate file error: ${err.message}`; }
+        generateDatasetContributionFile().catch((err) => { setDatasetWizardStep("generate", "error", "error"); datasetOutputEl.textContent = `Generate file error: ${err.message}`; });
       });
       el("dataset-run-wizard").addEventListener("click", () => runDatasetContributionWizard().catch((err) => {
         datasetOutputEl.textContent = `Wizard error: ${err.message}`;
