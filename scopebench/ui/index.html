@@ -236,6 +236,10 @@
       .bar-fill { height: 100%; border-radius: 999px; }
       .bar-fill.budget { background: #2563eb; }
       .bar-fill.risk { background: #dc2626; }
+      .plugin-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+      .plugin-filters label { font-size: 13px; color: #1f2937; }
+      .plugin-filters select { width: 100%; margin-top: 4px; }
+      .plugin-details { min-height: 180px; }
       th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
       @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid, .case-kpis { grid-template-columns: 1fr; } }
     </style>
@@ -426,16 +430,29 @@
         <div class="card">
           <h3>Plugin Marketplace</h3>
           <p class="muted">Browse domain plugins from the marketplace, including descriptions and risk classes, then inspect install status in one place.</p>
+          <div class="plugin-filters">
+            <label>Domain
+              <select id="plugin-filter-domain"><option value="all">All domains</option></select>
+            </label>
+            <label>Risk class
+              <select id="plugin-filter-risk"><option value="all">All risk classes</option></select>
+            </label>
+            <label>Publisher
+              <select id="plugin-filter-publisher"><option value="all">All publishers</option></select>
+            </label>
+          </div>
           <table>
             <thead>
               <tr>
                 <th>Bundle</th>
+                <th>Publisher</th>
                 <th>Domain focus</th>
                 <th>Description</th>
                 <th>Risk classes</th>
                 <th>Version</th>
                 <th>Signature</th>
                 <th>Status</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="plugin-marketplace-table"></tbody>
@@ -467,6 +484,8 @@
             <tbody id="plugin-manager-table"></tbody>
           </table>
           <pre id="plugin-manager"></pre>
+          <h4>Selected plugin details</h4>
+          <pre id="plugin-details" class="plugin-details"></pre>
         </div>
       </section>
 
@@ -727,6 +746,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const pluginManagerTableEl = el("plugin-manager-table");
       const pluginSourceEl = el("plugin-source");
       const pluginTargetDirEl = el("plugin-target-dir");
+      const pluginDetailsEl = el("plugin-details");
+      const pluginFilterDomainEl = el("plugin-filter-domain");
+      const pluginFilterRiskEl = el("plugin-filter-risk");
+      const pluginFilterPublisherEl = el("plugin-filter-publisher");
       const pluginWizardDomainEl = el("plugin-wizard-domain");
       const pluginWizardPublisherEl = el("plugin-wizard-publisher");
       const pluginWizardNameEl = el("plugin-wizard-name");
@@ -824,6 +847,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let effectLabAxisOrder = EFFECT_AXES.map(([, axis]) => axis);
       let latestSessionPayload = null;
       let negotiationEdits = {};
+      let pluginMarketplaceState = [];
+      let pluginInstalledState = [];
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -1825,30 +1850,73 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderWhatIfEditors(JSON.parse(planEl.value));
       }
 
-      async function loadPlugins() {
-        const [marketplace, installed] = await Promise.all([
-          fetch("/plugin_marketplace").then((r) => r.json()),
-          fetch("/plugins").then((r) => r.json())
-        ]);
-        const rows = marketplace.plugins || [];
+      function pluginFilterOptions(items, getter) {
+        return ["all", ...Array.from(new Set(items.map(getter).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)))];
+      }
+
+      function pluginMatchesFilters(item) {
+        const domain = pluginFilterDomainEl.value || "all";
+        const risk = pluginFilterRiskEl.value || "all";
+        const publisher = pluginFilterPublisherEl.value || "all";
+        const domainFocus = String(item.domain_focus || item.title || item.slug || "").trim();
+        const risks = Array.isArray(item.risk_classes) ? item.risk_classes.map((r) => String(r).toLowerCase()) : [];
+        const itemPublisher = String(item.publisher || item.maintainer || "community").trim();
+        if (domain !== "all" && domainFocus !== domain) return false;
+        if (risk !== "all" && !risks.includes(String(risk).toLowerCase())) return false;
+        if (publisher !== "all" && itemPublisher !== publisher) return false;
+        return true;
+      }
+
+      function renderPluginTables() {
+        const rows = pluginMarketplaceState.filter(pluginMatchesFilters);
         pluginMarketplaceTableEl.innerHTML = rows.map((row) => {
           const signature = row.signature_status || "unknown";
           const status = row.installed ? "installed" : (row.status || "listed");
           const riskClasses = Array.isArray(row.risk_classes) && row.risk_classes.length ? row.risk_classes.join(", ") : "n/a";
           const description = row.description || row.summary || "n/a";
+          const publisher = row.publisher || row.maintainer || "community";
           return `<tr>
             <td><code>${row.plugin_bundle || "n/a"}</code></td>
+            <td>${publisher}</td>
             <td>${row.domain_focus || row.title || row.slug || "n/a"}</td>
             <td>${description}</td>
             <td>${riskClasses}</td>
             <td>${row.version || "n/a"}</td>
             <td>${signature}</td>
             <td>${status}</td>
+            <td>
+              <button class="secondary plugin-install-market" data-plugin-bundle="${row.plugin_bundle || ""}">Install</button>
+              <button class="secondary plugin-view-market" data-plugin-bundle="${row.plugin_bundle || ""}">Details</button>
+            </td>
           </tr>`;
-        }).join("") || '<tr><td colspan="7" class="muted">No marketplace plugins listed.</td></tr>';
+        }).join("") || '<tr><td colspan="9" class="muted">No marketplace plugins match the current filters.</td></tr>';
 
-        const installedRows = installed.plugins || [];
-        pluginManagerTableEl.innerHTML = installedRows.map((row) => {
+        pluginMarketplaceTableEl.querySelectorAll('.plugin-install-market').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const bundleName = btn.getAttribute('data-plugin-bundle') || '';
+            if (!bundleName) return;
+            const listing = pluginMarketplaceState.find((item) => item.plugin_bundle === bundleName);
+            const bundle = listing?.installed_bundle;
+            if (!bundle?.source_path) {
+              pluginManagerEl.textContent = `Install unavailable: ${bundleName} is not currently discoverable as a local bundle.`;
+              return;
+            }
+            pluginSourceEl.value = bundle.source_path;
+            await installPluginBundle();
+            await loadPlugins();
+          });
+        });
+
+        pluginMarketplaceTableEl.querySelectorAll('.plugin-view-market').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const bundleName = btn.getAttribute('data-plugin-bundle') || '';
+            if (!bundleName) return;
+            const listing = pluginMarketplaceState.find((item) => item.plugin_bundle === bundleName);
+            pluginDetailsEl.textContent = JSON.stringify(listing || {}, null, 2);
+          });
+        });
+
+        pluginManagerTableEl.innerHTML = pluginInstalledState.map((row) => {
           const signature = row.signed ? (row.signature_valid ? "valid" : "invalid") : "unsigned";
           return `<tr>
             <td><code>${row.name || "n/a"}</code></td>
@@ -1856,7 +1924,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
             <td>${row.version || "n/a"}</td>
             <td>${signature}</td>
             <td><code>${row.source_path || "n/a"}</code></td>
-            <td><button class="secondary plugin-uninstall-inline" data-source-path="${row.source_path || ""}">Uninstall</button></td>
+            <td>
+              <button class="secondary plugin-inspect-inline" data-source-path="${row.source_path || ""}">Details</button>
+              <button class="secondary plugin-uninstall-inline" data-source-path="${row.source_path || ""}">Uninstall</button>
+            </td>
           </tr>`;
         }).join("") || '<tr><td colspan="6" class="muted">No installed plugins.</td></tr>';
 
@@ -1868,6 +1939,46 @@ Require rollback plan before high-irreversibility actions.</textarea>
             await uninstallPluginBundle();
           });
         });
+        pluginManagerTableEl.querySelectorAll(".plugin-inspect-inline").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const sourcePath = btn.getAttribute("data-source-path") || "";
+            const selected = pluginInstalledState.find((item) => item.source_path === sourcePath);
+            pluginDetailsEl.textContent = JSON.stringify(selected || {}, null, 2);
+          });
+        });
+      }
+
+      function setPluginFilterOptions(marketplaceRows) {
+        const domains = pluginFilterOptions(marketplaceRows, (row) => String(row.domain_focus || row.title || row.slug || "").trim());
+        const publishers = pluginFilterOptions(marketplaceRows, (row) => String(row.publisher || row.maintainer || "community").trim());
+        const risks = pluginFilterOptions(
+          marketplaceRows.flatMap((row) => (Array.isArray(row.risk_classes) ? row.risk_classes : []).map((value) => String(value).toLowerCase())),
+          (value) => value
+        );
+
+        const domainCurrent = pluginFilterDomainEl.value || "all";
+        const riskCurrent = pluginFilterRiskEl.value || "all";
+        const publisherCurrent = pluginFilterPublisherEl.value || "all";
+
+        pluginFilterDomainEl.innerHTML = domains.map((value) => `<option value="${value}">${value === "all" ? "All domains" : value}</option>`).join("");
+        pluginFilterRiskEl.innerHTML = risks.map((value) => `<option value="${value}">${value === "all" ? "All risk classes" : value}</option>`).join("");
+        pluginFilterPublisherEl.innerHTML = publishers.map((value) => `<option value="${value}">${value === "all" ? "All publishers" : value}</option>`).join("");
+
+        pluginFilterDomainEl.value = domains.includes(domainCurrent) ? domainCurrent : "all";
+        pluginFilterRiskEl.value = risks.includes(riskCurrent) ? riskCurrent : "all";
+        pluginFilterPublisherEl.value = publishers.includes(publisherCurrent) ? publisherCurrent : "all";
+      }
+
+      async function loadPlugins() {
+        const [marketplace, installed] = await Promise.all([
+          fetch("/plugin_marketplace").then((r) => r.json()),
+          fetch("/plugins").then((r) => r.json())
+        ]);
+
+        pluginMarketplaceState = marketplace.plugins || [];
+        pluginInstalledState = installed.plugins || [];
+        setPluginFilterOptions(pluginMarketplaceState);
+        renderPluginTables();
 
         pluginMarketplaceEl.textContent = JSON.stringify(marketplace, null, 2);
         pluginManagerEl.textContent = JSON.stringify(installed, null, 2);
@@ -1985,6 +2096,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const sourcePath = pluginSourceEl.value.trim();
         const selected = (installed.plugins || []).find((item) => item.source_path === sourcePath || item.name === sourcePath);
         pluginManagerEl.textContent = JSON.stringify(selected || installed, null, 2);
+        pluginDetailsEl.textContent = JSON.stringify(selected || installed, null, 2);
       }
 
       async function runEvaluation() {
@@ -2603,6 +2715,9 @@ ${body}`;
       el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => {
         pluginManagerEl.textContent = `Inspect error: ${err.message}`;
       }));
+      [pluginFilterDomainEl, pluginFilterRiskEl, pluginFilterPublisherEl].forEach((node) => {
+        node.addEventListener("change", () => renderPluginTables());
+      });
       el("plugin-wizard-generate").addEventListener("click", () => generatePluginWizardBundle().catch((err) => {
         pluginWizardOutputEl.textContent = `Wizard error: ${err.message}`;
       }));
