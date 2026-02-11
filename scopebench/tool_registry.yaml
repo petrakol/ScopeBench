@@ -475,15 +475,15 @@ tools:
       power_concentration: 0.0
     default_effects:
       resources:
-        magnitude: low
+        magnitude: none
         kinds:
         - repository-io
-        rationale: read-only repository access
+        rationale: repository edits are negligible operational resource impact
       legal:
-        magnitude: low
+        magnitude: none
         regimes:
         - license
-        rationale: code artifacts may carry license obligations
+        rationale: routine repository workflows stay within established policy boundaries
       stakeholders:
         magnitude: low
         groups:
@@ -511,42 +511,38 @@ tools:
       power_concentration: 0.0
     default_effects:
       resources:
-        magnitude: low
+        magnitude: none
         kinds:
         - repository-io
-        rationale: targeted code modifications
+        rationale: repository edits are negligible operational resource impact
       legal:
-        magnitude: low
+        magnitude: none
         regimes:
         - license
         - compliance
-        rationale: changes can alter compliance posture
+        rationale: routine repository workflows stay within established policy boundaries
       stakeholders:
-        magnitude: medium
+        magnitude: low
         groups:
         - maintainers
         - users
-        rationale: patches affect product behavior
+        rationale: patches are usually localized to maintainers/reviewers
       irreversible_actions:
-        magnitude: medium
+        magnitude: low
         actions:
         - commit-history
-        rationale: history mutation requires explicit revert
+        rationale: changes are reversible via follow-up commits
       geo_scope:
         magnitude: low
         regions:
         - repo-scope
         rationale: codebase-local change
       time_horizon:
-        magnitude: medium
+        magnitude: low
         horizons:
-        - weeks-months
-        rationale: patches persist through releases
-      macro_consequences:
-      - concept: lock_in_path_dependence
-        channel: structural
-        confidence: 0.45
-        rationale: architectural path can narrow over time
+        - days-weeks
+        rationale: small bugfixes are typically short-lived and adjustable
+      macro_consequences: []
   git_rewrite:
     category: swe
     priors:
