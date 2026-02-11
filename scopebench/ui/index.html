@@ -136,6 +136,21 @@
       .rate-grid { display: grid; gap: 8px; }
       .rate-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }
       .threshold-table td, .threshold-table th { font-size: 12px; }
+      .analytics-stack { display: grid; gap: 12px; }
+      .analytics-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .analytics-panel { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; }
+      .analytics-panel h4 { margin: 0 0 8px; }
+      .analytics-table td, .analytics-table th { font-size: 12px; }
+      .tiny-muted { color: #64748b; font-size: 11px; }
+      .stacked-track { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); height: 12px; border-radius: 999px; overflow: hidden; background: #e2e8f0; }
+      .stacked-segment { height: 100%; min-width: 2px; }
+      .stacked-segment.allow { background: #22c55e; }
+      .stacked-segment.ask { background: #f59e0b; }
+      .stacked-segment.deny { background: #ef4444; }
+      .bar-fill.ask-axis { background: linear-gradient(90deg, #fbbf24, #f59e0b); }
+      .bar-fill.deny-axis { background: linear-gradient(90deg, #f87171, #dc2626); }
+      .margin-negative { color: #0f766e; }
+      .margin-positive { color: #b91c1c; font-weight: 600; }
       .dataset-wizard-steps {
         display: grid;
         gap: 8px;
@@ -162,7 +177,7 @@
       .status-chip.running { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
       .status-chip.error { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
       @media (max-width: 900px) {
-        .two-col { grid-template-columns: 1fr; }
+        .two-col, .analytics-grid { grid-template-columns: 1fr; }
       }
       .step-editor, .agent-editor { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
       .slider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
@@ -184,7 +199,7 @@
       .bar-fill.budget { background: #2563eb; }
       .bar-fill.risk { background: #dc2626; }
       th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
-      @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid { grid-template-columns: 1fr; } }
+      @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid, .analytics-grid { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -346,12 +361,14 @@
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Plugin Marketplace</h3>
-          <p class="muted">Discover community plugins by domain focus, version, and signature status; install directly into your runtime environment.</p>
+          <p class="muted">Browse domain plugins from the marketplace, including descriptions and risk classes, then inspect install status in one place.</p>
           <table>
             <thead>
               <tr>
                 <th>Bundle</th>
                 <th>Domain focus</th>
+                <th>Description</th>
+                <th>Risk classes</th>
                 <th>Version</th>
                 <th>Signature</th>
                 <th>Status</th>
@@ -370,7 +387,21 @@
           <div class="controls" style="margin-bottom: 8px;">
             <button id="plugin-install">Install bundle</button>
             <button id="plugin-uninstall" class="secondary">Uninstall bundle</button>
+            <button id="plugin-inspect" class="secondary">Inspect bundle</button>
           </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Plugin</th>
+                <th>Publisher</th>
+                <th>Version</th>
+                <th>Signature</th>
+                <th>Source path</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="plugin-manager-table"></tbody>
+          </table>
           <pre id="plugin-manager"></pre>
         </div>
       </section>
@@ -535,7 +566,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
         <div class="card"><h3>Telemetry Replay</h3><pre id="telemetry"></pre></div>
       </section>
       <section class="grid" style="margin-top: 16px">
-        <div class="card"><h3>Cross-case Analytics Dashboard</h3><pre id="cases-analytics-dashboard"></pre></div>
+        <div class="card">
+          <h3>Cross-case Analytics Dashboard</h3>
+          <p class="muted">Decision distributions by domain, top axes that drive ASK/DENY outcomes, and average effect vs threshold pressure by axis.</p>
+          <div id="cases-analytics-dashboard" class="analytics-stack"></div>
+          <h4 style="margin-top: 10px">Raw payload</h4>
+          <pre id="cases-analytics-raw"></pre>
+        </div>
         <div class="card">
           <h3>Calibration Dashboard</h3>
           <p class="muted">Interactive analytics for telemetry-driven calibration, thresholds, and simulated plan impact.</p>
@@ -549,7 +586,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
                 <option value="personal">personal</option>
               </select>
             </label>
+            <button id="calibration-apply-adjustments" class="secondary">Apply adjustments</button>
           </div>
+          <div id="calibration-adjust-status" class="muted" style="margin-bottom:8px"></div>
           <div class="grid two-col" id="calibration-controls"></div>
           <div class="grid two-col" style="margin-top:10px">
             <div><h4>Per-axis score distributions</h4><div id="calibration-distributions"></div></div>
@@ -597,6 +636,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const telemetryEl = el("telemetry");
       const calibrationRawEl = el("calibration-raw");
       const casesAnalyticsDashboardEl = el("cases-analytics-dashboard");
+      const casesAnalyticsRawEl = el("cases-analytics-raw");
       const calibrationDomainEl = el("calibration-domain");
       const calibrationControlsEl = el("calibration-controls");
       const calibrationDistributionsEl = el("calibration-distributions");
@@ -604,10 +644,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const calibrationThresholdsEl = el("calibration-thresholds");
       const calibrationPlanImpactEl = el("calibration-plan-impact");
       const calibrationPlanPresetEl = el("calibration-plan-preset");
+      const calibrationApplyAdjustmentsEl = el("calibration-apply-adjustments");
+      const calibrationAdjustStatusEl = el("calibration-adjust-status");
       const streamingEl = el("streaming");
       const pluginMarketplaceEl = el("plugin-marketplace");
       const pluginMarketplaceTableEl = el("plugin-marketplace-table");
       const pluginManagerEl = el("plugin-manager");
+      const pluginManagerTableEl = el("plugin-manager-table");
       const pluginSourceEl = el("plugin-source");
       const pluginTargetDirEl = el("plugin-target-dir");
       const pluginWizardDomainEl = el("plugin-wizard-domain");
@@ -1441,14 +1484,41 @@ Require rollback plan before high-irreversibility actions.</textarea>
         pluginMarketplaceTableEl.innerHTML = rows.map((row) => {
           const signature = row.signature_status || "unknown";
           const status = row.installed ? "installed" : (row.status || "listed");
+          const riskClasses = Array.isArray(row.risk_classes) && row.risk_classes.length ? row.risk_classes.join(", ") : "n/a";
+          const description = row.description || row.summary || "n/a";
           return `<tr>
             <td><code>${row.plugin_bundle || "n/a"}</code></td>
             <td>${row.domain_focus || row.title || row.slug || "n/a"}</td>
+            <td>${description}</td>
+            <td>${riskClasses}</td>
             <td>${row.version || "n/a"}</td>
             <td>${signature}</td>
             <td>${status}</td>
           </tr>`;
-        }).join("") || '<tr><td colspan="5" class="muted">No marketplace plugins listed.</td></tr>';
+        }).join("") || '<tr><td colspan="7" class="muted">No marketplace plugins listed.</td></tr>';
+
+        const installedRows = installed.plugins || [];
+        pluginManagerTableEl.innerHTML = installedRows.map((row) => {
+          const signature = row.signed ? (row.signature_valid ? "valid" : "invalid") : "unsigned";
+          return `<tr>
+            <td><code>${row.name || "n/a"}</code></td>
+            <td>${row.publisher || "n/a"}</td>
+            <td>${row.version || "n/a"}</td>
+            <td>${signature}</td>
+            <td><code>${row.source_path || "n/a"}</code></td>
+            <td><button class="secondary plugin-uninstall-inline" data-source-path="${row.source_path || ""}">Uninstall</button></td>
+          </tr>`;
+        }).join("") || '<tr><td colspan="6" class="muted">No installed plugins.</td></tr>';
+
+        pluginManagerTableEl.querySelectorAll(".plugin-uninstall-inline").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const sourcePath = btn.getAttribute("data-source-path") || "";
+            if (!sourcePath) return;
+            pluginSourceEl.value = sourcePath;
+            await uninstallPluginBundle();
+          });
+        });
+
         pluginMarketplaceEl.textContent = JSON.stringify(marketplace, null, 2);
         pluginManagerEl.textContent = JSON.stringify(installed, null, 2);
       }
@@ -1558,6 +1628,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
         }).then((r) => r.json());
         pluginManagerEl.textContent = JSON.stringify(response, null, 2);
         await loadPlugins();
+      }
+
+      async function inspectPluginBundle() {
+        const installed = await fetch("/plugins").then((r) => r.json());
+        const sourcePath = pluginSourceEl.value.trim();
+        const selected = (installed.plugins || []).find((item) => item.source_path === sourcePath || item.name === sourcePath);
+        pluginManagerEl.textContent = JSON.stringify(selected || installed, null, 2);
       }
 
       async function runEvaluation() {
@@ -1710,6 +1787,31 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderCalibrationViews();
       }
 
+      async function applyCalibrationAdjustments() {
+        if (!calibrationSelection.domain) return;
+        calibrationAdjustStatusEl.textContent = 'Applying adjustments…';
+        const payload = {
+          domain: calibrationSelection.domain,
+          axis_scale_delta: calibrationSelection.axisScaleDelta,
+          axis_threshold_factor_delta: calibrationSelection.axisThresholdFactorDelta,
+          abstain_uncertainty_threshold_delta: Number(calibrationSelection.abstainDelta || 0),
+        };
+        const res = await fetch('/calibration/adjust', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const adjusted = await res.json();
+        if (!res.ok) {
+          calibrationAdjustStatusEl.textContent = `Adjustment failed: ${adjusted.detail || res.statusText}`;
+          return;
+        }
+        calibrationDashboardState = adjusted;
+        calibrationRawEl.textContent = JSON.stringify(adjusted, null, 2);
+        calibrationAdjustStatusEl.textContent = `Applied adjustments for ${calibrationSelection.domain}.`;
+        renderCalibrationViews();
+      }
+
       function renderCalibrationControls(entry) {
         calibrationControlsEl.innerHTML = '';
         const calibration = entry?.calibration || {};
@@ -1803,60 +1905,115 @@ Require rollback plan before high-irreversibility actions.</textarea>
       }
 
       function renderCasesAnalyticsDashboard(dashboard) {
-        const byDomain = (dashboard.decision_distribution_by_domain || []).map((entry) => {
+        const domainRows = dashboard.decision_distribution_by_domain || [];
+        const axisRows = dashboard.trigger_axes || [];
+        const thresholdRows = dashboard.effect_magnitude_vs_threshold || [];
+        const topRows = dashboard.top_trigger_axes_by_decision || [];
+
+        const axisMax = Math.max(1, ...axisRows.flatMap((entry) => [Number(entry.ask_count || 0), Number(entry.deny_count || 0)]));
+        const denialLeaders = [...axisRows].sort((a, b) => Number(b.deny_count || 0) - Number(a.deny_count || 0)).slice(0, 5);
+
+        const topAxisCards = topRows.map((entry) => {
+          const items = (entry.top_axes || []).map((row) => `<li><strong>${row.axis}</strong>: ${row.count} (${formatPct(row.rate_within_decision || 0)})</li>`).join('');
+          return `<div class="analytics-panel"><h4>${entry.decision} dominant axes</h4><p class="tiny-muted">${entry.total_cases || 0} ${entry.decision} cases</p><ul>${items || '<li class="tiny-muted">No data</li>'}</ul></div>`;
+        }).join('');
+
+        const domainHtml = domainRows.map((entry) => {
           const counts = entry.decision_counts || {};
           const rates = entry.decision_rates || {};
-          return {
-            domain: entry.domain,
-            total: entry.total_cases,
-            ALLOW: `${counts.ALLOW || 0} (${formatPct(rates.ALLOW || 0)})`,
-            ASK: `${counts.ASK || 0} (${formatPct(rates.ASK || 0)})`,
-            DENY: `${counts.DENY || 0} (${formatPct(rates.DENY || 0)})`,
-          };
-        });
+          return `<tr>
+            <td>${entry.domain}</td>
+            <td>${entry.total_cases || 0}</td>
+            <td>
+              <div class="stacked-track" title="ALLOW ${formatPct(rates.ALLOW || 0)} • ASK ${formatPct(rates.ASK || 0)} • DENY ${formatPct(rates.DENY || 0)}">
+                <span class="stacked-segment allow" style="width:${100 * Number(rates.ALLOW || 0)}%"></span>
+                <span class="stacked-segment ask" style="width:${100 * Number(rates.ASK || 0)}%"></span>
+                <span class="stacked-segment deny" style="width:${100 * Number(rates.DENY || 0)}%"></span>
+              </div>
+            </td>
+            <td>${counts.ALLOW || 0} (${formatPct(rates.ALLOW || 0)})</td>
+            <td>${counts.ASK || 0} (${formatPct(rates.ASK || 0)})</td>
+            <td>${counts.DENY || 0} (${formatPct(rates.DENY || 0)})</td>
+          </tr>`;
+        }).join('');
 
-        const triggerAxes = (dashboard.trigger_axes || []).map((entry) => ({
-          axis: entry.axis,
-          ASK: entry.ask_count || 0,
-          DENY: entry.deny_count || 0,
-        }));
+        const axisHtml = axisRows.map((entry) => {
+          const ask = Number(entry.ask_count || 0);
+          const deny = Number(entry.deny_count || 0);
+          return `<tr>
+            <td>${entry.axis}</td>
+            <td>
+              <div class="bar-row"><span class="bar-track"><span class="bar-fill ask-axis" style="width:${(100 * ask) / axisMax}%"></span></span><span>${ask}</span></div>
+            </td>
+            <td>
+              <div class="bar-row"><span class="bar-track"><span class="bar-fill deny-axis" style="width:${(100 * deny) / axisMax}%"></span></span><span>${deny}</span></div>
+            </td>
+          </tr>`;
+        }).join('');
 
-        const effectVsThreshold = (dashboard.effect_magnitude_vs_threshold || []).map((entry) => ({
-          axis: entry.axis,
-          avg_effect: Number(entry.average_effect || 0).toFixed(3),
-          avg_threshold: Number(entry.average_threshold || 0).toFixed(3),
-          avg_margin: Number(entry.average_margin || 0).toFixed(3),
-          over_threshold_cases: entry.over_threshold_cases || 0,
-          over_threshold_rate: formatPct(entry.over_threshold_rate || 0),
-        }));
+        const thresholdHtml = [...thresholdRows].sort((a, b) => Number(b.average_margin || 0) - Number(a.average_margin || 0)).map((entry) => {
+          const margin = Number(entry.average_margin || 0);
+          const cls = margin > 0 ? 'margin-positive' : 'margin-negative';
+          return `<tr>
+            <td>${entry.axis}</td>
+            <td>${Number(entry.average_effect || 0).toFixed(3)}</td>
+            <td>${Number(entry.average_threshold || 0).toFixed(3)}</td>
+            <td class="${cls}">${margin.toFixed(3)}</td>
+            <td>${entry.over_threshold_cases || 0}</td>
+            <td>${formatPct(entry.over_threshold_rate || 0)}</td>
+          </tr>`;
+        }).join('');
 
-        const topAxes = (dashboard.top_trigger_axes_by_decision || []).map((entry) => ({
-          decision: entry.decision,
-          total_cases: entry.total_cases || 0,
-          top_axes: (entry.top_axes || []).map((axisRow) => `${axisRow.axis}:${axisRow.count} (${formatPct(axisRow.rate_within_decision || 0)})`).join(', '),
-        }));
+        const denialSummary = denialLeaders.map((entry, idx) => `<li>#${idx + 1} <strong>${entry.axis}</strong> — ${entry.deny_count || 0} denials</li>`).join('');
 
-        const effectProfiles = (dashboard.effect_magnitude_profiles || []).map((entry) => {
+        const effectProfiles = (dashboard.effect_magnitude_profiles || []).slice(0, 10).map((entry) => {
           const rates = entry.decision_rates || {};
-          return {
-            effect_type: entry.effect_type,
-            magnitude: entry.magnitude,
-            count: entry.count || 0,
-            ALLOW: formatPct(rates.ALLOW || 0),
-            ASK: formatPct(rates.ASK || 0),
-            DENY: formatPct(rates.DENY || 0),
-          };
-        });
+          return `<tr><td>${entry.effect_type}</td><td>${entry.magnitude}</td><td>${entry.count || 0}</td><td>${formatPct(rates.ALLOW || 0)}</td><td>${formatPct(rates.ASK || 0)}</td><td>${formatPct(rates.DENY || 0)}</td></tr>`;
+        }).join('');
 
-        casesAnalyticsDashboardEl.textContent = JSON.stringify({
-          source: dashboard.source,
-          count: dashboard.count,
-          decision_distribution_by_domain: byDomain,
-          trigger_axes: triggerAxes,
-          top_trigger_axes_by_decision: topAxes,
-          effect_magnitude_vs_threshold: effectVsThreshold,
-          effect_magnitude_profiles: effectProfiles,
-        }, null, 2);
+        casesAnalyticsDashboardEl.innerHTML = `
+          <div class="analytics-grid">
+            <div class="analytics-panel">
+              <h4>Decision distribution by domain</h4>
+              <table class="analytics-table">
+                <thead><tr><th>Domain</th><th>Cases</th><th>Mix</th><th>ALLOW</th><th>ASK</th><th>DENY</th></tr></thead>
+                <tbody>${domainHtml || '<tr><td colspan="6" class="tiny-muted">No domain analytics available.</td></tr>'}</tbody>
+              </table>
+            </div>
+            <div class="analytics-panel">
+              <h4>Top axes leading to DENY</h4>
+              <ol>${denialSummary || '<li class="tiny-muted">No denial-triggering axes found.</li>'}</ol>
+              <p class="tiny-muted">Use this list to target additional ASK/ALLOW examples for high-pressure axes.</p>
+            </div>
+          </div>
+          <div class="analytics-grid">
+            <div class="analytics-panel">
+              <h4>Axis trigger counts (ASK vs DENY)</h4>
+              <table class="analytics-table">
+                <thead><tr><th>Axis</th><th>ASK trigger count</th><th>DENY trigger count</th></tr></thead>
+                <tbody>${axisHtml || '<tr><td colspan="3" class="tiny-muted">No axis trigger data.</td></tr>'}</tbody>
+              </table>
+            </div>
+            <div class="analytics-panel">
+              <h4>Average effect vs threshold by axis</h4>
+              <table class="analytics-table threshold-table">
+                <thead><tr><th>Axis</th><th>Avg effect</th><th>Avg threshold</th><th>Avg margin</th><th>Over threshold</th><th>Over-rate</th></tr></thead>
+                <tbody>${thresholdHtml || '<tr><td colspan="6" class="tiny-muted">No effect-threshold analytics.</td></tr>'}</tbody>
+              </table>
+            </div>
+          </div>
+          <div class="analytics-grid">
+            ${topAxisCards || '<div class="analytics-panel"><h4>Top trigger axes</h4><p class="tiny-muted">No decision-specific leader data.</p></div>'}
+            <div class="analytics-panel">
+              <h4>Effect magnitude profile snapshot</h4>
+              <table class="analytics-table threshold-table">
+                <thead><tr><th>Effect</th><th>Magnitude</th><th>Count</th><th>ALLOW</th><th>ASK</th><th>DENY</th></tr></thead>
+                <tbody>${effectProfiles || '<tr><td colspan="6" class="tiny-muted">No effect-magnitude profile data.</td></tr>'}</tbody>
+              </table>
+            </div>
+          </div>`;
+
+        casesAnalyticsRawEl.textContent = JSON.stringify(dashboard, null, 2);
       }
 
       async function loadCasesAnalyticsDashboard() {
@@ -2012,10 +2169,22 @@ ${body}`;
         calibrationRawEl.textContent = `Error: ${err.message}`;
       }));
       el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => {
-        casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`;
+        casesAnalyticsRawEl.textContent = `Error: ${err.message}`;
       }));
-      calibrationDomainEl.addEventListener("change", (ev) => { calibrationSelection.domain = ev.target.value; renderCalibrationViews(); });
+      calibrationDomainEl.addEventListener("change", (ev) => {
+        calibrationSelection.domain = ev.target.value;
+        calibrationSelection.axisScaleDelta = {};
+        calibrationSelection.axisThresholdFactorDelta = {};
+        calibrationSelection.abstainDelta = 0;
+        calibrationAdjustStatusEl.textContent = '';
+        renderCalibrationViews();
+      });
       calibrationPlanPresetEl.addEventListener("change", () => renderCalibrationViews());
+      calibrationApplyAdjustmentsEl.addEventListener("click", () => {
+        applyCalibrationAdjustments().catch((err) => {
+          calibrationAdjustStatusEl.textContent = `Adjustment failed: ${err.message}`;
+        });
+      });
       el("dataset-validate").addEventListener("click", () => validateCaseDraft().catch((err) => {
         datasetOutputEl.textContent = `Validation error: ${err.message}`;
       }));
@@ -2064,6 +2233,9 @@ ${body}`;
       el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => {
         pluginManagerEl.textContent = `Uninstall error: ${err.message}`;
       }));
+      el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => {
+        pluginManagerEl.textContent = `Inspect error: ${err.message}`;
+      }));
       el("plugin-wizard-generate").addEventListener("click", () => generatePluginWizardBundle().catch((err) => {
         pluginWizardOutputEl.textContent = `Wizard error: ${err.message}`;
       }));
@@ -2084,10 +2256,11 @@ ${body}`;
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
       el("calibration").addEventListener("click", () => loadCalibrationDashboard().catch((err) => { calibrationRawEl.textContent = `Error: ${err.message}`; }));
-      el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`; }));
+      el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsRawEl.textContent = `Error: ${err.message}`; }));
       el("refresh-plugins").addEventListener("click", () => loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; }));
       el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
       el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => { pluginManagerEl.textContent = `Uninstall error: ${err.message}`; }));
+      el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => { pluginManagerEl.textContent = `Inspect error: ${err.message}`; }));
       el("add-agent").addEventListener("click", () => {
         const idx = sessionState.agents.length + 1;
         sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, contract_patch: { goal: `agent-${idx} scoped task` }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
@@ -2151,7 +2324,7 @@ ${body}`;
         calibrationRawEl.textContent = `Calibration load error: ${err.message}`;
       });
       loadCasesAnalyticsDashboard().catch((err) => {
-        casesAnalyticsDashboardEl.textContent = `Analytics load error: ${err.message}`;
+        casesAnalyticsRawEl.textContent = `Analytics load error: ${err.message}`;
       });
       runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Streaming load error: ${err.message}`;
@@ -2160,6 +2333,18 @@ ${body}`;
       runSessionEvaluation().catch((err) => {
         sessionResultEl.textContent = `Error: ${err.message}`;
       });
+      renderSessionBuilder();
+      loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
+      loadCalibrationDashboard().catch((err) => { calibrationRawEl.textContent = `Calibration load error: ${err.message}`; });
+      loadCasesAnalyticsDashboard().catch((err) => { casesAnalyticsRawEl.textContent = `Analytics load error: ${err.message}`; });
+      runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; });
+      runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
+      loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
+      runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
+    }
+      loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
+      loadPolicyWorkbenchState().catch((err) => { policyWorkbenchStateEl.textContent = `Policy state load error: ${err.message}`; });
+    }
     </script>
   </body>
 </html>
