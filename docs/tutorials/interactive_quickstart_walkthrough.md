@@ -161,3 +161,14 @@ Open and run the companion notebook for the same workflow in a single interactiv
 
 - `docs/notebooks/scopebench_quickstart_tutorial.ipynb`
 
+
+---
+
+## 7) Continue into advanced onboarding labs
+
+After finishing this quickstart, continue with:
+
+- `docs/tutorials/dataset_calibration_plugin_lab.md` for dataset contribution, calibration tuning, and plugin authoring workflows.
+- `docs/notebooks/scopebench_dataset_calibration_plugin_lab.ipynb` for a notebook version of the same lab.
+
+These are also linked from the Workbench UI "Learn" section for in-product discovery.
