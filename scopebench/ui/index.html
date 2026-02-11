@@ -551,7 +551,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
                 <option value="personal">personal</option>
               </select>
             </label>
+            <button id="calibration-apply-adjustments" class="secondary">Apply adjustments</button>
           </div>
+          <div id="calibration-adjust-status" class="muted" style="margin-bottom:8px"></div>
           <div class="grid two-col" id="calibration-controls"></div>
           <div class="grid two-col" style="margin-top:10px">
             <div><h4>Per-axis score distributions</h4><div id="calibration-distributions"></div></div>
@@ -606,6 +608,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const calibrationThresholdsEl = el("calibration-thresholds");
       const calibrationPlanImpactEl = el("calibration-plan-impact");
       const calibrationPlanPresetEl = el("calibration-plan-preset");
+      const calibrationApplyAdjustmentsEl = el("calibration-apply-adjustments");
+      const calibrationAdjustStatusEl = el("calibration-adjust-status");
       const streamingEl = el("streaming");
       const pluginMarketplaceEl = el("plugin-marketplace");
       const pluginMarketplaceTableEl = el("plugin-marketplace-table");
@@ -1603,6 +1607,31 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderCalibrationViews();
       }
 
+      async function applyCalibrationAdjustments() {
+        if (!calibrationSelection.domain) return;
+        calibrationAdjustStatusEl.textContent = 'Applying adjustments…';
+        const payload = {
+          domain: calibrationSelection.domain,
+          axis_scale_delta: calibrationSelection.axisScaleDelta,
+          axis_threshold_factor_delta: calibrationSelection.axisThresholdFactorDelta,
+          abstain_uncertainty_threshold_delta: Number(calibrationSelection.abstainDelta || 0),
+        };
+        const res = await fetch('/calibration/adjust', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const adjusted = await res.json();
+        if (!res.ok) {
+          calibrationAdjustStatusEl.textContent = `Adjustment failed: ${adjusted.detail || res.statusText}`;
+          return;
+        }
+        calibrationDashboardState = adjusted;
+        calibrationRawEl.textContent = JSON.stringify(adjusted, null, 2);
+        calibrationAdjustStatusEl.textContent = `Applied adjustments for ${calibrationSelection.domain}.`;
+        renderCalibrationViews();
+      }
+
       function renderCalibrationControls(entry) {
         calibrationControlsEl.innerHTML = '';
         const calibration = entry?.calibration || {};
@@ -1907,8 +1936,20 @@ ${body}`;
       el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => {
         casesAnalyticsDashboardEl.textContent = `Error: ${err.message}`;
       }));
-      calibrationDomainEl.addEventListener("change", (ev) => { calibrationSelection.domain = ev.target.value; renderCalibrationViews(); });
+      calibrationDomainEl.addEventListener("change", (ev) => {
+        calibrationSelection.domain = ev.target.value;
+        calibrationSelection.axisScaleDelta = {};
+        calibrationSelection.axisThresholdFactorDelta = {};
+        calibrationSelection.abstainDelta = 0;
+        calibrationAdjustStatusEl.textContent = '';
+        renderCalibrationViews();
+      });
       calibrationPlanPresetEl.addEventListener("change", () => renderCalibrationViews());
+      calibrationApplyAdjustmentsEl.addEventListener("click", () => {
+        applyCalibrationAdjustments().catch((err) => {
+          calibrationAdjustStatusEl.textContent = `Adjustment failed: ${err.message}`;
+        });
+      });
       el("dataset-validate").addEventListener("click", () => validateCaseDraft().catch((err) => {
         datasetOutputEl.textContent = `Validation error: ${err.message}`;
       }));

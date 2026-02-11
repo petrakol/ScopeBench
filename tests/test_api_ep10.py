@@ -345,6 +345,9 @@ def test_calibration_dashboard_and_adjustment_endpoints(tmp_path: Path) -> None:
         entry for entry in adjusted.domains if entry.domain == "bug_fix"
     )
     assert bug_fix_entry.calibration["axis_threshold_factor"]["depth"] != 1.0
+    assert "axis_distributions" in bug_fix_entry.calibration
+    assert "rates" in bug_fix_entry.calibration
+    assert "telemetry_delta" in bug_fix_entry.calibration
 
 
 def test_tools_and_cases_include_plugin_extensions(tmp_path: Path, monkeypatch) -> None:
