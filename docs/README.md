@@ -5,8 +5,22 @@ Use this page as a quick navigation hub for ScopeBench docs.
 ## Start here
 
 - [Interactive quickstart walkthrough](tutorials/interactive_quickstart_walkthrough.md) — guided CLI + API tour.
+- [Quickstart notebook](notebooks/scopebench_quickstart_tutorial.ipynb) — executable tutorial for template selection, plan editing, and effect annotation.
+- [Dataset/calibration/plugin lab guide](tutorials/dataset_calibration_plugin_lab.md) — advanced onboarding for contribution and extension workflows.
+- [Dataset/calibration/plugin lab notebook](notebooks/scopebench_dataset_calibration_plugin_lab.ipynb) — executable advanced lab for dataset contribution, calibration tuning, and plugin authoring.
 - [README](../README.md) — high-level overview, installation, and command reference.
 - [Contributing guide](../CONTRIBUTING.md) — local setup and quality gates for contributors.
+
+## Notebook quickstart
+
+Run the interactive tutorials locally:
+
+```bash
+pip install -e ".[dev]"
+jupyter lab docs/notebooks/
+```
+
+If you prefer a pure-CLI flow, use the paired markdown walkthroughs under `docs/tutorials/`.
 
 ## Core concepts
 
