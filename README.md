@@ -115,15 +115,21 @@ scopebench coding-quickstart
 
 For hands-on onboarding, use the guided walkthroughs:
 
-- Web-style walkthrough (step-by-step CLI + API): `docs/tutorials/interactive_quickstart_walkthrough.md`
-- Jupyter notebook tutorial: `docs/notebooks/scopebench_quickstart_tutorial.ipynb`
+- Quickstart tutorial (CLI + API): `docs/tutorials/interactive_quickstart_walkthrough.md`
+- Quickstart notebook: `docs/notebooks/scopebench_quickstart_tutorial.ipynb`
+- Advanced lab (dataset contribution + calibration tuning + plugin authoring): `docs/tutorials/dataset_calibration_plugin_lab.md`
+- Advanced lab notebook: `docs/notebooks/scopebench_dataset_calibration_plugin_lab.ipynb`
 
-Both tutorials walk through:
+Together these tutorials cover:
 
 1. template selection,
-2. plan editing,
-3. effect annotation (`scopebench suggest-effects`), and
-4. API evaluation with `POST /evaluate`.
+2. plan creation/editing,
+3. effect annotation (`scopebench suggest-effects`),
+4. dataset contribution (`scopebench dataset-suggest` / `POST /dataset/suggest`),
+5. calibration tuning (`scopebench weekly-calibrate`, `/calibration/dashboard`, `/calibration/adjust`), and
+6. plugin authoring (`scopebench plugin-generate` + lint/harness).
+
+These resources are linked directly from the Workbench UI `Learn` section.
 
 ### 3) Start the API server
 

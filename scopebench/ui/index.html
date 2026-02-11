@@ -161,6 +161,24 @@
       .status-chip.done { background: #dcfce7; color: #166534; border-color: #86efac; }
       .status-chip.running { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
       .status-chip.error { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+
+      .learn-links {
+        margin-top: 8px;
+        display: grid;
+        gap: 8px;
+      }
+      .learn-link {
+        display: block;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 8px 10px;
+        text-decoration: none;
+        color: #1e3a8a;
+        background: #f8fafc;
+      }
+      .learn-link:hover {
+        background: #eff6ff;
+      }
       @media (max-width: 900px) {
         .two-col { grid-template-columns: 1fr; }
       }
@@ -208,6 +226,18 @@
           <label><input id="auto-run" type="checkbox" checked /> auto-run what-if</label>
         </div>
       </div>
+
+
+      <section class="card" style="margin-top: 16px">
+        <h3>Learn</h3>
+        <p class="muted">Hands-on onboarding paths for template selection, plan creation, effect annotation, dataset contribution, calibration tuning, and plugin authoring.</p>
+        <div class="learn-links">
+          <a class="learn-link" href="../../docs/tutorials/interactive_quickstart_walkthrough.md" target="_blank" rel="noopener">Interactive quickstart walkthrough (CLI + API)</a>
+          <a class="learn-link" href="../../docs/notebooks/scopebench_quickstart_tutorial.ipynb" target="_blank" rel="noopener">Quickstart notebook</a>
+          <a class="learn-link" href="../../docs/tutorials/dataset_calibration_plugin_lab.md" target="_blank" rel="noopener">Dataset, calibration, and plugin authoring lab</a>
+          <a class="learn-link" href="../../docs/notebooks/scopebench_dataset_calibration_plugin_lab.ipynb" target="_blank" rel="noopener">Dataset/calibration/plugin lab notebook</a>
+        </div>
+      </section>
 
       <section class="card" style="margin-top: 16px">
         <h3>Plan Generation Wizard</h3>
