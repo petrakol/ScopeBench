@@ -8,6 +8,18 @@ It guides you through the full lifecycle:
 3. Annotate plan effects.
 4. Evaluate through CLI and API.
 
+## Learning path map
+
+Use this walkthrough together with the companion notebook:
+
+- Markdown (this file): best for terminal-first practice and copy/paste commands.
+- Notebook: `docs/notebooks/scopebench_quickstart_tutorial.ipynb` for an executable, cell-by-cell flow.
+
+The quickstart focuses on template selection, plan editing, effect annotation, and API evaluation.
+For dataset contribution, calibration tuning, and plugin creation, continue to the advanced lab in step 7.
+
+---
+
 ## What you will learn
 
 By the end of this tutorial, you will be able to:

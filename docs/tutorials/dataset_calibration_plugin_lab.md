@@ -6,6 +6,17 @@ This lab continues after the quickstart and focuses on three workflows that powe
 2. tuning calibration from telemetry, and
 3. authoring signed plugins.
 
+## Learning path map
+
+Use this advanced lab after finishing the quickstart tutorial/notebook:
+
+- Markdown lab (this file): CLI/API-first commands for repeatable execution.
+- Notebook lab: `docs/notebooks/scopebench_dataset_calibration_plugin_lab.ipynb` for interactive experimentation and inline output review.
+
+This lab covers dataset contribution, calibration tuning, and plugin creation end to end.
+
+---
+
 ## Prerequisites
 
 - ScopeBench installed in editable mode (`pip install -e ".[dev]"`)
