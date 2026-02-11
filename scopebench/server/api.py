@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import subprocess
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -291,6 +292,19 @@ class DatasetSuggestRequest(BaseModel):
 class DatasetSuggestResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case: Dict[str, Any]
+
+
+class DatasetRenderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case: Dict[str, Any]
+    format: str = Field(default="json", description="json|yaml")
+
+
+class DatasetRenderResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filename: str
+    content_type: str
+    content: str
 
 
 class PluginWizardRequest(BaseModel):
@@ -2555,6 +2569,25 @@ def create_app(
                 policy_backend=req.policy_backend,
             )
         return DatasetSuggestResponse(case=case)
+
+    @app.post("/dataset/render", response_model=DatasetRenderResponse)
+    def dataset_render_endpoint(req: DatasetRenderRequest):
+        validated = validate_case_object(req.case)
+        normalized_case = asdict(validated)
+        output_format = (req.format or "json").strip().lower()
+        if output_format == "yaml":
+            return DatasetRenderResponse(
+                filename=f"{validated.id}.yaml",
+                content_type="application/x-yaml",
+                content=yaml.safe_dump(normalized_case, sort_keys=False),
+            )
+        if output_format != "json":
+            raise HTTPException(status_code=400, detail="format must be 'json' or 'yaml'")
+        return DatasetRenderResponse(
+            filename=f"{validated.id}.json",
+            content_type="application/json",
+            content=json.dumps(normalized_case, indent=2),
+        )
 
     @app.post("/suggest_effects", response_model=SuggestEffectsResponse)
     def suggest_effects_endpoint(req: SuggestEffectsRequest):
