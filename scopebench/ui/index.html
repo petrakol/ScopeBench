@@ -221,6 +221,10 @@
       .signal-chip { display: inline-block; margin-right: 6px; margin-bottom: 6px; padding: 3px 8px; border-radius: 999px; font-size: 12px; background: #fee2e2; color: #991b1b; }
       .negotiation-rec { border: 1px solid #dbeafe; border-radius: 8px; padding: 10px; margin-bottom: 10px; background: #f8fbff; }
       .negotiation-transfer { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px; margin-top: 6px; background: #fff; }
+      .negotiation-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+      .negotiation-status { border: 1px solid #e2e8f0; background: #f8fafc; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+      .negotiation-status.allow { border-color: #86efac; background: #f0fdf4; color: #166534; }
+      .negotiation-status.ask { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
       .consensus-chip { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; }
       .consensus-chip.reached { background: #dcfce7; color: #166534; }
       .consensus-chip.pending { background: #fef3c7; color: #92400e; }
@@ -409,7 +413,13 @@
       <section class="card" style="margin-top: 16px">
         <h3>Negotiation Recommendations & Consensus Controls</h3>
         <p class="muted">Review server recommendations and interactively approve transfers or tweak reallocation targets to explore consensus outcomes.</p>
-        <div class="controls" style="margin-bottom:8px"><button id="apply-negotiation" class="secondary">Apply consensus-adjusted budgets</button></div>
+        <div class="negotiation-controls">
+          <button id="apply-negotiation" class="secondary">Apply consensus-adjusted budgets</button>
+          <button id="approve-all-transfers" class="secondary">Approve all transfers</button>
+          <button id="clear-transfer-approvals" class="secondary">Clear transfer approvals</button>
+          <button id="reset-negotiation-targets" class="secondary">Reset reallocation targets</button>
+        </div>
+        <div id="negotiation-apply-status" class="negotiation-status muted">Run /evaluate_session to generate negotiation recommendations.</div>
         <div id="session-negotiation"></div>
       </section>
       <section class="grid two-col" style="margin-top: 16px">
@@ -799,6 +809,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const sessionBudgetChartEl = el("session-budget-chart");
       const sessionRiskChartEl = el("session-risk-chart");
       const sessionNegotiationEl = el("session-negotiation");
+      const negotiationApplyStatusEl = el("negotiation-apply-status");
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
@@ -1408,6 +1419,19 @@ Require rollback plan before high-irreversibility actions.</textarea>
         return asNumber(value).toFixed(2);
       }
 
+      function formatConsensusRules(consensus = {}) {
+        const protocol = consensus.protocol || "quorum";
+        const quorum = Number(consensus.quorum_ratio || 0);
+        const ratioText = Number.isFinite(quorum) ? `${(quorum * 100).toFixed(0)}%` : "n/a";
+        return `${protocol} • quorum ${ratioText}`;
+      }
+
+      function setNegotiationApplyStatus(message, tone = "muted") {
+        if (!negotiationApplyStatusEl) return;
+        negotiationApplyStatusEl.className = `negotiation-status ${tone}`;
+        negotiationApplyStatusEl.textContent = message;
+      }
+
       function getNegotiationEdit(index, recommendation) {
         const key = String(index);
         if (!negotiationEdits[key]) {
@@ -1470,6 +1494,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
               <div><strong>${formatNumber(view.remainingUnmet)}</strong><div class="muted">remaining unmet</div></div>
             </div>
             <div style="margin-top:8px"><strong>Consensus approvals:</strong> ${view.approvals}/${view.participants} (needs ${view.neededApprovals})</div>
+            <div class="muted">Consensus rule: ${formatConsensusRules(recommendation.consensus || {})}</div>
             <div style="margin-top:8px"><strong>Transfer approvals</strong><div class="muted">Toggle to approve individual transfers.</div></div>
             <div data-transfer-list="${index}"></div>
             <div style="margin-top:10px"><strong>Reallocation targets</strong><div class="muted">Adjust target budgets to model alternative consensus allocations.</div></div>
@@ -1524,11 +1549,22 @@ Require rollback plan before high-irreversibility actions.</textarea>
       }
 
       function applyNegotiationEditsToSession() {
-        if (!latestSessionPayload?.negotiation?.triggered) return;
+        if (!latestSessionPayload?.negotiation?.triggered) {
+          setNegotiationApplyStatus("No active negotiation to apply. Run /evaluate_session first.", "ask");
+          return;
+        }
         const recommendationByBudget = {};
+        const pendingBudgets = [];
         (latestSessionPayload.negotiation.recommendations || []).forEach((recommendation, index) => {
-          recommendationByBudget[recommendation.budget_key] = negotiatedRecommendationView(index, recommendation);
+          const view = negotiatedRecommendationView(index, recommendation);
+          recommendationByBudget[recommendation.budget_key] = view;
+          if (view.consensusStatus !== "reached") pendingBudgets.push(recommendation.budget_key);
         });
+
+        if (pendingBudgets.length) {
+          setNegotiationApplyStatus(`Consensus not reached for: ${pendingBudgets.join(", ")}. Approve transfers or adjust targets before applying.`, "ask");
+          return;
+        }
 
         sessionState.agents = sessionState.agents.map((agent) => {
           const nextBudgets = { ...(agent.budgets || {}) };
@@ -1538,7 +1574,38 @@ Require rollback plan before high-irreversibility actions.</textarea>
           });
           return { ...agent, budgets: nextBudgets };
         });
+        setNegotiationApplyStatus("Consensus reached. Applied negotiation-adjusted budgets to all affected agents.", "allow");
         renderSessionBuilder();
+      }
+
+      function setAllTransferApprovals(approved) {
+        if (!latestSessionPayload?.negotiation?.triggered) {
+          setNegotiationApplyStatus("No active negotiation recommendations to update.", "ask");
+          return;
+        }
+        (latestSessionPayload.negotiation.recommendations || []).forEach((recommendation, index) => {
+          const edit = getNegotiationEdit(index, recommendation);
+          (recommendation.transfers || []).forEach((_, transferIndex) => {
+            edit.transferApprovals[String(transferIndex)] = Boolean(approved);
+          });
+        });
+        setNegotiationApplyStatus(approved ? "Approved all proposed transfers." : "Cleared all transfer approvals.", "muted");
+        renderSessionNegotiation(latestSessionPayload.negotiation);
+      }
+
+      function resetNegotiationTargets() {
+        if (!latestSessionPayload?.negotiation?.triggered) {
+          setNegotiationApplyStatus("No active negotiation recommendations to reset.", "ask");
+          return;
+        }
+        (latestSessionPayload.negotiation.recommendations || []).forEach((recommendation, index) => {
+          negotiationEdits[String(index)] = {
+            transferApprovals: Object.fromEntries((recommendation.transfers || []).map((_, transferIndex) => [String(transferIndex), true])),
+            reallocationTargets: Object.fromEntries((recommendation.reallocation || []).map((item) => [item.agent_id, asNumber(item.target_budget)]))
+          };
+        });
+        setNegotiationApplyStatus("Reset transfer approvals and reallocation targets to server recommendations.", "muted");
+        renderSessionNegotiation(latestSessionPayload.negotiation);
       }
 
       function renderWizardVariantOptions() {
@@ -2047,6 +2114,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
         sessionResultEl.textContent = JSON.stringify({ decision: payload.decision, trace_id: payload.trace_id, negotiation: payload.negotiation }, null, 2);
         renderSessionDashboard(payload);
         renderSessionNegotiation(payload.negotiation);
+        if (payload.negotiation?.triggered) setNegotiationApplyStatus("Negotiation recommendations ready. Approve transfers and adjust targets, then apply.", "muted");
+        else setNegotiationApplyStatus("No active negotiation recommendations. Budgets are within envelope.", "allow");
       }
 
       function clamp01(value) {
@@ -2577,6 +2646,9 @@ ${body}`;
         applyNegotiationEditsToSession();
         runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
       });
+      el("approve-all-transfers").addEventListener("click", () => setAllTransferApprovals(true));
+      el("clear-transfer-approvals").addEventListener("click", () => setAllTransferApprovals(false));
+      el("reset-negotiation-targets").addEventListener("click", () => resetNegotiationTargets());
       ["session-budget-cost", "session-budget-time", "session-budget-tools"].forEach((id) => el(id).addEventListener("input", () => {
         sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
       }));
