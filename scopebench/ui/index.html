@@ -111,10 +111,14 @@
       }
       .case-explorer-controls {
         display: grid;
-        grid-template-columns: 2fr 1fr 1fr;
+        grid-template-columns: 2fr 1fr 1fr 1fr;
         gap: 8px;
         margin-bottom: 10px;
       }
+      .case-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+      .case-kpi { border: 1px solid #dbeafe; background: #eff6ff; border-radius: 8px; padding: 8px; }
+      .case-kpi .label { font-size: 12px; color: #334155; }
+      .case-kpi .value { font-size: 20px; font-weight: 600; }
       .case-list {
         border: 1px solid #e5e7eb;
         border-radius: 8px;
@@ -129,6 +133,12 @@
       .case-item:last-child { border-bottom: none; }
       .case-item.active { background: #eff6ff; }
       .case-item:hover { background: #f8fafc; }
+      .decision-chip { display: inline-block; border-radius: 999px; font-size: 11px; padding: 2px 8px; margin-left: 6px; }
+      .decision-chip.ALLOW { background: #dcfce7; color: #166534; }
+      .decision-chip.ASK { background: #fef3c7; color: #92400e; }
+      .decision-chip.DENY { background: #fee2e2; color: #991b1b; }
+      .vector-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+      .vector-table th, .vector-table td { border-bottom: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; }
       .bar-chart { display: grid; gap: 8px; }
       .bar-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 72px; gap: 8px; align-items: center; }
       .bar-track { height: 12px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
@@ -184,7 +194,7 @@
       .bar-fill.budget { background: #2563eb; }
       .bar-fill.risk { background: #dc2626; }
       th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
-      @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid { grid-template-columns: 1fr; } }
+      @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid, .case-kpis { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
@@ -471,9 +481,16 @@ Require rollback plan before high-irreversibility actions.</textarea>
         <h3>Dataset Case Explorer</h3>
         <p class="muted">Browse benchmark cases by domain, expected decision, and instruction. Select a case to inspect full contract, plan, rationale, and step vectors.</p>
         <div class="case-explorer-controls">
-          <input id="case-search" type="text" placeholder="Search by instruction, id, or rationale" />
+          <input id="case-search" type="text" placeholder="Search by instruction, id, contract goal, plan step, or rationale" />
           <select id="case-domain-filter"></select>
           <select id="case-decision-filter"></select>
+          <select id="case-sort"></select>
+        </div>
+        <div class="case-kpis">
+          <div class="case-kpi"><div class="label">Visible cases</div><div class="value" id="case-kpi-visible">0</div></div>
+          <div class="case-kpi"><div class="label">Domains</div><div class="value" id="case-kpi-domains">0</div></div>
+          <div class="case-kpi"><div class="label">Proportionate (ALLOW)</div><div class="value" id="case-kpi-allow">0</div></div>
+          <div class="case-kpi"><div class="label">Disproportionate (ASK + DENY)</div><div class="value" id="case-kpi-disproportionate">0</div></div>
         </div>
         <div class="controls" style="margin-bottom: 10px">
           <button id="refresh-cases" class="secondary">Refresh cases</button>
@@ -485,6 +502,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           </div>
           <div>
             <pre id="case-detail"></pre>
+            <div id="case-vectors"></div>
           </div>
         </section>
         <h3>Budget consumption ledger</h3>
@@ -653,6 +671,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const caseListEl = el("case-list");
       const caseDetailEl = el("case-detail");
       const caseSummaryEl = el("case-summary");
+      const caseSortEl = el("case-sort");
+      const caseVectorsEl = el("case-vectors");
+      const caseKpiVisibleEl = el("case-kpi-visible");
+      const caseKpiDomainsEl = el("case-kpi-domains");
+      const caseKpiAllowEl = el("case-kpi-allow");
+      const caseKpiDisproportionateEl = el("case-kpi-disproportionate");
       const datasetCaseIdEl = el("dataset-case-id");
       const datasetDomainEl = el("dataset-domain");
       const datasetInstructionEl = el("dataset-instruction");
@@ -1222,36 +1246,92 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderWizardSteps(plan);
       }
 
+      function computeCaseSeverity(item) {
+        const decisionWeight = { ALLOW: 0, ASK: 1, DENY: 2 };
+        const vectors = Array.isArray(item.expected_step_vectors) ? item.expected_step_vectors : [];
+        const maxVector = vectors.reduce((max, step) => {
+          const values = Object.values(step || {}).filter((value) => typeof value === "number");
+          const stepMax = values.length ? Math.max(...values) : 0;
+          return Math.max(max, stepMax);
+        }, 0);
+        return decisionWeight[item.expected_decision] * 10 + maxVector;
+      }
+
+      function vectorRowsForCase(item) {
+        const vectors = Array.isArray(item.expected_step_vectors) ? item.expected_step_vectors : [];
+        if (!vectors.length) return '<p class="muted">No expected step vectors attached.</p>';
+        return `<table class="vector-table"><thead><tr><th>Step</th><th>Top axes</th><th>Peak score</th></tr></thead><tbody>${vectors.map((step) => {
+          const axes = Object.entries(step || {})
+            .filter(([key, value]) => key !== "step_id" && typeof value === "number")
+            .sort((a, b) => b[1] - a[1]);
+          const top = axes.slice(0, 3).map(([axis, value]) => `${axis}=${value.toFixed(2)}`).join(', ');
+          const peak = axes.length ? axes[0][1] : 0;
+          return `<tr><td>${step.step_id || "(none)"}</td><td>${top || '<span class="muted">n/a</span>'}</td><td>${Number(peak).toFixed(2)}</td></tr>`;
+        }).join("")}</tbody></table>`;
+      }
+
+      function caseSearchText(item) {
+        const contractGoal = item?.contract?.goal || "";
+        const planTask = item?.plan?.task || "";
+        const steps = (item?.plan?.steps || []).map((step) => `${step.id || ""} ${step.description || ""} ${step.tool || ""}`).join(" ");
+        return [item.id, item.domain, item.instruction, item.expected_rationale, contractGoal, planTask, steps]
+          .map((value) => String(value || "").toLowerCase())
+          .join(" ");
+      }
+
       function renderCaseExplorer() {
         const query = (caseSearchEl.value || "").trim().toLowerCase();
         const domain = caseDomainFilterEl.value || "all";
         const decision = caseDecisionFilterEl.value || "all";
+        const sortMode = caseSortEl.value || "severity_desc";
+
         const filtered = allCases.filter((item) => {
           if (domain !== "all" && item.domain !== domain) return false;
           if (decision !== "all" && item.expected_decision !== decision) return false;
           if (!query) return true;
-          const haystack = [item.id, item.domain, item.instruction, item.expected_rationale]
-            .map((value) => String(value || "").toLowerCase())
-            .join(" ");
-          return haystack.includes(query);
+          return caseSearchText(item).includes(query);
         });
 
-        caseSummaryEl.textContent = `${filtered.length} / ${allCases.length} cases`;
+        const sorted = filtered.slice().sort((a, b) => {
+          if (sortMode === "id_asc") return String(a.id || "").localeCompare(String(b.id || ""));
+          if (sortMode === "id_desc") return String(b.id || "").localeCompare(String(a.id || ""));
+          if (sortMode === "domain_asc") {
+            const domainCmp = String(a.domain || "").localeCompare(String(b.domain || ""));
+            return domainCmp !== 0 ? domainCmp : String(a.id || "").localeCompare(String(b.id || ""));
+          }
+          if (sortMode === "decision_asc") {
+            const rank = { ALLOW: 0, ASK: 1, DENY: 2 };
+            const diff = (rank[a.expected_decision] ?? 9) - (rank[b.expected_decision] ?? 9);
+            return diff !== 0 ? diff : String(a.id || "").localeCompare(String(b.id || ""));
+          }
+          return computeCaseSeverity(b) - computeCaseSeverity(a);
+        });
+
+        const visibleDomains = new Set(sorted.map((item) => item.domain).filter(Boolean));
+        const allowCount = sorted.filter((item) => item.expected_decision === "ALLOW").length;
+        const disproportionateCount = sorted.filter((item) => item.expected_decision === "ASK" || item.expected_decision === "DENY").length;
+        caseKpiVisibleEl.textContent = String(sorted.length);
+        caseKpiDomainsEl.textContent = String(visibleDomains.size);
+        caseKpiAllowEl.textContent = String(allowCount);
+        caseKpiDisproportionateEl.textContent = String(disproportionateCount);
+
+        caseSummaryEl.textContent = `${sorted.length} / ${allCases.length} cases • ${allowCount} proportionate • ${disproportionateCount} disproportionate`;
         caseListEl.innerHTML = "";
-        if (!filtered.length) {
+        if (!sorted.length) {
           caseListEl.innerHTML = '<div class="case-item">No matching cases.</div>';
           caseDetailEl.textContent = "";
+          caseVectorsEl.innerHTML = "";
           return;
         }
 
-        if (!selectedCaseId || !filtered.some((item) => item.id === selectedCaseId)) {
-          selectedCaseId = filtered[0].id;
+        if (!selectedCaseId || !sorted.some((item) => item.id === selectedCaseId)) {
+          selectedCaseId = sorted[0].id;
         }
 
-        filtered.forEach((item) => {
+        sorted.forEach((item) => {
           const row = document.createElement("div");
           row.className = `case-item ${item.id === selectedCaseId ? "active" : ""}`;
-          row.innerHTML = `<strong>${item.id}</strong><div class="muted">${item.domain} • ${item.expected_decision}</div><div>${item.instruction}</div>`;
+          row.innerHTML = `<strong>${item.id}</strong><span class="decision-chip ${item.expected_decision}">${item.expected_decision}</span><div class="muted">${item.domain}</div><div>${item.instruction}</div>`;
           row.addEventListener("click", () => {
             selectedCaseId = item.id;
             renderCaseExplorer();
@@ -1259,7 +1339,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           caseListEl.appendChild(row);
         });
 
-        const selected = filtered.find((item) => item.id === selectedCaseId) || filtered[0];
+        const selected = sorted.find((item) => item.id === selectedCaseId) || sorted[0];
         caseDetailEl.textContent = [
           `Case: ${selected.id}`,
           `Domain: ${selected.domain}`,
@@ -1280,7 +1360,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
           "Expected step vectors",
           JSON.stringify(selected.expected_step_vectors || [], null, 2)
         ].join("\n");
+        caseVectorsEl.innerHTML = vectorRowsForCase(selected);
       }
+
 
       async function loadCatalog() {
         const [templates, tools, cases] = await Promise.all([
@@ -1314,6 +1396,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
         caseDomainFilterEl.innerHTML = ['<option value="all">All domains</option>', ...(cases.domains || []).map((d) => `<option value="${d}">${d}</option>`)].join("");
         caseDecisionFilterEl.innerHTML = ['<option value="all">All decisions</option>', '<option value="ALLOW">ALLOW</option>', '<option value="ASK">ASK</option>', '<option value="DENY">DENY</option>'].join("");
+        caseSortEl.innerHTML = [
+          '<option value="severity_desc">Sort: severity (high → low)</option>',
+          '<option value="decision_asc">Sort: decision (ALLOW → DENY)</option>',
+          '<option value="domain_asc">Sort: domain</option>',
+          '<option value="id_asc">Sort: id (A → Z)</option>',
+          '<option value="id_desc">Sort: id (Z → A)</option>'
+        ].join('');
         renderCaseExplorer();
 
         catalogEl.textContent = JSON.stringify({
@@ -1972,7 +2061,10 @@ ${body}`;
       el("refresh-cases").addEventListener("click", () => loadCatalog().catch((err) => {
         catalogEl.textContent = `Catalog load error: ${err.message}`;
       }));
-      [caseSearchEl, caseDomainFilterEl, caseDecisionFilterEl].forEach((node) => node.addEventListener("input", renderCaseExplorer));
+      [caseSearchEl, caseDomainFilterEl, caseDecisionFilterEl, caseSortEl].forEach((node) => {
+        node.addEventListener("input", renderCaseExplorer);
+        node.addEventListener("change", renderCaseExplorer);
+      });
       el("run").addEventListener("click", () => runEvaluation().catch((err) => { resultEl.textContent = `Error: ${err.message}`; }));
       el("run-session").addEventListener("click", () => runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; }));
       el("replay").addEventListener("click", () => replayTelemetry().catch((err) => { telemetryEl.textContent = `Error: ${err.message}`; }));
