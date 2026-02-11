@@ -264,11 +264,13 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     assert "Replay telemetry" in html
     assert "Calibration Dashboard" in html
     assert "What-if Lab" in html
-    assert "Suggest effects" in html
+    assert "Suggest Effects" in html
     assert "Explainability: Aggregate Risk Contributions" in html
     assert "Stream /evaluate_stream" in html
     assert "Streaming Evaluation Timeline" in html
     assert "Negotiation Recommendations & Consensus Controls" in html
+    assert "Download contribution file" in html
+    assert "ready-to-submit YAML/JSON contribution file" in html
 
 
 def test_suggest_effects_endpoint_populates_effects_v1() -> None:
@@ -346,6 +348,9 @@ def test_calibration_dashboard_and_adjustment_endpoints(tmp_path: Path) -> None:
         entry for entry in adjusted.domains if entry.domain == "bug_fix"
     )
     assert bug_fix_entry.calibration["axis_threshold_factor"]["depth"] != 1.0
+    assert "axis_distributions" in bug_fix_entry.calibration
+    assert "rates" in bug_fix_entry.calibration
+    assert "telemetry_delta" in bug_fix_entry.calibration
 
 
 def test_tools_and_cases_include_plugin_extensions(tmp_path: Path, monkeypatch) -> None:
@@ -469,6 +474,9 @@ def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
     )
     assert robotics["domain_focus"]
     assert "signature_status" in robotics
+    assert robotics["description"]
+    assert isinstance(robotics["risk_classes"], list)
+    assert "high" in robotics["risk_classes"]
 
 
 def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) -> None:
@@ -575,6 +583,7 @@ def test_plugin_wizard_and_lint_endpoints() -> None:
     assert generated["ok"] is True
     assert generated["bundle"]["signature"]["key_id"] == "community-main"
     assert generated["harness"]["passed"] is True
+    assert any("/plugins/install" in item for item in generated["publish_guidance"])
 
     linted = _endpoint(app, "/plugins/lint")(generated["bundle"])
     assert linted["ok"] is True

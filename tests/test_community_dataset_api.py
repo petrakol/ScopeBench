@@ -3,6 +3,7 @@ from __future__ import annotations
 from scopebench.server.api import (
     DatasetSuggestRequest,
     DatasetValidateRequest,
+    DatasetRenderRequest,
     create_app,
 )
 
@@ -18,6 +19,7 @@ def test_dataset_validate_and_suggest_endpoints():
     app = create_app()
     suggest_endpoint = _endpoint(app, "/dataset/suggest")
     validate_endpoint = _endpoint(app, "/dataset/validate")
+    render_endpoint = _endpoint(app, "/dataset/render")
 
     contract = {"goal": "Fix flaky CI test", "preset": "team"}
     plan = {
@@ -47,3 +49,11 @@ def test_dataset_validate_and_suggest_endpoints():
     validated = validate_endpoint(validate_req)
     assert validated.ok is True
     assert validated.case_id == "community_case_api_001"
+
+    rendered_json = render_endpoint(DatasetRenderRequest(case=case, format="json"))
+    assert rendered_json.filename == "community_case_api_001.json"
+    assert '"id": "community_case_api_001"' in rendered_json.content
+
+    rendered_yaml = render_endpoint(DatasetRenderRequest(case=case, format="yaml"))
+    assert rendered_yaml.filename == "community_case_api_001.yaml"
+    assert "id: community_case_api_001" in rendered_yaml.content

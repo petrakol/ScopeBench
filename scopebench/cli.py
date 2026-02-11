@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -749,6 +751,9 @@ def _parse_tool_definitions(domain: str, raw_tools: str | None, raw_tool_defs: s
     return tools
 
 
+def _default_plugin_dir() -> Path:
+    return Path(os.getenv("SCOPEBENCH_DEFAULT_PLUGIN_DIR", ".scopebench/plugins")).expanduser()
+
 @app.command("plugin-lint")
 def plugin_lint(
     bundle_path: Path = typer.Argument(..., help="Path to plugin bundle JSON/YAML to validate."),
@@ -769,6 +774,44 @@ def plugin_lint(
                 console.print(f" - {err}")
             raise typer.Exit(code=1)
         console.print(f"[bold green]Plugin lint passed[/bold green]: {bundle_path}")
+
+
+@app.command("plugin-install")
+def plugin_install(
+    source_path: Path = typer.Argument(..., help="Path to plugin bundle JSON/YAML file."),
+    plugin_dir: Path = typer.Option(_default_plugin_dir(), "--plugin-dir", help="Target directory for installed bundles."),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Install a plugin bundle into a plugin directory for runtime discovery."""
+    src = source_path.expanduser().resolve()
+    if not src.exists() or not src.is_file():
+        raise typer.BadParameter(f"source_path not found: {src}")
+
+    target_dir = plugin_dir.expanduser().resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / src.name
+    shutil.copyfile(src, target_path)
+
+    configured = [item.strip() for item in os.getenv("SCOPEBENCH_PLUGIN_DIRS", "").split(os.pathsep) if item.strip()]
+    if str(target_dir) not in configured:
+        configured.append(str(target_dir))
+    os.environ["SCOPEBENCH_PLUGIN_DIRS"] = os.pathsep.join(configured)
+
+    payload = {
+        "ok": True,
+        "source_path": str(src),
+        "target_path": str(target_path),
+        "configured_plugin_dirs": configured,
+        "next_steps": [
+            "Run `scopebench plugin-lint <bundle_path>` for schema checks.",
+            "Run `scopebench plugin-harness <bundle_path>` for signatures + compatibility.",
+        ],
+    }
+    if json_out:
+        console.print_json(json.dumps(payload))
+        return
+    console.print(f"[bold green]Installed plugin bundle[/bold green]: {target_path}")
+    console.print(f"Configured SCOPEBENCH_PLUGIN_DIRS={os.environ['SCOPEBENCH_PLUGIN_DIRS']}")
 
 
 @app.command("plugin-generate")
@@ -805,9 +848,23 @@ def plugin_generate(
     for idx in range(effect_mappings):
         if non_interactive:
             trigger = tools[idx] if idx < len(tools) else f"tool_{idx+1}"
+            axes = {"uncertainty": 0.4, "irreversibility": 0.3}
         else:
             trigger = typer.prompt(f"Effect mapping {idx+1} trigger", default=tools[idx] if idx < len(tools) else f"tool_{idx+1}")
-        mappings.append({"trigger": trigger, "axes": {"uncertainty": 0.4, "irreversibility": 0.3}})
+            axes_text = typer.prompt(
+                f"Effect mapping {idx+1} axes JSON",
+                default='{"uncertainty": 0.4, "irreversibility": 0.3}',
+            )
+            parsed_axes = yaml.safe_load(axes_text)
+            if not isinstance(parsed_axes, dict) or not all(
+                isinstance(k, str) and isinstance(v, (int, float))
+                for k, v in parsed_axes.items()
+            ):
+                raise typer.BadParameter(
+                    f"Effect mapping {idx+1} axes must be a JSON/YAML object with numeric values"
+                )
+            axes = {str(k): float(v) for k, v in parsed_axes.items()}
+        mappings.append({"trigger": trigger, "axes": axes})
 
     rules = []
     for idx in range(policy_rules):
@@ -865,6 +922,11 @@ def plugin_generate(
         max_golden_cases=3,
     ).to_dict()
 
+    install_hint = (
+        f"scopebench plugin-install {output_path}"
+        if output_path.is_absolute()
+        else f"scopebench plugin-install {output_path} --plugin-dir .scopebench/plugins"
+    )
     console.print_json(json.dumps({
         "ok": True,
         "output_path": str(output_path),
@@ -873,6 +935,11 @@ def plugin_generate(
         "tools": tools,
         "lint_errors": [],
         "harness": harness,
+        "commands": {
+            "lint": f"scopebench plugin-lint {output_path}",
+            "harness": f"scopebench plugin-harness {output_path}",
+            "install": install_hint,
+        },
         "publish_guidance": bundle["metadata"]["publish_guidance"],
     }))
 
