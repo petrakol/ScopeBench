@@ -477,17 +477,15 @@ Require rollback plan before high-irreversibility actions.</textarea>
         </div>
       </section>
 
-      <section class="grid" style="margin-top: 16px">
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Per-agent aggregates</h3>
           <table><thead><tr><th>Agent</th><th>Decision</th><th>Top axes</th><th>Budget utilization</th></tr></thead><tbody id="session-agent-table"></tbody></table>
+          <h4 style="margin-top:12px">Negotiation recommendations</h4>
+          <table><thead><tr><th>Budget</th><th>Headroom</th><th>Requested</th><th>Remaining unmet</th></tr></thead><tbody id="session-negotiation-table"></tbody></table>
         </div>
         <div class="card">
           <h3>Global aggregate & laundering detection</h3>
-          <h4>Per-agent aggregate</h4>
-          <table><thead><tr><th>Agent</th><th>Decision</th><th>Aggregate</th></tr></thead><tbody id="session-agent-table"></tbody></table>
-          <h4 style="margin-top:12px">Global aggregate</h4>
           <table><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody id="session-global-table"></tbody></table>
           <h4 style="margin-top:12px">Laundering signals</h4>
           <table><thead><tr><th>Axis</th><th>Global</th><th>Max agent</th><th>Delta</th><th>Ask threshold</th></tr></thead><tbody id="session-laundering-table"></tbody></table>
@@ -619,8 +617,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       const defaultSessionState = {
         agents: [
-          { agent_id: "agent-a", budgets: { cost_usd: 70, time_horizon_days: 4, max_tool_calls: 4 }, plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
-          { agent_id: "agent-b", budgets: { cost_usd: 45, time_horizon_days: 3, max_tool_calls: 3 }, plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
+          { agent_id: "agent-a", budgets: { cost_usd: 70, time_horizon_days: 4, max_tool_calls: 4 }, contract_patch: { goal: "Fix parser bug", acceptance: ["All parser tests pass"], constraints: ["No API breakages"] }, plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
+          { agent_id: "agent-b", budgets: { cost_usd: 45, time_horizon_days: 3, max_tool_calls: 3 }, contract_patch: { goal: "Validate parser patch", acceptance: ["Regression tests pass"] }, plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
         ]
       };
 
@@ -722,6 +720,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const sessionDecisionEl = el("session-decision");
       const sessionResultEl = el("session-result");
       const sessionAgentTableEl = el("session-agent-table");
+      const sessionNegotiationTableEl = el("session-negotiation-table");
       const sessionGlobalTableEl = el("session-global-table");
       const sessionLaunderingTableEl = el("session-laundering-table");
       const sessionLedgerEl = el("session-ledger");
@@ -1035,6 +1034,30 @@ Require rollback plan before high-irreversibility actions.</textarea>
         }
       }
 
+      function parseListLines(text) {
+        return String(text || "").split("\n").map((line) => line.trim()).filter(Boolean);
+      }
+
+      function toMultilineList(value) {
+        return (Array.isArray(value) ? value : []).join("\n");
+      }
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function ensureAgentDefaults(agent) {
+        agent.budgets = agent.budgets || { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 };
+        agent.contract_patch = agent.contract_patch || {};
+        agent.plan = agent.plan || { task: `${agent.agent_id} task`, steps: [] };
+        agent.plan.steps = Array.isArray(agent.plan.steps) ? agent.plan.steps : [];
+      }
+
       function sessionPayloadFromState() {
         const baseContract = JSON.parse(contractEl.value);
         const globalBudgets = {
@@ -1046,17 +1069,21 @@ Require rollback plan before high-irreversibility actions.</textarea>
         return {
           session: {
             global_contract,
-            agents: sessionState.agents.map((agent) => ({
-              agent_id: agent.agent_id,
-              contract: {
-                ...global_contract,
-                budgets: {
-                  cost_usd: Number(agent.budgets?.cost_usd || 0),
-                  time_horizon_days: Number(agent.budgets?.time_horizon_days || 0),
-                  max_tool_calls: Number(agent.budgets?.max_tool_calls || 0)
+            agents: sessionState.agents.map((agent) => {
+              ensureAgentDefaults(agent);
+              return {
+                agent_id: agent.agent_id,
+                contract: {
+                  ...global_contract,
+                  ...agent.contract_patch,
+                  budgets: {
+                    cost_usd: Number(agent.budgets?.cost_usd || 0),
+                    time_horizon_days: Number(agent.budgets?.time_horizon_days || 0),
+                    max_tool_calls: Number(agent.budgets?.max_tool_calls || 0)
+                  }
                 }
-              }
-            })),
+              };
+            }),
             plans: sessionState.agents.map((agent) => ({ agent_id: agent.agent_id, plan: agent.plan }))
           },
           include_steps: false,
@@ -1067,9 +1094,37 @@ Require rollback plan before high-irreversibility actions.</textarea>
       function renderSessionBuilder() {
         agentEditorsEl.innerHTML = "";
         sessionState.agents.forEach((agent, idx) => {
+          ensureAgentDefaults(agent);
+          const options = knownTools.map((tool) => `<option value="${tool}" ${agent.plan?.steps?.[0]?.tool === tool ? "" : ""}>${tool}</option>`).join("");
+          const planRows = (agent.plan.steps || []).map((step, stepIdx) => {
+            const toolOptions = knownTools.map((tool) => `<option value="${tool}" ${step.tool === tool ? "selected" : ""}>${tool}</option>`).join("");
+            return `<div class="wizard-step" style="grid-template-columns: 72px minmax(0,1fr) 160px 120px auto;">
+              <input data-agent-step-field="id" data-agent-index="${idx}" data-step-index="${stepIdx}" value="${escapeHtml(step.id || `${stepIdx + 1}`)}" />
+              <input data-agent-step-field="description" data-agent-index="${idx}" data-step-index="${stepIdx}" value="${escapeHtml(step.description || "")}" />
+              <select data-agent-step-field="tool" data-agent-index="${idx}" data-step-index="${stepIdx}">${toolOptions}</select>
+              <input data-agent-step-field="depends_on" data-agent-index="${idx}" data-step-index="${stepIdx}" value="${escapeHtml((step.depends_on || []).join(","))}" placeholder="depends_on" />
+              <button class="secondary" data-remove-agent-step="${idx}:${stepIdx}">remove</button>
+            </div>`;
+          }).join("");
           const node = document.createElement("div");
           node.className = "agent-editor";
-          node.innerHTML = `<div class="agent-header"><input type="text" value="${agent.agent_id}" data-agent-id="${idx}" /><button class="secondary" data-remove-agent="${idx}">remove</button></div><div class="field-grid"><label>Budget: cost_usd<input data-agent-budget="cost_usd" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.cost_usd || 0)}" /></label><label>Budget: time_horizon_days<input data-agent-budget="time_horizon_days" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.time_horizon_days || 0)}" /></label><label>Budget: max_tool_calls<input data-agent-budget="max_tool_calls" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.max_tool_calls || 0)}" /></label></div><label>Agent plan (JSON)</label><textarea data-agent-plan="${idx}" style="min-height:130px">${JSON.stringify(agent.plan, null, 2)}</textarea>`;
+          node.innerHTML = `<div class="agent-header"><input type="text" value="${escapeHtml(agent.agent_id)}" data-agent-id="${idx}" /><button class="secondary" data-remove-agent="${idx}">remove agent</button></div>
+            <div class="field-grid">
+              <label>Budget: cost_usd<input data-agent-budget="cost_usd" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.cost_usd || 0)}" /></label>
+              <label>Budget: time_horizon_days<input data-agent-budget="time_horizon_days" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.time_horizon_days || 0)}" /></label>
+              <label>Budget: max_tool_calls<input data-agent-budget="max_tool_calls" data-agent-index="${idx}" type="number" min="0" step="1" value="${Number(agent.budgets?.max_tool_calls || 0)}" /></label>
+            </div>
+            <div class="field-grid">
+              <label>Contract goal<input data-agent-contract-field="goal" data-agent-index="${idx}" value="${escapeHtml(agent.contract_patch.goal || "")}" /></label>
+              <label>Contract preset<input data-agent-contract-field="preset" data-agent-index="${idx}" value="${escapeHtml(agent.contract_patch.preset || "")}" placeholder="team / enterprise / regulated" /></label>
+              <label>Plan task<input data-agent-task data-agent-index="${idx}" value="${escapeHtml(agent.plan.task || "")}" /></label>
+            </div>
+            <div class="grid two-col">
+              <label>Constraints (one per line)<textarea data-agent-contract-list="constraints" data-agent-index="${idx}" style="min-height:72px">${escapeHtml(toMultilineList(agent.contract_patch.constraints))}</textarea></label>
+              <label>Acceptance criteria (one per line)<textarea data-agent-contract-list="acceptance" data-agent-index="${idx}" style="min-height:72px">${escapeHtml(toMultilineList(agent.contract_patch.acceptance))}</textarea></label>
+            </div>
+            <div style="margin-top:8px"><strong>Plan designer</strong>${planRows || '<div class="muted" style="margin:6px 0">No steps yet.</div>'}<div class="controls" style="margin-top:6px"><button class="secondary" data-add-agent-step="${idx}">Add step</button></div></div>
+            <details style="margin-top:8px"><summary>Advanced plan JSON</summary><textarea data-agent-plan="${idx}" style="min-height:130px">${escapeHtml(JSON.stringify(agent.plan, null, 2))}</textarea></details>`;
           agentEditorsEl.appendChild(node);
         });
         sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
@@ -1084,6 +1139,46 @@ Require rollback plan before high-irreversibility actions.</textarea>
           sessionState.agents[idx].budgets = sessionState.agents[idx].budgets || {};
           sessionState.agents[idx].budgets[budgetKey] = Number(ev.target.value || 0);
           sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("input[data-agent-contract-field]").forEach((node) => node.addEventListener("input", (ev) => {
+          const idx = Number(ev.target.dataset.agentIndex);
+          const key = ev.target.dataset.agentContractField;
+          sessionState.agents[idx].contract_patch = sessionState.agents[idx].contract_patch || {};
+          sessionState.agents[idx].contract_patch[key] = ev.target.value;
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("textarea[data-agent-contract-list]").forEach((node) => node.addEventListener("input", (ev) => {
+          const idx = Number(ev.target.dataset.agentIndex);
+          const key = ev.target.dataset.agentContractList;
+          sessionState.agents[idx].contract_patch = sessionState.agents[idx].contract_patch || {};
+          sessionState.agents[idx].contract_patch[key] = parseListLines(ev.target.value);
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("input[data-agent-task]").forEach((node) => node.addEventListener("input", (ev) => {
+          const idx = Number(ev.target.dataset.agentIndex);
+          sessionState.agents[idx].plan.task = ev.target.value;
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("input[data-agent-step-field], select[data-agent-step-field]").forEach((node) => node.addEventListener("input", (ev) => {
+          const idx = Number(ev.target.dataset.agentIndex);
+          const stepIdx = Number(ev.target.dataset.stepIndex);
+          const key = ev.target.dataset.agentStepField;
+          const step = sessionState.agents[idx].plan.steps[stepIdx];
+          if (!step) return;
+          if (key === "depends_on") step.depends_on = parseListLines(String(ev.target.value).replace(/,/g, "\n"));
+          else step[key] = ev.target.value;
+          sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
+        }));
+        agentEditorsEl.querySelectorAll("button[data-add-agent-step]").forEach((node) => node.addEventListener("click", (ev) => {
+          const idx = Number(ev.target.dataset.addAgentStep);
+          const nextId = String((sessionState.agents[idx].plan.steps || []).length + 1);
+          sessionState.agents[idx].plan.steps.push({ id: nextId, description: "Describe step", tool: knownTools[0] || "analysis" });
+          renderSessionBuilder();
+        }));
+        agentEditorsEl.querySelectorAll("button[data-remove-agent-step]").forEach((node) => node.addEventListener("click", (ev) => {
+          const [agentIdx, stepIdx] = String(ev.target.dataset.removeAgentStep).split(":").map(Number);
+          sessionState.agents[agentIdx].plan.steps.splice(stepIdx, 1);
+          renderSessionBuilder();
         }));
         agentEditorsEl.querySelectorAll("textarea[data-agent-plan]").forEach((node) => node.addEventListener("input", (ev) => {
           const idx = Number(ev.target.dataset.agentPlan);
@@ -1145,6 +1240,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       function renderSessionDashboard(payload = {}) {
         sessionAgentTableEl.innerHTML = "";
         sessionGlobalTableEl.innerHTML = "";
+        sessionNegotiationTableEl.innerHTML = "";
         sessionLaunderingTableEl.innerHTML = "";
         sessionLedgerEl.innerHTML = "";
 
@@ -1161,6 +1257,17 @@ Require rollback plan before high-irreversibility actions.</textarea>
           card.innerHTML = `<h4 style="margin:0 0 6px">${agentId}</h4>${utilizationMeter("cost_usd", consumption.cost_usd, budgets.cost_usd)}${utilizationMeter("time_horizon_days", consumption.time_horizon_days, budgets.time_horizon_days)}${utilizationMeter("max_tool_calls", consumption.max_tool_calls, budgets.max_tool_calls)}`;
           sessionLedgerEl.appendChild(card);
         });
+
+        (payload.negotiation?.recommendations || []).forEach((rec) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${rec.budget_key}</td><td>${Number(rec.global_headroom || 0).toFixed(2)}</td><td>${Number(rec.total_requested || 0).toFixed(2)}</td><td>${Number(rec.remaining_unmet || 0).toFixed(2)}</td>`;
+          sessionNegotiationTableEl.appendChild(tr);
+        });
+        if (!(payload.negotiation?.recommendations || []).length) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = "<td colspan='4'>No negotiation recommendations.</td>";
+          sessionNegotiationTableEl.appendChild(tr);
+        }
 
         const global = payload.dashboard?.global || {};
         [["Decision", global.decision || payload.decision || "n/a"], ["Top axes", topAxesText(global.aggregate || {})], ["Budget utilization", budgetUtilizationText(global.budget_utilization || {})], ["Negotiation triggered", payload.negotiation?.triggered ? "yes" : "no"]].forEach(([k, v]) => {
@@ -2156,12 +2263,12 @@ ${body}`;
       el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => { pluginManagerEl.textContent = `Inspect error: ${err.message}`; }));
       el("add-agent").addEventListener("click", () => {
         const idx = sessionState.agents.length + 1;
-        sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
+        sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, contract_patch: { goal: `agent-${idx} scoped task` }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
         renderSessionBuilder();
       });
       el("sync-from-current-plan").addEventListener("click", () => {
         const parsedPlan = JSON.parse(planEl.value);
-        if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, plan: parsedPlan });
+        if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, contract_patch: { goal: "Primary agent scope" }, plan: parsedPlan });
         else sessionState.agents[0].plan = parsedPlan;
         renderSessionBuilder();
       });
@@ -2210,6 +2317,9 @@ ${body}`;
       loadPlugins().catch((err) => {
         pluginManagerEl.textContent = `Plugin load error: ${err.message}`;
       });
+      loadPolicyWorkbenchState().catch((err) => {
+        policyWorkbenchStateEl.textContent = `Policy state load error: ${err.message}`;
+      });
       loadCalibrationDashboard().catch((err) => {
         calibrationRawEl.textContent = `Calibration load error: ${err.message}`;
       });
@@ -2220,6 +2330,9 @@ ${body}`;
         streamingEl.textContent = `Streaming load error: ${err.message}`;
       });
       renderSessionBuilder();
+      runSessionEvaluation().catch((err) => {
+        sessionResultEl.textContent = `Error: ${err.message}`;
+      });
       renderSessionBuilder();
       loadCatalog().then(() => runEvaluation()).catch((err) => { catalogEl.textContent = `Catalog load error: ${err.message}`; });
       loadCalibrationDashboard().catch((err) => { calibrationRawEl.textContent = `Calibration load error: ${err.message}`; });
