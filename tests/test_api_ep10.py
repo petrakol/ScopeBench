@@ -264,7 +264,7 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     assert "Replay telemetry" in html
     assert "Calibration Dashboard" in html
     assert "What-if Lab" in html
-    assert "Suggest effects" in html
+    assert "Suggest Effects" in html
     assert "Explainability: Aggregate Risk Contributions" in html
     assert "Stream /evaluate_stream" in html
     assert "Streaming Evaluation Timeline" in html
