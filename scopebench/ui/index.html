@@ -191,6 +191,12 @@
       .meter { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 4px; }
       .meter > span { display: block; height: 100%; background: #2563eb; }
       .signal-chip { display: inline-block; margin-right: 6px; margin-bottom: 6px; padding: 3px 8px; border-radius: 999px; font-size: 12px; background: #fee2e2; color: #991b1b; }
+      .negotiation-rec { border: 1px solid #dbeafe; border-radius: 8px; padding: 10px; margin-bottom: 10px; background: #f8fbff; }
+      .negotiation-transfer { border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px; margin-top: 6px; background: #fff; }
+      .consensus-chip { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; }
+      .consensus-chip.reached { background: #dcfce7; color: #166534; }
+      .consensus-chip.pending { background: #fef3c7; color: #92400e; }
+      .negotiation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
       .chart-block { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-top: 8px; }
       .chart-title { font-weight: 600; margin-bottom: 6px; }
       .bar-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) 64px; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
@@ -358,6 +364,13 @@
           <div id="session-decision"></div>
           <pre id="session-result"></pre>
         </div>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
+        <h3>Negotiation Recommendations & Consensus Controls</h3>
+        <p class="muted">Review server recommendations and interactively approve transfers or tweak reallocation targets to explore consensus outcomes.</p>
+        <div class="controls" style="margin-bottom:8px"><button id="apply-negotiation" class="secondary">Apply consensus-adjusted budgets</button></div>
+        <div id="session-negotiation"></div>
       </section>
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
@@ -731,6 +744,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const sessionLedgerEl = el("session-ledger");
       const sessionBudgetChartEl = el("session-budget-chart");
       const sessionRiskChartEl = el("session-risk-chart");
+      const sessionNegotiationEl = el("session-negotiation");
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
@@ -743,6 +757,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let allCases = [];
       let selectedCaseId = null;
       let effectLabAxisOrder = EFFECT_AXES.map(([, axis]) => axis);
+      let latestSessionPayload = null;
+      let negotiationEdits = {};
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -1329,6 +1345,148 @@ Require rollback plan before high-irreversibility actions.</textarea>
       }
 
 
+      function asNumber(value) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+
+      function formatNumber(value) {
+        return asNumber(value).toFixed(2);
+      }
+
+      function getNegotiationEdit(index, recommendation) {
+        const key = String(index);
+        if (!negotiationEdits[key]) {
+          const transferApprovals = {};
+          (recommendation.transfers || []).forEach((transfer, transferIndex) => {
+            transferApprovals[String(transferIndex)] = true;
+          });
+          const reallocationTargets = {};
+          (recommendation.reallocation || []).forEach((item) => {
+            reallocationTargets[item.agent_id] = asNumber(item.target_budget);
+          });
+          negotiationEdits[key] = { transferApprovals, reallocationTargets };
+        }
+        return negotiationEdits[key];
+      }
+
+      function negotiatedRecommendationView(index, recommendation) {
+        const edit = getNegotiationEdit(index, recommendation);
+        const approvedTransfers = (recommendation.transfers || []).filter((_, transferIndex) => edit.transferApprovals[String(transferIndex)]);
+        const transferTotal = approvedTransfers.reduce((sum, transfer) => sum + asNumber(transfer.amount), 0);
+        const requestsTotal = (recommendation.requests || []).reduce((sum, item) => sum + asNumber(item.requested), 0);
+        const headroom = asNumber(recommendation.allocated_from_headroom);
+        const allocated = headroom + transferTotal;
+        const remainingUnmet = Math.max(0, requestsTotal - allocated);
+        const approvals = Object.values(edit.transferApprovals || {}).filter(Boolean).length;
+        const participants = asNumber(recommendation.consensus?.participants || approvedTransfers.length || 1);
+        const quorumRatio = asNumber(recommendation.consensus?.quorum_ratio || 0);
+        const neededApprovals = Math.max(1, Math.ceil(participants * quorumRatio));
+        const consensusStatus = approvals >= neededApprovals ? "reached" : "pending";
+        const reallocation = (recommendation.reallocation || []).map((item) => {
+          const targetBudget = asNumber(edit.reallocationTargets[item.agent_id]);
+          return {
+            ...item,
+            current_budget: asNumber(item.current_budget),
+            target_budget: targetBudget,
+            delta: targetBudget - asNumber(item.current_budget)
+          };
+        });
+        return { approvedTransfers, transferTotal, requestsTotal, allocated, remainingUnmet, approvals, participants, neededApprovals, consensusStatus, reallocation };
+      }
+
+      function renderSessionNegotiation(negotiation = null) {
+        if (!sessionNegotiationEl) return;
+        sessionNegotiationEl.innerHTML = "";
+        if (!negotiation?.triggered) {
+          sessionNegotiationEl.innerHTML = '<div class="muted">No active negotiation recommendations. Run /evaluate_session with over-budget agents to generate proposals.</div>';
+          return;
+        }
+        (negotiation.recommendations || []).forEach((recommendation, index) => {
+          const view = negotiatedRecommendationView(index, recommendation);
+          const rec = document.createElement("div");
+          rec.className = "negotiation-rec";
+          const consensusClass = view.consensusStatus === "reached" ? "reached" : "pending";
+          rec.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${recommendation.budget_key}</strong><span class="consensus-chip ${consensusClass}">consensus ${view.consensusStatus}</span></div>
+            <div class="muted">Fairness rule: ${recommendation.fairness_rule}</div>
+            <div class="negotiation-grid">
+              <div><strong>${formatNumber(view.requestsTotal)}</strong><div class="muted">total requested</div></div>
+              <div><strong>${formatNumber(asNumber(recommendation.global_headroom))}</strong><div class="muted">global headroom</div></div>
+              <div><strong>${formatNumber(view.allocated)}</strong><div class="muted">allocated (headroom + approved transfers)</div></div>
+              <div><strong>${formatNumber(view.remainingUnmet)}</strong><div class="muted">remaining unmet</div></div>
+            </div>
+            <div style="margin-top:8px"><strong>Consensus approvals:</strong> ${view.approvals}/${view.participants} (needs ${view.neededApprovals})</div>
+            <div style="margin-top:8px"><strong>Transfer approvals</strong><div class="muted">Toggle to approve individual transfers.</div></div>
+            <div data-transfer-list="${index}"></div>
+            <div style="margin-top:10px"><strong>Reallocation targets</strong><div class="muted">Adjust target budgets to model alternative consensus allocations.</div></div>
+            <div data-reallocation-list="${index}"></div>`;
+          sessionNegotiationEl.appendChild(rec);
+
+          const transferList = rec.querySelector(`[data-transfer-list="${index}"]`);
+          if (!(recommendation.transfers || []).length) {
+            transferList.innerHTML = '<div class="muted">No transfers proposed.</div>';
+          } else {
+            (recommendation.transfers || []).forEach((transfer, transferIndex) => {
+              const checked = Boolean(getNegotiationEdit(index, recommendation).transferApprovals[String(transferIndex)]);
+              const row = document.createElement("label");
+              row.className = "negotiation-transfer";
+              row.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><span><input type="checkbox" data-neg-transfer="${index}" data-transfer-index="${transferIndex}" ${checked ? "checked" : ""}/> ${transfer.from_agent} → ${transfer.to_agent}</span><strong>${formatNumber(transfer.amount)}</strong></div>`;
+              transferList.appendChild(row);
+            });
+          }
+
+          const reallocationList = rec.querySelector(`[data-reallocation-list="${index}"]`);
+          if (!(view.reallocation || []).length) {
+            reallocationList.innerHTML = '<div class="muted">No reallocation adjustments provided.</div>';
+          } else {
+            (view.reallocation || []).forEach((item) => {
+              const row = document.createElement("div");
+              row.className = "negotiation-transfer";
+              row.innerHTML = `<div style="display:grid;grid-template-columns: 140px 1fr auto;gap:8px;align-items:center"><span>${item.agent_id}</span><input type="number" step="0.1" min="0" data-neg-target="${index}" data-agent-id="${item.agent_id}" value="${item.target_budget.toFixed(2)}" /><span class="muted">Δ ${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(2)}</span></div>`;
+              reallocationList.appendChild(row);
+            });
+          }
+        });
+
+        sessionNegotiationEl.querySelectorAll("input[data-neg-transfer]").forEach((node) => node.addEventListener("change", (ev) => {
+          const recIndex = String(ev.target.dataset.negTransfer);
+          const transferIndex = String(ev.target.dataset.transferIndex);
+          const rec = (negotiation.recommendations || [])[Number(recIndex)];
+          if (!rec) return;
+          const edit = getNegotiationEdit(Number(recIndex), rec);
+          edit.transferApprovals[transferIndex] = Boolean(ev.target.checked);
+          renderSessionNegotiation(negotiation);
+        }));
+
+        sessionNegotiationEl.querySelectorAll("input[data-neg-target]").forEach((node) => node.addEventListener("input", (ev) => {
+          const recIndex = String(ev.target.dataset.negTarget);
+          const agentId = ev.target.dataset.agentId;
+          const rec = (negotiation.recommendations || [])[Number(recIndex)];
+          if (!rec) return;
+          const edit = getNegotiationEdit(Number(recIndex), rec);
+          edit.reallocationTargets[agentId] = asNumber(ev.target.value);
+          renderSessionNegotiation(negotiation);
+        }));
+      }
+
+      function applyNegotiationEditsToSession() {
+        if (!latestSessionPayload?.negotiation?.triggered) return;
+        const recommendationByBudget = {};
+        (latestSessionPayload.negotiation.recommendations || []).forEach((recommendation, index) => {
+          recommendationByBudget[recommendation.budget_key] = negotiatedRecommendationView(index, recommendation);
+        });
+
+        sessionState.agents = sessionState.agents.map((agent) => {
+          const nextBudgets = { ...(agent.budgets || {}) };
+          Object.entries(recommendationByBudget).forEach(([budgetKey, view]) => {
+            const target = view.reallocation.find((entry) => entry.agent_id === agent.agent_id);
+            if (target) nextBudgets[budgetKey] = Math.max(0, asNumber(target.target_budget));
+          });
+          return { ...agent, budgets: nextBudgets };
+        });
+        renderSessionBuilder();
+      }
+
       function renderWizardVariantOptions() {
         const picked = wizardTemplates.find((item) => item.domain === wizardDomainEl.value);
         const variants = Object.keys(picked?.variants || {}).sort();
@@ -1764,9 +1922,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
         sessionPayloadEl.textContent = JSON.stringify(body, null, 2);
         const res = await fetch("/evaluate_session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
         const payload = await res.json();
+        latestSessionPayload = payload;
+        negotiationEdits = {};
         sessionDecisionEl.innerHTML = `${decisionBadge(payload.decision)} multi-agent governance result`;
         sessionResultEl.textContent = JSON.stringify({ decision: payload.decision, trace_id: payload.trace_id, negotiation: payload.negotiation }, null, 2);
         renderSessionDashboard(payload);
+        renderSessionNegotiation(payload.negotiation);
       }
 
       function clamp01(value) {
@@ -2290,6 +2451,10 @@ ${body}`;
         else sessionState.agents[0].plan = parsedPlan;
         renderSessionBuilder();
       });
+      el("apply-negotiation").addEventListener("click", () => {
+        applyNegotiationEditsToSession();
+        runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
+      });
       ["session-budget-cost", "session-budget-time", "session-budget-tools"].forEach((id) => el(id).addEventListener("input", () => {
         sessionPayloadEl.textContent = JSON.stringify(sessionPayloadFromState(), null, 2);
       }));
@@ -2348,6 +2513,7 @@ ${body}`;
         streamingEl.textContent = `Streaming load error: ${err.message}`;
       });
       renderSessionBuilder();
+      renderSessionNegotiation(null);
       runSessionEvaluation().catch((err) => {
         sessionResultEl.textContent = `Error: ${err.message}`;
       });

@@ -268,6 +268,7 @@ def test_ui_endpoint_serves_interactive_page() -> None:
     assert "Explainability: Aggregate Risk Contributions" in html
     assert "Stream /evaluate_stream" in html
     assert "Streaming Evaluation Timeline" in html
+    assert "Negotiation Recommendations & Consensus Controls" in html
     assert "Download contribution file" in html
     assert "ready-to-submit YAML/JSON contribution file" in html
 
