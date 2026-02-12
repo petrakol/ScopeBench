@@ -111,7 +111,7 @@
       }
       .case-explorer-controls {
         display: grid;
-        grid-template-columns: 2fr 1fr 1fr 1fr;
+        grid-template-columns: 2fr repeat(4, minmax(0, 1fr));
         gap: 8px;
         margin-bottom: 10px;
       }
@@ -124,6 +124,44 @@
         border-radius: 8px;
         max-height: 360px;
         overflow: auto;
+      }
+      .case-detail-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 10px;
+        background: #f8fafc;
+        margin-bottom: 8px;
+      }
+      .case-meta-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .case-meta-chip {
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 6px 8px;
+        background: #fff;
+        font-size: 12px;
+      }
+      .case-meta-chip strong {
+        display: block;
+        font-size: 16px;
+      }
+      .case-top-axes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .axis-chip {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 12px;
+        background: #dbeafe;
+        color: #1d4ed8;
       }
       .case-item {
         padding: 10px;
@@ -139,6 +177,9 @@
       .decision-chip.DENY { background: #fee2e2; color: #991b1b; }
       .vector-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
       .vector-table th, .vector-table td { border-bottom: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; }
+      .vector-axis-cell { min-width: 220px; }
+      .step-learning-list { margin: 0; padding-left: 18px; }
+      .step-learning-list li { margin-bottom: 4px; }
       .bar-chart { display: grid; gap: 8px; }
       .bar-row { display: grid; grid-template-columns: 120px minmax(0, 1fr) 72px; gap: 8px; align-items: center; }
       .bar-track { height: 12px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
@@ -586,6 +627,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <input id="case-search" type="text" placeholder="Search by instruction, id, contract goal, plan step, or rationale" />
           <select id="case-domain-filter"></select>
           <select id="case-decision-filter"></select>
+          <select id="case-plan-size-filter"></select>
           <select id="case-sort"></select>
         </div>
         <div class="case-kpis">
@@ -603,6 +645,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
             <div id="case-list" class="case-list"></div>
           </div>
           <div>
+            <div id="case-insights" class="case-detail-card"></div>
             <pre id="case-detail"></pre>
             <div id="case-vectors"></div>
           </div>
@@ -788,8 +831,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const caseSearchEl = el("case-search");
       const caseDomainFilterEl = el("case-domain-filter");
       const caseDecisionFilterEl = el("case-decision-filter");
+      const casePlanSizeFilterEl = el("case-plan-size-filter");
       const caseListEl = el("case-list");
       const caseDetailEl = el("case-detail");
+      const caseInsightsEl = el("case-insights");
       const caseSummaryEl = el("case-summary");
       const caseSortEl = el("case-sort");
       const caseVectorsEl = el("case-vectors");
@@ -1693,16 +1738,52 @@ Require rollback plan before high-irreversibility actions.</textarea>
         return decisionWeight[item.expected_decision] * 10 + maxVector;
       }
 
+      function topAxesForVector(step, limit = 3) {
+        const axes = Object.entries(step || {})
+          .filter(([key, value]) => key !== "step_id" && typeof value === "number")
+          .sort((a, b) => b[1] - a[1]);
+        return axes.slice(0, limit);
+      }
+
+      function caseTopAxes(item, limit = 4) {
+        const totals = {};
+        const vectors = Array.isArray(item.expected_step_vectors) ? item.expected_step_vectors : [];
+        vectors.forEach((step) => {
+          Object.entries(step || {}).forEach(([key, value]) => {
+            if (key === "step_id" || typeof value !== "number") return;
+            totals[key] = Math.max(totals[key] || 0, value);
+          });
+        });
+        return Object.entries(totals).sort((a, b) => b[1] - a[1]).slice(0, limit);
+      }
+
+      function planSizeBucket(item) {
+        const count = Array.isArray(item?.plan?.steps) ? item.plan.steps.length : 0;
+        if (count <= 2) return "small";
+        if (count <= 4) return "medium";
+        return "large";
+      }
+
+      function renderLearningNotes(item) {
+        const vectors = Array.isArray(item.expected_step_vectors) ? item.expected_step_vectors : [];
+        if (!vectors.length) return '<p class="muted">No step vectors available for this case.</p>';
+        const notes = vectors.map((step) => {
+          const [primaryAxis, primaryScore] = topAxesForVector(step, 1)[0] || ["uncertainty", 0];
+          const stepLabel = step.step_id || "(unlabeled step)";
+          return `<li><strong>${stepLabel}</strong>: prioritize controls for <code>${primaryAxis}</code> (${Number(primaryScore).toFixed(2)}), then add validation before execution.</li>`;
+        });
+        return `<ul class="step-learning-list">${notes.join("")}</ul>`;
+      }
+
       function vectorRowsForCase(item) {
         const vectors = Array.isArray(item.expected_step_vectors) ? item.expected_step_vectors : [];
         if (!vectors.length) return '<p class="muted">No expected step vectors attached.</p>';
-        return `<table class="vector-table"><thead><tr><th>Step</th><th>Top axes</th><th>Peak score</th></tr></thead><tbody>${vectors.map((step) => {
-          const axes = Object.entries(step || {})
-            .filter(([key, value]) => key !== "step_id" && typeof value === "number")
-            .sort((a, b) => b[1] - a[1]);
-          const top = axes.slice(0, 3).map(([axis, value]) => `${axis}=${value.toFixed(2)}`).join(', ');
+        return `<table class="vector-table"><thead><tr><th>Step</th><th class="vector-axis-cell">Top axes</th><th>Peak score</th><th>Plan coaching note</th></tr></thead><tbody>${vectors.map((step) => {
+          const axes = topAxesForVector(step, 3);
+          const top = axes.map(([axis, value]) => `${axis}=${value.toFixed(2)}`).join(', ');
           const peak = axes.length ? axes[0][1] : 0;
-          return `<tr><td>${step.step_id || "(none)"}</td><td>${top || '<span class="muted">n/a</span>'}</td><td>${Number(peak).toFixed(2)}</td></tr>`;
+          const coaching = axes.length ? `Mitigate ${axes[0][0]} before expanding scope.` : "Add measurable controls.";
+          return `<tr><td>${step.step_id || "(none)"}</td><td>${top || '<span class="muted">n/a</span>'}</td><td>${Number(peak).toFixed(2)}</td><td>${coaching}</td></tr>`;
         }).join("")}</tbody></table>`;
       }
 
@@ -1719,11 +1800,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const query = (caseSearchEl.value || "").trim().toLowerCase();
         const domain = caseDomainFilterEl.value || "all";
         const decision = caseDecisionFilterEl.value || "all";
+        const planSize = casePlanSizeFilterEl.value || "all";
         const sortMode = caseSortEl.value || "severity_desc";
 
         const filtered = allCases.filter((item) => {
           if (domain !== "all" && item.domain !== domain) return false;
           if (decision !== "all" && item.expected_decision !== decision) return false;
+          if (planSize !== "all" && planSizeBucket(item) !== planSize) return false;
           if (!query) return true;
           return caseSearchText(item).includes(query);
         });
@@ -1756,6 +1839,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         if (!sorted.length) {
           caseListEl.innerHTML = '<div class="case-item">No matching cases.</div>';
           caseDetailEl.textContent = "";
+          caseInsightsEl.innerHTML = "<p class=\"muted\">Select or search cases to view educational guidance.</p>";
           caseVectorsEl.innerHTML = "";
           return;
         }
@@ -1776,6 +1860,26 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
 
         const selected = sorted.find((item) => item.id === selectedCaseId) || sorted[0];
+        const selectedTopAxes = caseTopAxes(selected, 4);
+        const stepCount = Array.isArray(selected?.plan?.steps) ? selected.plan.steps.length : 0;
+        const contractGoal = selected?.contract?.goal || "No contract goal provided.";
+
+        caseInsightsEl.innerHTML = `
+          <div class="case-meta-grid">
+            <div class="case-meta-chip">Decision archetype<strong>${selected.expected_decision || 'UNKNOWN'}</strong></div>
+            <div class="case-meta-chip">Plan size<strong>${stepCount} steps (${planSizeBucket(selected)})</strong></div>
+            <div class="case-meta-chip">Domain<strong>${selected.domain || 'unlabeled'}</strong></div>
+            <div class="case-meta-chip">Contract goal<strong>${contractGoal}</strong></div>
+          </div>
+          <div>
+            <strong>Top risk/impact axes</strong>
+            <div class="case-top-axes">${selectedTopAxes.map(([axis, value]) => `<span class="axis-chip">${axis}: ${value.toFixed(2)}</span>`).join('') || '<span class="muted">No axis data available.</span>'}</div>
+          </div>
+          <div style="margin-top: 8px;">
+            <strong>How to write a proportionate plan (from this case)</strong>
+            ${renderLearningNotes(selected)}
+          </div>
+        `;
         caseDetailEl.textContent = [
           `Case: ${selected.id}`,
           `Domain: ${selected.domain}`,
@@ -1832,6 +1936,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
         caseDomainFilterEl.innerHTML = ['<option value="all">All domains</option>', ...(cases.domains || []).map((d) => `<option value="${d}">${d}</option>`)].join("");
         caseDecisionFilterEl.innerHTML = ['<option value="all">All decisions</option>', '<option value="ALLOW">ALLOW</option>', '<option value="ASK">ASK</option>', '<option value="DENY">DENY</option>'].join("");
+        casePlanSizeFilterEl.innerHTML = [
+          '<option value="all">All plan sizes</option>',
+          '<option value="small">Small (1-2 steps)</option>',
+          '<option value="medium">Medium (3-4 steps)</option>',
+          '<option value="large">Large (5+ steps)</option>'
+        ].join('');
         caseSortEl.innerHTML = [
           '<option value="severity_desc">Sort: severity (high → low)</option>',
           '<option value="decision_asc">Sort: decision (ALLOW → DENY)</option>',
@@ -2733,7 +2843,7 @@ ${body}`;
       el("refresh-cases").addEventListener("click", () => loadCatalog().catch((err) => {
         catalogEl.textContent = `Catalog load error: ${err.message}`;
       }));
-      [caseSearchEl, caseDomainFilterEl, caseDecisionFilterEl, caseSortEl].forEach((node) => {
+      [caseSearchEl, caseDomainFilterEl, caseDecisionFilterEl, casePlanSizeFilterEl, caseSortEl].forEach((node) => {
         node.addEventListener("input", renderCaseExplorer);
         node.addEventListener("change", renderCaseExplorer);
       });
