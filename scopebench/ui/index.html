@@ -400,6 +400,15 @@
           <label>Global budget: max_tool_calls<input id="session-budget-tools" type="number" min="0" step="1" value="6" /></label>
         </div>
         <div class="controls" style="margin-bottom:10px">
+          <label>Scenario
+            <select id="session-scenario" class="secondary" style="min-width:220px">
+              <option value="default">Default parser handoff</option>
+              <option value="triage">Security incident triage</option>
+              <option value="release">Release governance review</option>
+            </select>
+          </label>
+          <button id="load-session-scenario" class="secondary">Load scenario</button>
+          <button id="reset-session-scenario" class="secondary">Reset builder</button>
           <button id="add-agent" class="secondary">Add agent</button>
           <button id="sync-from-current-plan" class="secondary">Sync current plan as agent-1</button>
         </div>
@@ -421,6 +430,7 @@
       <section class="card" style="margin-top: 16px">
         <h3>Negotiation Recommendations & Consensus Controls</h3>
         <p class="muted">Review server recommendations and interactively approve transfers or tweak reallocation targets to explore consensus outcomes.</p>
+        <div id="session-summary-chips" class="chips-row muted" style="margin-bottom:8px">Run /evaluate_session to view collaboration and laundering summary chips.</div>
         <div class="negotiation-controls">
           <button id="apply-negotiation" class="secondary">Apply consensus-adjusted budgets</button>
           <button id="approve-all-transfers" class="secondary">Approve all transfers</button>
@@ -714,10 +724,30 @@ Require rollback plan before high-irreversibility actions.</textarea>
       };
 
       const defaultSessionState = {
+        global_budgets: { cost_usd: 150, time_horizon_days: 7, max_tool_calls: 6 },
         agents: [
           { agent_id: "agent-a", budgets: { cost_usd: 70, time_horizon_days: 4, max_tool_calls: 4 }, contract_patch: { goal: "Fix parser bug", acceptance: ["All parser tests pass"], constraints: ["No API breakages"] }, plan: { task: "Fix parser bug", steps: [{ id: "1", description: "Read failing unit test and source", tool: "git_read" }, { id: "2", description: "Apply minimal parser patch", tool: "git_patch", depends_on: ["1"] }] } },
           { agent_id: "agent-b", budgets: { cost_usd: 45, time_horizon_days: 3, max_tool_calls: 3 }, contract_patch: { goal: "Validate parser patch", acceptance: ["Regression tests pass"] }, plan: { task: "Validate parser patch", steps: [{ id: "1", description: "Review impact and identify tests", tool: "analysis" }, { id: "2", description: "Run targeted tests", tool: "pytest", depends_on: ["1"] }] } }
         ]
+      };
+      const sessionScenarios = {
+        default: defaultSessionState,
+        triage: {
+          global_budgets: { cost_usd: 230, time_horizon_days: 3, max_tool_calls: 9 },
+          agents: [
+            { agent_id: "sec-analyst", budgets: { cost_usd: 90, time_horizon_days: 2, max_tool_calls: 4 }, contract_patch: { goal: "Triage suspicious auth anomalies", acceptance: ["Capture blast radius", "Summarize indicators of compromise"] }, plan: { task: "Analyze auth anomaly burst", steps: [{ id: "1", description: "Pull auth gateway logs and suspicious IP clusters", tool: "analysis" }, { id: "2", description: "Correlate incidents with IAM changes", tool: "git_read", depends_on: ["1"] }] } },
+            { agent_id: "platform-ops", budgets: { cost_usd: 85, time_horizon_days: 2, max_tool_calls: 3 }, contract_patch: { goal: "Contain active incident blast radius", constraints: ["No production downtime beyond maintenance window"] }, plan: { task: "Contain impacted workloads", steps: [{ id: "1", description: "Apply temporary network policy restrictions", tool: "infra_provision" }, { id: "2", description: "Rotate exposed service credentials", tool: "iam_change", depends_on: ["1"] }] } },
+            { agent_id: "comms", budgets: { cost_usd: 25, time_horizon_days: 1, max_tool_calls: 2 }, contract_patch: { goal: "Prepare stakeholder incident communication" }, plan: { task: "Draft incident status updates", steps: [{ id: "1", description: "Draft internal stakeholder summary and next update SLA", tool: "analysis" }] } }
+          ]
+        },
+        release: {
+          global_budgets: { cost_usd: 180, time_horizon_days: 5, max_tool_calls: 8 },
+          agents: [
+            { agent_id: "release-manager", budgets: { cost_usd: 70, time_horizon_days: 3, max_tool_calls: 3 }, contract_patch: { goal: "Coordinate production release readiness", acceptance: ["Rollout checklist complete"] }, plan: { task: "Validate release readiness", steps: [{ id: "1", description: "Review unresolved incidents and release blockers", tool: "analysis" }, { id: "2", description: "Approve deployment window", tool: "prod_deploy", depends_on: ["1"] }] } },
+            { agent_id: "qa-lead", budgets: { cost_usd: 45, time_horizon_days: 2, max_tool_calls: 3 }, contract_patch: { goal: "Confirm regression suite health" }, plan: { task: "Execute pre-release validation", steps: [{ id: "1", description: "Run smoke and regression suites", tool: "pytest" }, { id: "2", description: "Document pass/fail deltas", tool: "analysis", depends_on: ["1"] }] } },
+            { agent_id: "security-review", budgets: { cost_usd: 40, time_horizon_days: 2, max_tool_calls: 2 }, contract_patch: { goal: "Review release for policy drift", constraints: ["Escalate legal and data handling concerns"] }, plan: { task: "Assess policy and compliance posture", steps: [{ id: "1", description: "Scan release notes for policy-sensitive changes", tool: "analysis" }] } }
+          ]
+        }
       };
 
       const el = (id) => document.getElementById(id);
@@ -839,12 +869,14 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const sessionRiskChartEl = el("session-risk-chart");
       const sessionNegotiationEl = el("session-negotiation");
       const negotiationApplyStatusEl = el("negotiation-apply-status");
+      const sessionSummaryChipsEl = el("session-summary-chips");
+      const sessionScenarioEl = el("session-scenario");
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
       let wizardTemplates = [];
       let wizardDraft = null;
-      let sessionState = JSON.parse(JSON.stringify(defaultSessionState));
+      let sessionState = { agents: clone(defaultSessionState.agents) };
       let calibrationDashboardState = null;
       let calibrationSelection = { domain: null, axisScaleDelta: {}, axisThresholdFactorDelta: {}, abstainDelta: 0.0 };
       let latestEvaluation = null;
@@ -925,7 +957,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const reordered = [...effectLabAxisOrder];
         [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
         effectLabAxisOrder = reordered;
-        renderEffectLabWeightControls();
+        applySessionGlobalBudgets(defaultSessionState.global_budgets || {});
+      renderEffectLabWeightControls();
         renderEffectLabComparison();
       }
 
@@ -1169,6 +1202,28 @@ Require rollback plan before high-irreversibility actions.</textarea>
           .replace(/'/g, "&#39;");
       }
 
+      function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+
+      function applySessionGlobalBudgets(globalBudgets = {}) {
+        el("session-budget-cost").value = Number(globalBudgets.cost_usd ?? 0);
+        el("session-budget-time").value = Number(globalBudgets.time_horizon_days ?? 0);
+        el("session-budget-tools").value = Number(globalBudgets.max_tool_calls ?? 0);
+      }
+
+      function loadSessionScenario(key = "default") {
+        const scenario = clone(sessionScenarios[key] || sessionScenarios.default);
+        sessionState = { agents: scenario.agents || [] };
+        applySessionGlobalBudgets(scenario.global_budgets || defaultSessionState.global_budgets || {});
+        negotiationEdits = {};
+        renderSessionBuilder();
+        if (sessionSummaryChipsEl) {
+          sessionSummaryChipsEl.className = "chips-row muted";
+          sessionSummaryChipsEl.textContent = `Loaded scenario: ${key}. Run /evaluate_session to refresh aggregate signals.`;
+        }
+      }
+
       function ensureAgentDefaults(agent) {
         agent.budgets = agent.budgets || { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 };
         agent.contract_patch = agent.contract_patch || {};
@@ -1356,6 +1411,22 @@ Require rollback plan before high-irreversibility actions.</textarea>
       }
 
       function renderSessionDashboard(payload = {}) {
+        const launderingCount = (payload.laundering_signals || []).length;
+        const recommendationCount = (payload.negotiation?.recommendations || []).length;
+        const perAgentEntries = Object.entries(payload.dashboard?.per_agent || {});
+        const askAgents = perAgentEntries.filter(([, entry]) => String(entry.decision || "").toUpperCase() === "ASK").length;
+        const denyAgents = perAgentEntries.filter(([, entry]) => String(entry.decision || "").toUpperCase() === "DENY").length;
+        if (sessionSummaryChipsEl) {
+          const chips = [
+            `<span class="signal-chip">agents ${perAgentEntries.length}</span>`,
+            `<span class="signal-chip">ASK ${askAgents}</span>`,
+            `<span class="signal-chip">DENY ${denyAgents}</span>`,
+            `<span class="signal-chip">laundering flags ${launderingCount}</span>`,
+            `<span class="signal-chip">negotiations ${recommendationCount}</span>`
+          ];
+          sessionSummaryChipsEl.className = "chips-row";
+          sessionSummaryChipsEl.innerHTML = chips.join("");
+        }
         sessionAgentTableEl.innerHTML = "";
         sessionGlobalTableEl.innerHTML = "";
         sessionNegotiationTableEl.innerHTML = "";
@@ -2786,6 +2857,14 @@ ${body}`;
         sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, contract_patch: { goal: `agent-${idx} scoped task` }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
         renderSessionBuilder();
       });
+
+      el("load-session-scenario").addEventListener("click", () => {
+        loadSessionScenario(sessionScenarioEl?.value || "default");
+      });
+      el("reset-session-scenario").addEventListener("click", () => {
+        loadSessionScenario("default");
+        if (sessionScenarioEl) sessionScenarioEl.value = "default";
+      });
       el("sync-from-current-plan").addEventListener("click", () => {
         const parsedPlan = JSON.parse(planEl.value);
         if (!sessionState.agents.length) sessionState.agents.push({ agent_id: "agent-1", budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, contract_patch: { goal: "Primary agent scope" }, plan: parsedPlan });
@@ -2817,6 +2896,7 @@ ${body}`;
         catch (_err) { /* continue editing invalid JSON */ }
       });
 
+      applySessionGlobalBudgets(defaultSessionState.global_budgets || {});
       renderEffectLabWeightControls();
       renderDag(defaultPlan);
       renderWhatIfEditors(defaultPlan);
