@@ -1099,29 +1099,48 @@ Require rollback plan before high-irreversibility actions.</textarea>
       function applySuggestedEffects(plan, suggestions = []) {
         const nextPlan = JSON.parse(JSON.stringify(plan || { task: "", steps: [] }));
         const stepById = Object.fromEntries((nextPlan.steps || []).map((step) => [String(step.id), step]));
+        let updatedCount = 0;
         (suggestions || []).forEach((item) => {
           const stepId = String(item?.step_id || "");
           if (!stepId || !stepById[stepId]) return;
-          stepById[stepId].effects = item.effects || {};
+          const nextEffects = item.effects && typeof item.effects === "object" ? item.effects : {};
+          stepById[stepId].effects = nextEffects;
+          if (Object.keys(nextEffects).length > 0) updatedCount += 1;
         });
-        return nextPlan;
+        return { plan: nextPlan, updatedCount };
       }
 
       async function suggestEffectsForPlan() {
-        const plan = JSON.parse(planEl.value);
-        const res = await fetch("/suggest_effects", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ plan })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        const updatedPlan = applySuggestedEffects(data.plan || plan, data.suggestions || []);
-        planEl.value = JSON.stringify(updatedPlan, null, 2);
-        renderDag(updatedPlan);
-        renderWhatIfEditors(updatedPlan);
-        scheduleAutoEvaluate();
-        resultEl.textContent = "Suggested effects_v1 annotations were applied to the current plan.";
+        let plan;
+        try {
+          plan = JSON.parse(planEl.value);
+        } catch (_err) {
+          throw new Error("Plan JSON is invalid. Fix the plan payload before suggesting effects.");
+        }
+
+        suggestEffectsEl.disabled = true;
+        const previousLabel = suggestEffectsEl.textContent;
+        suggestEffectsEl.textContent = "Suggesting…";
+        try {
+          const res = await fetch("/suggest_effects", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ plan })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+          const merged = applySuggestedEffects(data.plan || plan, data.suggestions || []);
+          const updatedPlan = merged.plan;
+          const stepCount = (updatedPlan.steps || []).length;
+          planEl.value = JSON.stringify(updatedPlan, null, 2);
+          renderDag(updatedPlan);
+          renderWhatIfEditors(updatedPlan);
+          scheduleAutoEvaluate();
+          resultEl.textContent = `Suggested effects_v1 applied to ${merged.updatedCount}/${stepCount} plan step(s).`;
+        } finally {
+          suggestEffectsEl.disabled = false;
+          suggestEffectsEl.textContent = previousLabel;
+        }
       }
 
       function renderWhatIfEditors(plan) {
