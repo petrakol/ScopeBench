@@ -2585,22 +2585,55 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       async function runDatasetContributionWizard() {
         resetDatasetWizardSteps();
+        datasetDownloadLinkEl.style.display = "none";
         datasetContributionFileEl.value = "";
         try {
           setDatasetWizardStep("build", "running", "running");
-          buildCaseDraftFromInputs();
-          await suggestCaseVectors();
-          await validateCaseDraft();
-          await generateDatasetContributionFile();
+          const draft = buildCaseDraftFromInputs();
+          const format = (datasetExportFormatEl.value || "json").toLowerCase();
+
+          setDatasetWizardStep("suggest", "running", "calling /dataset/wizard");
+          setDatasetWizardStep("validate", "running", "calling /dataset/wizard");
+          setDatasetWizardStep("generate", "running", "calling /dataset/wizard");
+          const res = await fetch("/dataset/wizard", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              id: draft.id || "community_case_001",
+              domain: draft.domain || "engineering",
+              instruction: draft.instruction || "Community contribution",
+              contract: draft.contract,
+              plan: draft.plan,
+              expected_decision: draft.expected_decision || "ALLOW",
+              expected_rationale: draft.expected_rationale || "TBD",
+              notes: draft.notes || null,
+              format,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+
+          caseDraftEl.value = JSON.stringify(data.case, null, 2);
+          syncDatasetFieldsFromDraft(data.case);
+          setDatasetWizardStep("suggest", "done", "vectors filled");
+          setDatasetWizardStep("validate", "done", `valid (${data.case_id})`);
+
+          datasetContributionFileEl.value = data.rendered.content;
+          const blob = new Blob([data.rendered.content], { type: data.rendered.content_type || "text/plain" });
+          datasetDownloadLinkEl.href = URL.createObjectURL(blob);
+          datasetDownloadLinkEl.download = data.rendered.filename || `${data.case_id}.${format === "yaml" ? "yaml" : "json"}`;
+          datasetDownloadLinkEl.style.display = "inline-block";
+          setDatasetWizardStep("generate", "done", `${format.toUpperCase()} ready`);
           datasetOutputEl.textContent = "Wizard complete: draft built, vectors suggested, validation passed, contribution file generated.";
         } catch (err) {
           if (datasetStepEls.build.textContent === "running") setDatasetWizardStep("build", "error", "error");
-          if (datasetStepEls.suggest.textContent === "running") setDatasetWizardStep("suggest", "error", "error");
-          if (datasetStepEls.validate.textContent === "running") setDatasetWizardStep("validate", "error", "error");
-          if (datasetStepEls.generate.textContent === "running") setDatasetWizardStep("generate", "error", "error");
+          if (datasetStepEls.suggest.textContent.startsWith("calling") || datasetStepEls.suggest.textContent === "running") setDatasetWizardStep("suggest", "error", "error");
+          if (datasetStepEls.validate.textContent.startsWith("calling") || datasetStepEls.validate.textContent === "running") setDatasetWizardStep("validate", "error", "error");
+          if (datasetStepEls.generate.textContent.startsWith("calling") || datasetStepEls.generate.textContent === "running") setDatasetWizardStep("generate", "error", "error");
           throw err;
         }
       }
+
 
       function generateDatasetPrText() {
         const draft = buildCaseDraftFromInputs();

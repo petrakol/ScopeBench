@@ -307,6 +307,28 @@ class DatasetRenderResponse(BaseModel):
     content: str
 
 
+class DatasetWizardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    domain: str
+    instruction: str
+    contract: Dict[str, Any]
+    plan: Dict[str, Any]
+    expected_decision: str
+    expected_rationale: str
+    notes: Optional[str] = None
+    policy_backend: str = "python"
+    format: str = Field(default="json", description="json|yaml")
+
+
+class DatasetWizardResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    case_id: str
+    case: Dict[str, Any]
+    rendered: DatasetRenderResponse
+
+
 class PluginWizardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     domain: str
@@ -2587,6 +2609,32 @@ def create_app(
             filename=f"{validated.id}.json",
             content_type="application/json",
             content=json.dumps(normalized_case, indent=2),
+        )
+
+    @app.post("/dataset/wizard", response_model=DatasetWizardResponse)
+    def dataset_wizard_endpoint(req: DatasetWizardRequest):
+        suggested = dataset_suggest_endpoint(
+            DatasetSuggestRequest(
+                id=req.id,
+                domain=req.domain,
+                instruction=req.instruction,
+                contract=req.contract,
+                plan=req.plan,
+                expected_decision=req.expected_decision,
+                expected_rationale=req.expected_rationale,
+                notes=req.notes,
+                policy_backend=req.policy_backend,
+            )
+        )
+        validate_result = dataset_validate_endpoint(DatasetValidateRequest(case=suggested.case))
+        rendered = dataset_render_endpoint(
+            DatasetRenderRequest(case=suggested.case, format=req.format)
+        )
+        return DatasetWizardResponse(
+            ok=validate_result.ok,
+            case_id=validate_result.case_id,
+            case=suggested.case,
+            rendered=rendered,
         )
 
     @app.post("/suggest_effects", response_model=SuggestEffectsResponse)
