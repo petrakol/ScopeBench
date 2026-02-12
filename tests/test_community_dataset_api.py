@@ -4,6 +4,7 @@ from scopebench.server.api import (
     DatasetSuggestRequest,
     DatasetValidateRequest,
     DatasetRenderRequest,
+    DatasetWizardRequest,
     create_app,
 )
 
@@ -20,6 +21,7 @@ def test_dataset_validate_and_suggest_endpoints():
     suggest_endpoint = _endpoint(app, "/dataset/suggest")
     validate_endpoint = _endpoint(app, "/dataset/validate")
     render_endpoint = _endpoint(app, "/dataset/render")
+    wizard_endpoint = _endpoint(app, "/dataset/wizard")
 
     contract = {"goal": "Fix flaky CI test", "preset": "team"}
     plan = {
@@ -57,3 +59,18 @@ def test_dataset_validate_and_suggest_endpoints():
     rendered_yaml = render_endpoint(DatasetRenderRequest(case=case, format="yaml"))
     assert rendered_yaml.filename == "community_case_api_001.yaml"
     assert "id: community_case_api_001" in rendered_yaml.content
+
+    wizarded = wizard_endpoint(DatasetWizardRequest(
+        id="community_case_api_001",
+        domain="engineering",
+        instruction="Fix flaky CI",
+        contract=contract,
+        plan=plan,
+        expected_decision="ALLOW",
+        expected_rationale="Bounded fix with validation.",
+        format="yaml",
+    ))
+    assert wizarded.ok is True
+    assert wizarded.case_id == "community_case_api_001"
+    assert wizarded.rendered.filename == "community_case_api_001.yaml"
+    assert "id: community_case_api_001" in wizarded.rendered.content
