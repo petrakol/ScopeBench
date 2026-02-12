@@ -145,6 +145,10 @@
       .bar-fill { display: block; height: 100%; background: linear-gradient(90deg, #60a5fa, #2563eb); }
       .rate-grid { display: grid; gap: 8px; }
       .rate-card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; }
+      .calibration-kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+      .calibration-kpi { border: 1px solid #dbeafe; background: #eff6ff; border-radius: 8px; padding: 8px; }
+      .calibration-kpi .label { font-size: 12px; color: #334155; }
+      .calibration-kpi .value { font-size: 20px; font-weight: 600; }
       .threshold-table td, .threshold-table th { font-size: 12px; }
       .analytics-stack { display: grid; gap: 12px; }
       .analytics-grid { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -682,6 +686,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
             <button id="calibration-apply-adjustments" class="secondary">Apply adjustments</button>
           </div>
           <div id="calibration-adjust-status" class="muted" style="margin-bottom:8px"></div>
+          <div id="calibration-summary"></div>
           <div class="grid two-col" id="calibration-controls"></div>
           <div class="grid two-col" style="margin-top:10px">
             <div><h4>Per-axis score distributions</h4><div id="calibration-distributions"></div></div>
@@ -739,6 +744,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const calibrationPlanPresetEl = el("calibration-plan-preset");
       const calibrationApplyAdjustmentsEl = el("calibration-apply-adjustments");
       const calibrationAdjustStatusEl = el("calibration-adjust-status");
+      const calibrationSummaryEl = el("calibration-summary");
       const streamingEl = el("streaming");
       const pluginMarketplaceEl = el("plugin-marketplace");
       const pluginMarketplaceTableEl = el("plugin-marketplace-table");
@@ -2244,6 +2250,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
         return `${(100 * Number(value || 0)).toFixed(1)}%`;
       }
 
+      function formatSigned(value, digits = 3) {
+        const num = Number(value || 0);
+        const abs = Math.abs(num).toFixed(digits);
+        return `${num >= 0 ? '+' : '-'}${abs}`;
+      }
+
       async function loadCalibrationDashboard() {
         const dashboard = await fetch('/calibration/dashboard').then((r) => r.json());
         calibrationDashboardState = dashboard;
@@ -2331,20 +2343,40 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const rates = entry.calibration?.rates || {};
         const telemetryDelta = entry.calibration?.telemetry_delta || {};
         const thresholdBlock = entry.calibration?.preset_thresholds || {};
+        const stats = entry.stats || {};
+        const triggeredStats = stats.triggered || {};
+        const falseAlarmStats = stats.false_alarms || {};
+        const overrideStats = stats.overrides || {};
+        const failuresStats = stats.failures || {};
+
+        const totalTriggered = Object.values(triggeredStats).reduce((acc, val) => acc + Number(val || 0), 0);
+        const totalFalseAlarms = Object.values(falseAlarmStats).reduce((acc, val) => acc + Number(val || 0), 0);
+        const totalOverrides = Object.values(overrideStats).reduce((acc, val) => acc + Number(val || 0), 0);
+        const totalFailures = Object.values(failuresStats).reduce((acc, val) => acc + Number(val || 0), 0);
+        const netPressure = totalTriggered ? ((totalFailures - totalFalseAlarms - totalOverrides) / totalTriggered) : 0;
+        calibrationSummaryEl.innerHTML = `<div class="calibration-kpi-grid">
+          <div class="calibration-kpi"><div class="label">Runs</div><div class="value">${Number(entry.runs || 0)}</div></div>
+          <div class="calibration-kpi"><div class="label">Triggered alerts</div><div class="value">${totalTriggered}</div></div>
+          <div class="calibration-kpi"><div class="label">False alarms / overrides</div><div class="value">${formatPct(totalTriggered ? (totalFalseAlarms / totalTriggered) : 0)} / ${formatPct(totalTriggered ? (totalOverrides / totalTriggered) : 0)}</div></div>
+          <div class="calibration-kpi"><div class="label">Net pressure</div><div class="value">${formatSigned(netPressure, 2)}</div></div>
+        </div>`;
 
         const distRows = Object.entries(dist).map(([axis, item]) => {
           const bars = (item.histogram || []).map((count) => Number(count || 0));
           const maxBin = Math.max(1, ...bars);
           const binsHtml = bars.map((count) => `<span class="bar-fill" style="width:${(100 * count) / maxBin}%"></span>`);
-          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">n=${item.samples || 0} • p50=${Number(item.quantiles?.p50 || 0).toFixed(2)} • p90=${Number(item.quantiles?.p90 || 0).toFixed(2)}</span></div><div class="bar-chart">${binsHtml.map((fill, idx) => `<div class="bar-row"><span class="muted">${(idx / 10).toFixed(1)}-${((idx + 1) / 10).toFixed(1)}</span><span class="bar-track">${fill}</span><span>${bars[idx]}</span></div>`).join('')}</div></div>`;
+          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">n=${item.samples || 0} • p50=${Number(item.quantiles?.p50 || 0).toFixed(2)} • p90=${Number(item.quantiles?.p90 || 0).toFixed(2)} • p95=${Number(item.quantiles?.p95 || 0).toFixed(2)}</span></div><div class="bar-chart">${binsHtml.map((fill, idx) => `<div class="bar-row"><span class="muted">${(idx / 10).toFixed(1)}-${((idx + 1) / 10).toFixed(1)}</span><span class="bar-track">${fill}</span><span>${bars[idx]}</span></div>`).join('')}</div></div>`;
         });
-        calibrationDistributionsEl.innerHTML = distRows.join('') || '<p class="muted">No data</p>';
+        calibrationDistributionsEl.innerHTML = distRows.length ? distRows.join('') : '<p class="muted">No data</p>';
 
         const rateRows = Object.entries(rates).map(([axis, item]) => {
           const tele = telemetryDelta[axis] || {};
-          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">scaleΔ=${Number(tele.axis_scale_delta || 0).toFixed(3)}, thresholdΔ=${Number(tele.threshold_factor_delta || 0).toFixed(3)}</span></div><div class="bar-row"><span>false alarm</span><span class="bar-track"><span class="bar-fill" style="width:${100 * Number(item.false_alarm_rate || 0)}%"></span></span><span>${formatPct(item.false_alarm_rate)}</span></div><div class="bar-row"><span>override</span><span class="bar-track"><span class="bar-fill" style="width:${100 * Number(item.override_rate || 0)}%"></span></span><span>${formatPct(item.override_rate)}</span></div></div>`;
+          const falseAlarmRate = Number(item.false_alarm_rate || 0);
+          const overrideRate = Number(item.override_rate || 0);
+          const combinedRate = clamp01(falseAlarmRate + overrideRate);
+          return `<div class="rate-card"><div class="inline-label"><strong>${axis}</strong><span class="muted">scaleΔ=${formatSigned(tele.axis_scale_delta || 0)} • thresholdΔ=${formatSigned(tele.threshold_factor_delta || 0)} • bias=${formatSigned(tele.axis_bias || 0)}</span></div><div class="bar-row"><span>false alarm</span><span class="bar-track"><span class="bar-fill" style="width:${100 * falseAlarmRate}%"></span></span><span>${formatPct(falseAlarmRate)}</span></div><div class="bar-row"><span>override</span><span class="bar-track"><span class="bar-fill" style="width:${100 * overrideRate}%"></span></span><span>${formatPct(overrideRate)}</span></div><div class="bar-row"><span>combined</span><span class="bar-track"><span class="bar-fill" style="width:${100 * combinedRate}%"></span></span><span>${formatPct(combinedRate)}</span></div></div>`;
         });
-        calibrationRatesEl.innerHTML = `<div class="rate-grid">${rateRows.join('')}</div>` || '<p class="muted">No data</p>';
+        calibrationRatesEl.innerHTML = rateRows.length ? `<div class="rate-grid">${rateRows.join('')}</div>` : '<p class="muted">No data</p>';
 
         const preset = calibrationPlanPresetEl.value || 'team';
         const base = thresholdBlock.base?.[preset] || {};
@@ -2354,19 +2386,22 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const thresholdRows = axes.map((axis) => {
           const adjustedFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
           const adjustedThreshold = clamp01(Number(calibrated[axis] || base[axis] || 0) * adjustedFactor);
-          return `<tr><td>${axis}</td><td>${Number(base[axis] || 0).toFixed(3)}</td><td>${Number(calibrated[axis] || 0).toFixed(3)}</td><td>${adjustedThreshold.toFixed(3)}</td></tr>`;
+          const calibratedValue = Number(calibrated[axis] || 0);
+          const thresholdDelta = adjustedThreshold - calibratedValue;
+          return `<tr><td>${axis}</td><td>${Number(base[axis] || 0).toFixed(3)}</td><td>${calibratedValue.toFixed(3)}</td><td>${adjustedThreshold.toFixed(3)}</td><td>${formatSigned(thresholdDelta, 3)}</td></tr>`;
         });
-        calibrationThresholdsEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Base</th><th>Calibrated</th><th>Adjusted</th></tr></thead><tbody>${thresholdRows.join('')}</tbody></table>`;
+        calibrationThresholdsEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Base</th><th>Calibrated</th><th>Adjusted</th><th>Δ vs calibrated</th></tr></thead><tbody>${thresholdRows.join('')}</tbody></table>`;
 
         const impactRows = axes.map((axis) => {
           const adjustedFactor = 1 + Number(calibrationSelection.axisThresholdFactorDelta[axis] || 0);
           const threshold = clamp01(Number(calibrated[axis] || base[axis] || 0) * adjustedFactor);
           const score = axisSampleScore(entry, axis);
           const pressure = threshold > 0 ? score / threshold : 0;
+          const margin = threshold - score;
           const status = pressure >= 1 ? '⚠ near/over threshold' : '✅ below threshold';
-          return `<tr><td>${axis}</td><td>${score.toFixed(3)}</td><td>${threshold.toFixed(3)}</td><td>${pressure.toFixed(2)}x</td><td>${status}</td></tr>`;
+          return `<tr><td>${axis}</td><td>${score.toFixed(3)}</td><td>${threshold.toFixed(3)}</td><td>${pressure.toFixed(2)}x</td><td class="${margin >= 0 ? 'margin-negative' : 'margin-positive'}">${formatSigned(margin, 3)}</td><td>${status}</td></tr>`;
         });
-        calibrationPlanImpactEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Sample score</th><th>Adjusted threshold</th><th>Pressure</th><th>Status</th></tr></thead><tbody>${impactRows.join('')}</tbody></table><p class="muted">Sample score is driven by latest evaluation aggregate when available, otherwise p50 telemetry.</p>`;
+        calibrationPlanImpactEl.innerHTML = `<table class="threshold-table"><thead><tr><th>Axis</th><th>Sample score</th><th>Adjusted threshold</th><th>Pressure</th><th>Margin</th><th>Status</th></tr></thead><tbody>${impactRows.join('')}</tbody></table><p class="muted">Sample score is driven by latest evaluation aggregate when available, otherwise p50 telemetry.</p>`;
 
         renderCalibrationControls(entry);
       }
