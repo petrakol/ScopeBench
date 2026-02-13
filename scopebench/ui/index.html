@@ -2332,9 +2332,63 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           (recommendation.reallocation || []).forEach((item) => {
             reallocationTargets[item.agent_id] = asNumber(item.target_budget);
           });
-          negotiationEdits[key] = { transferApprovals, reallocationTargets };
+          negotiationEdits[key] = { transferApprovals, reallocationTargets, manualTargets: {} };
         }
         return negotiationEdits[key];
+      }
+
+      function syncReallocationTargetsWithApprovals(recommendation, edit) {
+        if (!recommendation || !edit) return;
+        const budgetKey = String(recommendation.budget_key || "");
+        const baselineTargets = {};
+        (recommendation.reallocation || []).forEach((item) => {
+          baselineTargets[item.agent_id] = asNumber(item.target_budget);
+        });
+
+        const currentBudgetForAgent = (agentId) => {
+          const source = sessionState.agents.find((agent) => agent.agent_id === agentId);
+          return asNumber(source?.budgets?.[budgetKey]);
+        };
+
+        const reverseTransfer = (transfer) => {
+          const amount = asNumber(transfer.amount);
+          if (!amount) return;
+          const fromAgent = String(transfer.from_agent || "");
+          const toAgent = String(transfer.to_agent || "");
+          if (fromAgent) {
+            if (!Object.prototype.hasOwnProperty.call(baselineTargets, fromAgent)) baselineTargets[fromAgent] = currentBudgetForAgent(fromAgent);
+            baselineTargets[fromAgent] += amount;
+          }
+          if (toAgent) {
+            if (!Object.prototype.hasOwnProperty.call(baselineTargets, toAgent)) baselineTargets[toAgent] = currentBudgetForAgent(toAgent);
+            baselineTargets[toAgent] -= amount;
+          }
+        };
+
+        (recommendation.transfers || []).forEach(reverseTransfer);
+
+        const computedTargets = { ...baselineTargets };
+        (recommendation.transfers || []).forEach((transfer, transferIndex) => {
+          const approved = Boolean(edit.transferApprovals[String(transferIndex)]);
+          if (!approved) return;
+          const amount = asNumber(transfer.amount);
+          if (!amount) return;
+          const fromAgent = String(transfer.from_agent || "");
+          const toAgent = String(transfer.to_agent || "");
+          if (fromAgent) {
+            if (!Object.prototype.hasOwnProperty.call(computedTargets, fromAgent)) computedTargets[fromAgent] = currentBudgetForAgent(fromAgent);
+            computedTargets[fromAgent] -= amount;
+          }
+          if (toAgent) {
+            if (!Object.prototype.hasOwnProperty.call(computedTargets, toAgent)) computedTargets[toAgent] = currentBudgetForAgent(toAgent);
+            computedTargets[toAgent] += amount;
+          }
+        });
+
+        Object.entries(computedTargets).forEach(([agentId, targetBudget]) => {
+          if (edit.manualTargets?.[agentId]) return;
+          edit.reallocationTargets[agentId] = Math.max(0, asNumber(targetBudget));
+        });
       }
 
       function negotiatedRecommendationView(index, recommendation) {
@@ -2424,6 +2478,7 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           if (!rec) return;
           const edit = getNegotiationEdit(Number(recIndex), rec);
           edit.transferApprovals[transferIndex] = Boolean(ev.target.checked);
+          syncReallocationTargetsWithApprovals(rec, edit);
           renderSessionNegotiation(negotiation);
         }));
 
@@ -2435,6 +2490,8 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           const rec = (negotiation.recommendations || [])[Number(recIndex)];
           if (!rec) return;
           const edit = getNegotiationEdit(Number(recIndex), rec);
+          edit.manualTargets = edit.manualTargets || {};
+          edit.manualTargets[agentId] = true;
           edit.reallocationTargets[agentId] = asNumber(ev.target.value);
           renderSessionNegotiation(negotiation);
         }));
@@ -2480,6 +2537,7 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           (recommendation.transfers || []).forEach((_, transferIndex) => {
             edit.transferApprovals[String(transferIndex)] = Boolean(approved);
           });
+          syncReallocationTargetsWithApprovals(recommendation, edit);
         });
         setNegotiationApplyStatus(approved ? "Approved all proposed transfers." : "Cleared all transfer approvals.", "muted");
         renderSessionNegotiation(latestSessionPayload.negotiation);
@@ -2493,7 +2551,8 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         (latestSessionPayload.negotiation.recommendations || []).forEach((recommendation, index) => {
           negotiationEdits[String(index)] = {
             transferApprovals: Object.fromEntries((recommendation.transfers || []).map((_, transferIndex) => [String(transferIndex), true])),
-            reallocationTargets: Object.fromEntries((recommendation.reallocation || []).map((item) => [item.agent_id, asNumber(item.target_budget)]))
+            reallocationTargets: Object.fromEntries((recommendation.reallocation || []).map((item) => [item.agent_id, asNumber(item.target_budget)])),
+            manualTargets: {}
           };
         });
         setNegotiationApplyStatus("Reset transfer approvals and reallocation targets to server recommendations.", "muted");
