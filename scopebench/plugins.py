@@ -356,6 +356,17 @@ class PluginManager:
     def bundles_payload(self) -> List[Dict[str, Any]]:
         payload: List[Dict[str, Any]] = []
         for bundle in self.bundles:
+            tools_payload = {
+                name: {
+                    "tool": info.tool,
+                    "category": info.category,
+                    "priors": dict(info.priors),
+                    "domains": list(info.domains),
+                    "risk_class": info.risk_class,
+                    "default_effects": dict(info.default_effects),
+                }
+                for name, info in bundle.tools.items()
+            }
             payload.append(
                 {
                     "name": bundle.name,
@@ -365,6 +376,8 @@ class PluginManager:
                     "signed": bundle.signed,
                     "signature_valid": bundle.signature_valid,
                     "signature_error": bundle.signature_error,
+                    "policy_rules": [dict(rule) for rule in bundle.policy_rules],
+                    "tools": tools_payload,
                     "tools_count": len(bundle.tools),
                     "cases_count": len(bundle.cases),
                     "policy_rules_count": len(bundle.policy_rules),
