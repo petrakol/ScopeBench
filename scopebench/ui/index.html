@@ -249,6 +249,28 @@
       .learn-link:hover {
         background: #eff6ff;
       }
+      .patch-suggestion-list {
+        display: grid;
+        gap: 8px;
+      }
+      .patch-suggestion-card {
+        border: 1px solid #dbeafe;
+        border-radius: 8px;
+        background: #f8fbff;
+        padding: 10px;
+      }
+      .patch-suggestion-card h4 {
+        margin: 0 0 6px;
+      }
+      .patch-op-chip {
+        display: inline-block;
+        border-radius: 999px;
+        background: #dbeafe;
+        color: #1d4ed8;
+        font-size: 11px;
+        padding: 2px 8px;
+        margin-right: 6px;
+      }
       @media (max-width: 900px) {
         .two-col, .analytics-grid { grid-template-columns: 1fr; }
       }
@@ -366,6 +388,15 @@
           <div id="decision"></div>
           <pre id="result"></pre>
         </div>
+      </section>
+
+      <section class="card" style="margin-top: 16px">
+        <h3>Interactive plan patch suggestions</h3>
+        <p class="muted">When policy returns ASK or DENY, apply suggested plan fixes directly into the editor.</p>
+        <div class="controls" style="margin-bottom: 8px">
+          <button id="apply-all-patches" class="secondary">Apply all suggestions</button>
+        </div>
+        <div id="patch-suggestions" class="patch-suggestion-list"></div>
       </section>
 
       <section class="grid two-col" style="margin-top: 16px">
@@ -803,6 +834,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const rationaleTableEl = el("rationale-table");
       const contribTableEl = el("contrib-table");
       const whatIfEditorsEl = el("whatif-editors");
+      const patchSuggestionsEl = el("patch-suggestions");
+      const applyAllPatchesEl = el("apply-all-patches");
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
       const calibrationRawEl = el("calibration-raw");
@@ -893,6 +926,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         generate: el("dataset-step-generate"),
       };
       const suggestEffectsEl = el("suggest-effects");
+      let latestPatchSuggestions = [];
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
         ["legal", "legal_exposure"],
@@ -1268,6 +1302,160 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       function clone(value) {
         return JSON.parse(JSON.stringify(value));
+      }
+
+      function ensureUniqueStepId(steps, candidateId) {
+        const existing = new Set((steps || []).map((step) => String(step.id || "")).filter(Boolean));
+        if (!existing.has(candidateId)) return candidateId;
+        let suffix = 2;
+        while (existing.has(`${candidateId}_${suffix}`)) suffix += 1;
+        return `${candidateId}_${suffix}`;
+      }
+
+      function normalizePlanPatchSuggestions(suggestions) {
+        if (!Array.isArray(suggestions)) return [];
+        return suggestions.filter((item) => item && typeof item === "object" && item.op);
+      }
+
+      function classifyPatchSuggestion(patch) {
+        const op = String(patch.op || "").toLowerCase();
+        if (op === "split_plan") return "Split large step sequence";
+        if (op === "replace") return "Reduce tool scope";
+        if (op === "insert_before" || op === "insert_after") {
+          const text = String(patch.step?.description || "").toLowerCase();
+          if (text.includes("approval")) return "Insert approval gate";
+          if (text.includes("test") || text.includes("validation") || text.includes("rollback") || text.includes("dry-run")) {
+            return "Insert validation step";
+          }
+          return "Insert safety step";
+        }
+        return "Patch suggestion";
+      }
+
+      function describePatchSuggestion(patch) {
+        const op = String(patch.op || "").toLowerCase();
+        if (op === "insert_before" || op === "insert_after") {
+          const relative = op === "insert_before" ? "before" : "after";
+          return `Insert step \"${patch.step?.id || "new_step"}\" ${relative} \"${patch.target_step_id || "target"}\".`;
+        }
+        if (op === "replace") {
+          return `Replace step \"${patch.target_step_id || "target"}\" with \"${patch.step?.id || "replacement"}\" to lower risk.`;
+        }
+        if (op === "split_plan") {
+          const chunks = (patch.chunks || []).map((chunk) => `${chunk.name || "phase"}: ${(chunk.step_ids || []).join(", ") || "(none)"}`).join(" | ");
+          return `Split the plan after \"${patch.after_step_id || "step"}\" into phased checkpoints. ${chunks}`;
+        }
+        return JSON.stringify(patch);
+      }
+
+      function applyPatchToPlan(plan, patch) {
+        const next = clone(plan || {});
+        next.steps = Array.isArray(next.steps) ? next.steps : [];
+        const steps = next.steps;
+        const op = String(patch.op || "").toLowerCase();
+        if (op === "insert_before" || op === "insert_after") {
+          const targetIndex = steps.findIndex((step) => step.id === patch.target_step_id);
+          if (targetIndex < 0 || !patch.step) return { plan: next, applied: false, reason: "Target step not found" };
+          const newStep = clone(patch.step);
+          newStep.id = ensureUniqueStepId(steps, String(newStep.id || "suggested_step"));
+          const insertIndex = op === "insert_before" ? targetIndex : targetIndex + 1;
+          steps.splice(insertIndex, 0, newStep);
+          return { plan: next, applied: true };
+        }
+        if (op === "replace") {
+          const targetIndex = steps.findIndex((step) => step.id === patch.target_step_id);
+          if (targetIndex < 0 || !patch.step) return { plan: next, applied: false, reason: "Target step not found" };
+          const oldId = steps[targetIndex].id;
+          const replacement = clone(patch.step);
+          replacement.id = ensureUniqueStepId(steps.filter((_, idx) => idx !== targetIndex), String(replacement.id || oldId || "replacement_step"));
+          steps[targetIndex] = replacement;
+          steps.forEach((step) => {
+            if (!Array.isArray(step.depends_on)) return;
+            step.depends_on = step.depends_on.map((dep) => (dep === oldId ? replacement.id : dep));
+          });
+          return { plan: next, applied: true };
+        }
+        if (op === "split_plan") {
+          const splitIndex = steps.findIndex((step) => step.id === patch.after_step_id);
+          if (splitIndex < 0) return { plan: next, applied: false, reason: "Split anchor step not found" };
+          const checkpointId = ensureUniqueStepId(steps, "phase_checkpoint");
+          const checkpoint = {
+            id: checkpointId,
+            description: "Validation checkpoint between execution phases.",
+            tool: "analysis",
+            depends_on: [patch.after_step_id]
+          };
+          steps.splice(splitIndex + 1, 0, checkpoint);
+          return { plan: next, applied: true };
+        }
+        return { plan: next, applied: false, reason: `Unsupported op: ${patch.op}` };
+      }
+
+      function applyPatchSuggestionByIndex(index) {
+        const patch = latestPatchSuggestions[index];
+        if (!patch) return;
+        const currentPlan = parsePlanJson(planEl.value);
+        const applied = applyPatchToPlan(currentPlan, patch);
+        if (!applied.applied) {
+          resultEl.textContent = `Patch suggestion could not be applied: ${applied.reason || "unknown error"}.`;
+          return;
+        }
+        planEl.value = JSON.stringify(applied.plan, null, 2);
+        renderDag(applied.plan);
+        renderWhatIfEditors(applied.plan);
+        scheduleAutoEvaluate();
+        resultEl.textContent = `Applied plan patch suggestion: ${classifyPatchSuggestion(patch)}.`;
+      }
+
+      function applyAllPatchSuggestions() {
+        const startPlan = parsePlanJson(planEl.value);
+        let workingPlan = clone(startPlan);
+        let appliedCount = 0;
+        latestPatchSuggestions.forEach((patch) => {
+          const result = applyPatchToPlan(workingPlan, patch);
+          if (result.applied) {
+            workingPlan = result.plan;
+            appliedCount += 1;
+          }
+        });
+        if (!appliedCount) {
+          resultEl.textContent = "No patch suggestions were applied.";
+          return;
+        }
+        planEl.value = JSON.stringify(workingPlan, null, 2);
+        renderDag(workingPlan);
+        renderWhatIfEditors(workingPlan);
+        scheduleAutoEvaluate();
+        resultEl.textContent = `Applied ${appliedCount} patch suggestion(s) to the plan editor.`;
+      }
+
+      function renderPatchSuggestions(decision, suggestions) {
+        latestPatchSuggestions = normalizePlanPatchSuggestions(suggestions);
+        patchSuggestionsEl.innerHTML = "";
+        const shouldShow = ["ASK", "DENY"].includes(String(decision || "").toUpperCase());
+        applyAllPatchesEl.disabled = !(shouldShow && latestPatchSuggestions.length);
+        if (!shouldShow) {
+          patchSuggestionsEl.innerHTML = '<div class="muted">No remediation needed: decision is ALLOW.</div>';
+          return;
+        }
+        if (!latestPatchSuggestions.length) {
+          patchSuggestionsEl.innerHTML = '<div class="muted">Policy flagged ASK/DENY, but no structured patch suggestions were returned.</div>';
+          return;
+        }
+        latestPatchSuggestions.forEach((patch, index) => {
+          const card = document.createElement("div");
+          card.className = "patch-suggestion-card";
+          card.innerHTML = `
+            <h4><span class="patch-op-chip">${escapeHtml(String(patch.op || "patch"))}</span>${escapeHtml(classifyPatchSuggestion(patch))}</h4>
+            <p>${escapeHtml(describePatchSuggestion(patch))}</p>
+            <p class="muted">${escapeHtml(patch.rationale || "No rationale provided by API.")}</p>
+            <div class="controls"><button data-apply-patch-index="${index}">Apply patch</button></div>
+          `;
+          patchSuggestionsEl.appendChild(card);
+        });
+        patchSuggestionsEl.querySelectorAll("button[data-apply-patch-index]").forEach((button) => {
+          button.addEventListener("click", () => applyPatchSuggestionByIndex(Number(button.dataset.applyPatchIndex)));
+        });
       }
 
       function applySessionGlobalBudgets(globalBudgets = {}) {
@@ -2313,6 +2501,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const payload = await res.json();
         decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
         resultEl.textContent = JSON.stringify({ trace_id: payload.trace_id, span_id: payload.span_id, summary: payload.summary, next_steps: payload.next_steps, telemetry: payload.telemetry }, null, 2);
+        renderPatchSuggestions(payload.decision, payload.plan_patch_suggestion || []);
         latestEvaluation = { aggregate: payload.aggregate || {}, steps: payload.steps || [], plan };
         renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
         renderEffectLabComparison();
@@ -2966,6 +3155,9 @@ ${body}`;
       suggestEffectsEl.addEventListener("click", () => suggestEffectsForPlan().catch((err) => {
         resultEl.textContent = `Suggest effects error: ${err.message}`;
       }));
+      applyAllPatchesEl.addEventListener("click", () => {
+        applyAllPatchSuggestions();
+      });
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
       }));
