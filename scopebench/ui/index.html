@@ -2782,7 +2782,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
           const usageLabel = `d30:${usage.downloads_30d || 0} · active:${usage.active_installs || 0} · i7:${usage.invocations_7d || 0}`;
           const trust = row.trust || {};
           const scan = trust.security_scan || {};
-          const trustLabel = `${trust.average_rating ?? "n/a"}★ (${trust.review_count || 0}) · scan:${scan.status || "unknown"}`;
+          const proportionality = trust.proportionality || {};
+          const scanLabel = scan.status || "unknown";
+          const warningCount = Array.isArray(proportionality.warnings) ? proportionality.warnings.length : 0;
+          const trustLabel = `${trust.average_rating ?? "n/a"}★ (${trust.review_count || 0}) · scan:${scanLabel} · prop:${proportionality.status || "unknown"}${warningCount ? ` (${warningCount}⚠)` : ""}`;
+          const warningTitle = warningCount ? ` title="${proportionality.warnings.join(" | ")}"` : "";
+          const statusBadge = warningCount ? `<span class="muted"${warningTitle}>⚠️ ${warningCount} proportionality warning${warningCount > 1 ? "s" : ""}</span>` : "";
           return `<tr>
             <td><code>${row.plugin_bundle || "n/a"}</code></td>
             <td>${publisher}</td>
@@ -2793,7 +2798,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
             <td>${usageLabel}</td>
             <td>${trustLabel}</td>
             <td>${signature}</td>
-            <td>${status}</td>
+            <td>${status} ${statusBadge}</td>
             <td>
               <button class="secondary plugin-install-market" data-plugin-bundle="${row.plugin_bundle || ""}">Install</button>
               <button class="secondary plugin-view-market" data-plugin-bundle="${row.plugin_bundle || ""}">Details</button>

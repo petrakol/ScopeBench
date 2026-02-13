@@ -520,8 +520,18 @@ def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
     assert "usage" in robotics
     assert "trust" in robotics
     assert "security_scan" in robotics["trust"]
-    assert "trust_summary" in marketplace
+    assert "proportionality" in robotics["trust"]
+    assert robotics["trust"]["review_count"] >= 1
 
+    public_sector = next(
+        item
+        for item in marketplace["plugins"]
+        if isinstance(item, dict) and item.get("plugin_bundle") == "gov-service-ops"
+    )
+    proportionality = public_sector["trust"]["proportionality"]
+    assert proportionality["status"] == "warn"
+    assert proportionality["warnings"]
+    assert "trust_summary" in marketplace
 
 
 def test_plugin_marketplace_review_and_security_scan(tmp_path: Path, monkeypatch) -> None:
