@@ -365,6 +365,11 @@ class PluginManager:
                     "signed": bundle.signed,
                     "signature_valid": bundle.signature_valid,
                     "signature_error": bundle.signature_error,
+                    "tools_count": len(bundle.tools),
+                    "cases_count": len(bundle.cases),
+                    "policy_rules_count": len(bundle.policy_rules),
+                    "effects_mappings_count": len(bundle.effects_mappings),
+                    "scoring_axes_count": len(bundle.scoring_axes),
                 }
             )
         return payload

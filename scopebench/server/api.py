@@ -1968,6 +1968,44 @@ def create_app(
     def _sync_plugin_dirs_env() -> None:
         os.environ["SCOPEBENCH_PLUGIN_DIRS"] = os.pathsep.join(runtime_plugin_dirs)
 
+    plugin_reviews: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _plugin_key(publisher: Any, bundle_name: Any) -> str:
+        return f"{str(publisher or 'community').strip()}::{str(bundle_name or '').strip()}"
+
+    def _scan_bundle_security(bundle: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(bundle, dict):
+            return {
+                "status": "missing",
+                "issues": ["Bundle not installed or not discoverable in runtime plugin directories."],
+                "recommendations": ["Install bundle locally before running security scan."],
+            }
+        signed = bool(bundle.get("signed"))
+        signature_valid = bool(bundle.get("signature_valid"))
+        policy_rules_count = int(bundle.get("policy_rules_count") or 0)
+        issues: List[str] = []
+        if policy_rules_count and not signed:
+            issues.append("Bundle defines policy_rules but is unsigned.")
+        if policy_rules_count and signed and not signature_valid:
+            issues.append("Bundle signature verification failed for policy_rules.")
+        if signed and not signature_valid and bundle.get("signature_error"):
+            issues.append(f"signature_error: {bundle.get('signature_error')}")
+        status = "pass" if not issues else "fail"
+        recommendations: List[str] = []
+        if issues:
+            recommendations.append("Re-sign bundle with a trusted key and verify SCOPEBENCH_PLUGIN_KEYS_JSON configuration.")
+            recommendations.append("Avoid loading policy_rules from unsigned or unverifiable bundles.")
+        else:
+            recommendations.append("Signed policy rules verified successfully.")
+        return {
+            "status": status,
+            "signed": signed,
+            "signature_valid": signature_valid,
+            "policy_rules_count": policy_rules_count,
+            "issues": issues,
+            "recommendations": recommendations,
+        }
+
     @app.get("/health")
     def health():
         return {"ok": True}
@@ -2010,8 +2048,11 @@ def create_app(
             f"{item.get('publisher')}::{item.get('name')}": item for item in plugin_manager.bundles_payload()
         }
         enriched_rows = []
+        trust_totals = {"reviews": 0, "ratings": 0.0}
         for row in rows:
-            key = f"{row.get('publisher', row.get('maintainer', 'community'))}::{row.get('plugin_bundle')}"
+            bundle_name = row.get("plugin_bundle")
+            publisher = row.get("publisher", row.get("maintainer", "community"))
+            key = _plugin_key(publisher, bundle_name)
             installed = installed_by_bundle.get(key)
             installed_tools = (
                 installed.get("tools")
@@ -2033,6 +2074,17 @@ def create_app(
                 if isinstance(listed_risk_classes, list) and listed_risk_classes
                 else discovered_risk_classes
             )
+            usage = row.get("usage") if isinstance(row.get("usage"), dict) else {}
+            reviews = plugin_reviews.get(key, [])
+            review_count = len(reviews)
+            avg_rating = (
+                round(sum(float(item.get("rating", 0)) for item in reviews) / review_count, 2)
+                if review_count
+                else None
+            )
+            trust_totals["reviews"] += review_count
+            trust_totals["ratings"] += sum(float(item.get("rating", 0)) for item in reviews)
+            security_scan = _scan_bundle_security(installed)
             enriched_rows.append(
                 {
                     **row,
@@ -2047,14 +2099,84 @@ def create_app(
                     ),
                     "installed": installed is not None,
                     "installed_bundle": installed,
+                    "usage": {
+                        "downloads_30d": int(usage.get("downloads_30d") or 0),
+                        "active_installs": int(usage.get("active_installs") or 0),
+                        "invocations_7d": int(usage.get("invocations_7d") or 0),
+                    },
+                    "trust": {
+                        "average_rating": avg_rating,
+                        "review_count": review_count,
+                        "recent_reviews": reviews[-5:],
+                        "security_scan": security_scan,
+                    },
                 }
             )
+        trust_summary = {
+            "total_reviews": trust_totals["reviews"],
+            "average_rating": round(trust_totals["ratings"] / trust_totals["reviews"], 2) if trust_totals["reviews"] else None,
+            "scanned_plugins": len(enriched_rows),
+            "failed_scans": sum(1 for item in enriched_rows if item.get("trust", {}).get("security_scan", {}).get("status") == "fail"),
+        }
         return {
             "plugins": enriched_rows,
             "count": len(enriched_rows),
             "source": str(marketplace_path),
             "version": payload.get("version"),
             "updated_utc": payload.get("updated_utc"),
+            "trust_summary": trust_summary,
+        }
+
+    @app.post("/plugin_marketplace/review")
+    def plugin_marketplace_review_endpoint(payload: Dict[str, Any]):
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "payload must be an object"}
+        bundle_name = str(payload.get("plugin_bundle") or "").strip()
+        publisher = str(payload.get("publisher") or "community").strip()
+        rating = payload.get("rating")
+        if not bundle_name:
+            return {"ok": False, "error": "plugin_bundle is required"}
+        if not isinstance(rating, (int, float)) or not (1 <= float(rating) <= 5):
+            return {"ok": False, "error": "rating must be between 1 and 5"}
+        review = {
+            "reviewer": str(payload.get("reviewer") or "anonymous").strip() or "anonymous",
+            "rating": float(rating),
+            "comment": str(payload.get("comment") or "").strip(),
+            "created_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        key = _plugin_key(publisher, bundle_name)
+        plugin_reviews.setdefault(key, []).append(review)
+        reviews = plugin_reviews[key]
+        avg_rating = round(sum(item["rating"] for item in reviews) / len(reviews), 2)
+        return {
+            "ok": True,
+            "plugin_bundle": bundle_name,
+            "publisher": publisher,
+            "trust": {
+                "average_rating": avg_rating,
+                "review_count": len(reviews),
+                "recent_reviews": reviews[-5:],
+            },
+        }
+
+    @app.post("/plugins/security_scan")
+    def plugins_security_scan_endpoint(payload: Dict[str, Any]):
+        if not isinstance(payload, dict):
+            return {"ok": False, "error": "payload must be an object"}
+        bundle_name = str(payload.get("plugin_bundle") or "").strip()
+        publisher = str(payload.get("publisher") or "community").strip()
+        if not bundle_name:
+            return {"ok": False, "error": "plugin_bundle is required"}
+        installed_by_bundle = {
+            f"{item.get('publisher')}::{item.get('name')}": item for item in plugin_manager.bundles_payload()
+        }
+        bundle = installed_by_bundle.get(_plugin_key(publisher, bundle_name))
+        scan = _scan_bundle_security(bundle)
+        return {
+            "ok": scan.get("status") != "missing",
+            "plugin_bundle": bundle_name,
+            "publisher": publisher,
+            "security_scan": scan,
         }
 
     @app.get("/plugins/schema")

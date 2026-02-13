@@ -285,6 +285,7 @@
       .plugin-filters label { font-size: 13px; color: #1f2937; }
       .plugin-filters select { width: 100%; margin-top: 4px; }
       .plugin-details { min-height: 180px; }
+      .plugin-review-controls { display: grid; grid-template-columns: 1fr 80px 1fr auto; gap: 8px; margin: 10px 0; }
       th, td { border-bottom: 1px solid #e5e7eb; padding: 6px; text-align: left; vertical-align: top; }
       @media (max-width: 900px) { .two-col, .three-col, .field-grid, .ledger-grid, .case-kpis { grid-template-columns: 1fr; } }
     </style>
@@ -484,7 +485,7 @@
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Plugin Marketplace</h3>
-          <p class="muted">Browse domain plugins from the marketplace, including descriptions and risk classes, then inspect install status in one place.</p>
+          <p class="muted">Browse domain plugins with trust signals: community ratings/reviews, usage statistics, and signed-policy security scans.</p>
           <div class="plugin-filters">
             <label>Domain
               <select id="plugin-filter-domain"><option value="all">All domains</option></select>
@@ -505,6 +506,8 @@
                 <th>Description</th>
                 <th>Risk classes</th>
                 <th>Version</th>
+                <th>Usage</th>
+                <th>Trust</th>
                 <th>Signature</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -512,6 +515,12 @@
             </thead>
             <tbody id="plugin-marketplace-table"></tbody>
           </table>
+          <div class="plugin-review-controls">
+            <input id="plugin-review-bundle" placeholder="plugin bundle" />
+            <input id="plugin-review-rating" type="number" min="1" max="5" step="1" value="5" />
+            <input id="plugin-review-comment" placeholder="review comment" />
+            <button id="plugin-submit-review" class="secondary">Submit review</button>
+          </div>
           <pre id="plugin-marketplace"></pre>
         </div>
         <div class="card">
@@ -829,6 +838,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const pluginFilterDomainEl = el("plugin-filter-domain");
       const pluginFilterRiskEl = el("plugin-filter-risk");
       const pluginFilterPublisherEl = el("plugin-filter-publisher");
+      const pluginReviewBundleEl = el("plugin-review-bundle");
+      const pluginReviewRatingEl = el("plugin-review-rating");
+      const pluginReviewCommentEl = el("plugin-review-comment");
       const pluginWizardDomainEl = el("plugin-wizard-domain");
       const pluginWizardPublisherEl = el("plugin-wizard-publisher");
       const pluginWizardNameEl = el("plugin-wizard-name");
@@ -2081,6 +2093,11 @@ Require rollback plan before high-irreversibility actions.</textarea>
           const riskClasses = Array.isArray(row.risk_classes) && row.risk_classes.length ? row.risk_classes.join(", ") : "n/a";
           const description = row.description || row.summary || "n/a";
           const publisher = row.publisher || row.maintainer || "community";
+          const usage = row.usage || {};
+          const usageLabel = `d30:${usage.downloads_30d || 0} · active:${usage.active_installs || 0} · i7:${usage.invocations_7d || 0}`;
+          const trust = row.trust || {};
+          const scan = trust.security_scan || {};
+          const trustLabel = `${trust.average_rating ?? "n/a"}★ (${trust.review_count || 0}) · scan:${scan.status || "unknown"}`;
           return `<tr>
             <td><code>${row.plugin_bundle || "n/a"}</code></td>
             <td>${publisher}</td>
@@ -2088,14 +2105,17 @@ Require rollback plan before high-irreversibility actions.</textarea>
             <td>${description}</td>
             <td>${riskClasses}</td>
             <td>${row.version || "n/a"}</td>
+            <td>${usageLabel}</td>
+            <td>${trustLabel}</td>
             <td>${signature}</td>
             <td>${status}</td>
             <td>
               <button class="secondary plugin-install-market" data-plugin-bundle="${row.plugin_bundle || ""}">Install</button>
               <button class="secondary plugin-view-market" data-plugin-bundle="${row.plugin_bundle || ""}">Details</button>
+              <button class="secondary plugin-scan-market" data-plugin-bundle="${row.plugin_bundle || ""}">Security scan</button>
             </td>
           </tr>`;
-        }).join("") || '<tr><td colspan="9" class="muted">No marketplace plugins match the current filters.</td></tr>';
+        }).join("") || '<tr><td colspan="11" class="muted">No marketplace plugins match the current filters.</td></tr>';
 
         pluginMarketplaceTableEl.querySelectorAll('.plugin-install-market').forEach((btn) => {
           btn.addEventListener('click', async () => {
@@ -2119,6 +2139,21 @@ Require rollback plan before high-irreversibility actions.</textarea>
             if (!bundleName) return;
             const listing = pluginMarketplaceState.find((item) => item.plugin_bundle === bundleName);
             pluginDetailsEl.textContent = JSON.stringify(listing || {}, null, 2);
+            pluginReviewBundleEl.value = bundleName;
+          });
+        });
+
+        pluginMarketplaceTableEl.querySelectorAll('.plugin-scan-market').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const bundleName = btn.getAttribute('data-plugin-bundle') || '';
+            if (!bundleName) return;
+            const listing = pluginMarketplaceState.find((item) => item.plugin_bundle === bundleName) || {};
+            const response = await fetch('/plugins/security_scan', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ plugin_bundle: bundleName, publisher: listing.publisher || 'community' })
+            }).then((r) => r.json());
+            pluginDetailsEl.textContent = JSON.stringify(response, null, 2);
           });
         });
 
@@ -2152,6 +2187,28 @@ Require rollback plan before high-irreversibility actions.</textarea>
             pluginDetailsEl.textContent = JSON.stringify(selected || {}, null, 2);
           });
         });
+      }
+
+      async function submitPluginReview() {
+        const bundleName = (pluginReviewBundleEl.value || '').trim();
+        if (!bundleName) {
+          pluginManagerEl.textContent = 'Review error: plugin bundle is required.';
+          return;
+        }
+        const listing = pluginMarketplaceState.find((item) => item.plugin_bundle === bundleName) || {};
+        const response = await fetch('/plugin_marketplace/review', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            plugin_bundle: bundleName,
+            publisher: listing.publisher || 'community',
+            rating: Number(pluginReviewRatingEl.value || 0),
+            comment: (pluginReviewCommentEl.value || '').trim(),
+            reviewer: 'workbench-user'
+          })
+        }).then((r) => r.json());
+        pluginDetailsEl.textContent = JSON.stringify(response, null, 2);
+        await loadPlugins();
       }
 
       function setPluginFilterOptions(marketplaceRows) {
@@ -2983,6 +3040,9 @@ ${body}`;
       el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => {
         pluginManagerEl.textContent = `Inspect error: ${err.message}`;
       }));
+      el("plugin-submit-review").addEventListener("click", () => submitPluginReview().catch((err) => {
+        pluginManagerEl.textContent = `Review error: ${err.message}`;
+      }));
       [pluginFilterDomainEl, pluginFilterRiskEl, pluginFilterPublisherEl].forEach((node) => {
         node.addEventListener("change", () => renderPluginTables());
       });
@@ -3014,6 +3074,7 @@ ${body}`;
       el("plugin-install").addEventListener("click", () => installPluginBundle().catch((err) => { pluginManagerEl.textContent = `Install error: ${err.message}`; }));
       el("plugin-uninstall").addEventListener("click", () => uninstallPluginBundle().catch((err) => { pluginManagerEl.textContent = `Uninstall error: ${err.message}`; }));
       el("plugin-inspect").addEventListener("click", () => inspectPluginBundle().catch((err) => { pluginManagerEl.textContent = `Inspect error: ${err.message}`; }));
+      el("plugin-submit-review").addEventListener("click", () => submitPluginReview().catch((err) => { pluginManagerEl.textContent = `Review error: ${err.message}`; }));
       el("add-agent").addEventListener("click", () => {
         const idx = sessionState.agents.length + 1;
         sessionState.agents.push({ agent_id: `agent-${idx}`, budgets: { cost_usd: 25, time_horizon_days: 2, max_tool_calls: 2 }, contract_patch: { goal: `agent-${idx} scoped task` }, plan: { task: `agent-${idx} task`, steps: [{ id: "1", description: "Describe step", tool: knownTools[0] || "analysis" }] } });
