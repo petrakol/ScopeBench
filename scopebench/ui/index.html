@@ -70,6 +70,20 @@
         border-radius: 6px;
         font-size: 12px;
       }
+      .effect-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .effect-kpi {
+        border: 1px solid #dbeafe;
+        background: #eff6ff;
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .effect-kpi .label { font-size: 12px; color: #334155; }
+      .effect-kpi .value { font-size: 20px; font-weight: 600; }
       .inline-label {
         display: flex;
         justify-content: space-between;
@@ -430,16 +444,21 @@
           <div></div>
         </div>
         <h4 style="margin: 10px 0 6px">Category weighting and precedence order</h4>
-        <p class="muted">Drag priority via up/down. Higher-ranked categories receive stronger precedence multipliers in adjusted scoring.</p>
+        <p class="muted">Set relative emphasis across the four effect categories. The table below shows how each weight shifts weighted aggregate risk and final decision in real time.</p>
         <div id="effect-lab-weights" class="slider-grid"></div>
+        <div class="effect-kpi-grid">
+          <div class="effect-kpi"><div class="label">Baseline weighted risk</div><div class="value" id="effect-lab-baseline-risk">0.000</div></div>
+          <div class="effect-kpi"><div class="label">Adjusted weighted risk</div><div class="value" id="effect-lab-adjusted-risk">0.000</div></div>
+          <div class="effect-kpi"><div class="label">Decision shift</div><div class="value" id="effect-lab-decision-shift">ALLOW → ALLOW</div></div>
+        </div>
         <div class="grid two-col" style="margin-top:12px">
           <div>
             <h4 style="margin: 0 0 6px">Baseline vs adjusted summary</h4>
             <pre id="effect-lab-summary"></pre>
           </div>
           <div>
-            <h4 style="margin: 0 0 6px">Per-axis comparison</h4>
-            <table><thead><tr><th>Axis</th><th>Baseline</th><th>Adjusted</th><th>Δ</th></tr></thead><tbody id="effect-lab-table"></tbody></table>
+            <h4 style="margin: 0 0 6px">Category causal trade-offs</h4>
+            <table><thead><tr><th>Category</th><th>Weight</th><th>Baseline score</th><th>Adjusted score</th><th>Contribution Δ</th></tr></thead><tbody id="effect-lab-table"></tbody></table>
           </div>
         </div>
       </section>
@@ -897,6 +916,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const effectLabWeightsEl = el("effect-lab-weights");
       const effectLabSummaryEl = el("effect-lab-summary");
       const effectLabTableEl = el("effect-lab-table");
+      const effectLabBaselineRiskEl = el("effect-lab-baseline-risk");
+      const effectLabAdjustedRiskEl = el("effect-lab-adjusted-risk");
+      const effectLabDecisionShiftEl = el("effect-lab-decision-shift");
       const caseSearchEl = el("case-search");
       const caseDomainFilterEl = el("case-domain-filter");
       const caseDecisionFilterEl = el("case-decision-filter");
@@ -961,7 +983,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let latestEvaluation = null;
       let allCases = [];
       let selectedCaseId = null;
-      let effectLabAxisOrder = EFFECT_AXES.map(([, axis]) => axis);
+      const EFFECT_LAB_CATEGORIES = [
+        ["resource_use", "resource_intensity"],
+        ["legal_risk", "legal_exposure"],
+        ["stakeholder_impact", "stakeholder_radius"],
+        ["irreversibility", "irreversibility"]
+      ];
+      let effectLabAxisOrder = EFFECT_LAB_CATEGORIES.map(([, axis]) => axis);
       let latestSessionPayload = null;
       let negotiationEdits = {};
       let pluginMarketplaceState = [];
@@ -1036,8 +1064,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const reordered = [...effectLabAxisOrder];
         [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
         effectLabAxisOrder = reordered;
-        applySessionGlobalBudgets(defaultSessionState.global_budgets || {});
-      renderEffectLabWeightControls();
+        renderEffectLabWeightControls();
         renderEffectLabComparison();
       }
 
@@ -1046,12 +1073,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
           Array.from(effectLabWeightsEl.querySelectorAll("input[data-axis-weight]")).map((node) => [node.dataset.axisWeight, Number(node.value || 1)])
         );
         effectLabWeightsEl.innerHTML = effectLabAxisOrder.map((axisKey, rankIndex) => {
+          const categoryName = EFFECT_LAB_CATEGORIES.find(([, axis]) => axis === axisKey)?.[0] || axisKey;
           const sliderValue = Number(axisWeightState[axisKey] || 1);
           return `
             <div class="slider-row">
               <div class="effect-row-header">
                 <span class="effect-row-rank" title="precedence rank">${rankIndex + 1}</span>
-                <div class="inline-label"><strong>${axisKey}</strong><span data-axis-value="${axisKey}">${sliderValue.toFixed(2)}x</span></div>
+                <div class="inline-label"><strong>${categoryName}</strong><span data-axis-value="${axisKey}">${sliderValue.toFixed(2)}x</span></div>
                 <div class="axis-order-controls">
                   <button class="secondary" type="button" data-axis-move="up" data-axis-key="${axisKey}" ${rankIndex === 0 ? "disabled" : ""}>↑</button>
                   <button class="secondary" type="button" data-axis-move="down" data-axis-key="${axisKey}" ${rankIndex === effectLabAxisOrder.length - 1 ? "disabled" : ""}>↓</button>
@@ -1079,6 +1107,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       function getEffectLabState() {
         const axisWeights = Object.fromEntries(Array.from(effectLabWeightsEl.querySelectorAll("input[data-axis-weight]")).map((node) => [node.dataset.axisWeight, Number(node.value || 1)]));
+        const totalWeight = Math.max(0.001, Object.values(axisWeights).reduce((acc, v) => acc + Number(v || 0), 0));
         const axisPrecedence = Object.fromEntries(effectLabAxisOrder.map((axis, index) => {
           const multiplier = 1 + ((effectLabAxisOrder.length - 1 - index) * 0.05);
           return [axis, Number(multiplier.toFixed(2))];
@@ -1089,9 +1118,18 @@ Require rollback plan before high-irreversibility actions.</textarea>
           priorsWeight: Number(effectLabPriorsEl.value || 0),
           heuristicsWeight: Number(effectLabHeuristicsEl.value || 0),
           axisWeights,
+          normalizedAxisWeights: Object.fromEntries(Object.entries(axisWeights).map(([axis, value]) => [axis, Number(value || 0) / totalWeight])),
           axisOrder: [...effectLabAxisOrder],
           axisPrecedence
         };
+      }
+
+      function weightedAggregateRisk(aggregate = {}, normalizedWeights = {}) {
+        return EFFECT_LAB_CATEGORIES.reduce((acc, [, axis]) => {
+          const score = Number(aggregate?.[axis] || 0);
+          const weight = Number(normalizedWeights?.[axis] || 0);
+          return acc + (score * weight);
+        }, 0);
       }
 
       function inferAxisSignalScores(plan, baseline = {}) {
@@ -1145,10 +1183,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
         return { adjusted, signals, state };
       }
 
-      function effectLabDecision(aggregate = {}) {
-        const top = Math.max(0, ...Object.values(aggregate).map((v) => Number(v || 0)));
-        if (top >= 0.85) return "DENY";
-        if (top >= 0.55) return "ASK";
+      function effectLabDecision(value = 0) {
+        const score = Number(value || 0);
+        if (score >= 0.75) return "DENY";
+        if (score >= 0.45) return "ASK";
         return "ALLOW";
       }
 
@@ -1161,24 +1199,35 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const baseline = latestEvaluation.aggregate || {};
         const plan = latestEvaluation.plan || {};
         const { adjusted, state } = applyEffectLabWeighting(baseline, plan);
-        const baseDecision = effectLabDecision(baseline);
-        const adjustedDecision = effectLabDecision(adjusted);
+        const baselineWeightedRisk = weightedAggregateRisk(baseline, state.normalizedAxisWeights);
+        const adjustedWeightedRisk = weightedAggregateRisk(adjusted, state.normalizedAxisWeights);
+        const baseDecision = effectLabDecision(baselineWeightedRisk);
+        const adjustedDecision = effectLabDecision(adjustedWeightedRisk);
         const maxAdjustedAxis = Object.entries(adjusted).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0]?.[0] || "n/a";
+        effectLabBaselineRiskEl.textContent = baselineWeightedRisk.toFixed(3);
+        effectLabAdjustedRiskEl.textContent = adjustedWeightedRisk.toFixed(3);
+        effectLabDecisionShiftEl.textContent = `${baseDecision} → ${adjustedDecision}`;
         effectLabSummaryEl.textContent = JSON.stringify({
           precedence_mode: state.mode,
-          axis_order: state.axisOrder,
+          category_order: state.axisOrder,
+          category_weights: state.axisWeights,
+          normalized_weights: state.normalizedAxisWeights,
           axis_precedence_multipliers: state.axisPrecedence,
+          baseline_weighted_risk: Number(baselineWeightedRisk.toFixed(3)),
+          adjusted_weighted_risk: Number(adjustedWeightedRisk.toFixed(3)),
           baseline_decision: baseDecision,
           adjusted_decision: adjustedDecision,
           dominant_adjusted_axis: maxAdjustedAxis,
-          note: "Explicit effects can dominate in strict mode, or be blended/overridden for domain-specific sensitivity analysis."
+          note: "Change category weights to model causal trade-offs: higher weight magnifies that axis' impact on weighted risk and decision boundaries."
         }, null, 2);
         effectLabTableEl.innerHTML = "";
-        Object.keys(baseline).sort((a, b) => Number(adjusted[b] || 0) - Number(adjusted[a] || 0)).forEach((axis) => {
+        EFFECT_LAB_CATEGORIES.forEach(([category, axis]) => {
           const b = Number(baseline[axis] || 0);
           const a = Number(adjusted[axis] || 0);
+          const normalizedWeight = Number(state.normalizedAxisWeights[axis] || 0);
+          const contributionDelta = (a - b) * normalizedWeight;
           const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${axis}</td><td>${b.toFixed(3)}</td><td>${a.toFixed(3)}</td><td>${(a - b).toFixed(3)}</td>`;
+          tr.innerHTML = `<td>${category}</td><td>${normalizedWeight.toFixed(2)}</td><td>${b.toFixed(3)}</td><td>${a.toFixed(3)}</td><td>${contributionDelta.toFixed(3)}</td>`;
           effectLabTableEl.appendChild(tr);
         });
       }
