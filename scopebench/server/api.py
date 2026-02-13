@@ -374,6 +374,12 @@ class DatasetReviewVoteRequest(BaseModel):
     draft_case: Optional[Dict[str, Any]] = None
 
 
+class DatasetReviewSubmitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str
+    format: str = Field(default="json", description="json|yaml")
+
+
 class DatasetReviewStateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     case_id: str
@@ -383,6 +389,15 @@ class DatasetReviewStateResponse(BaseModel):
     votes: Dict[str, str]
     acceptance: Dict[str, Any]
     updated_utc: str
+
+
+class DatasetReviewSubmitResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ok: bool
+    case_id: str
+    review_status: str
+    acceptance: Dict[str, Any]
+    rendered: DatasetRenderResponse
 
 
 class PluginWizardRequest(BaseModel):
@@ -3146,6 +3161,40 @@ def create_app(
         review = _ensure_review(case_id)
         _refresh_acceptance(review)
         return DatasetReviewStateResponse(**review)
+
+    @app.post("/dataset/review/submit", response_model=DatasetReviewSubmitResponse)
+    def dataset_review_submit_endpoint(req: DatasetReviewSubmitRequest):
+        review = _ensure_review(req.case_id)
+        _refresh_acceptance(review)
+        if not review["acceptance"]["ready"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "draft case is not accepted for submission",
+                    "acceptance": review["acceptance"],
+                    "requirements": {
+                        "min_votes": 2,
+                        "majority": "accept > reject",
+                    },
+                },
+            )
+        draft_case = review.get("draft_case")
+        if not isinstance(draft_case, dict) or not draft_case:
+            raise HTTPException(
+                status_code=400,
+                detail="draft_case must be present in review state before submission",
+            )
+        validated = dataset_validate_endpoint(DatasetValidateRequest(case=draft_case))
+        rendered = dataset_render_endpoint(
+            DatasetRenderRequest(case=draft_case, format=req.format)
+        )
+        return DatasetReviewSubmitResponse(
+            ok=validated.ok,
+            case_id=validated.case_id,
+            review_status=str(review["acceptance"].get("status") or "pending"),
+            acceptance=review["acceptance"],
+            rendered=rendered,
+        )
 
     @app.post("/suggest_effects", response_model=SuggestEffectsResponse)
     def suggest_effects_endpoint(req: SuggestEffectsRequest):

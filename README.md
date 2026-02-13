@@ -290,8 +290,10 @@ When calling `POST /evaluate`, these flags are especially useful during integrat
 
 - `POST /dataset/validate` validates a single case object against the rubric/schema requirements (`case_schema_version`, required fields, one vector per step, and axis values in `[0,1]`).
 - `POST /dataset/suggest` takes draft metadata + contract/plan and returns a case with `expected_step_vectors` auto-filled from the current evaluator for annotation bootstrap.
+- `POST /dataset/review/comment`, `POST /dataset/review/suggest_edit`, and `POST /dataset/review/vote` provide collaborative review primitives for draft cases (threaded comments, edit proposals, and reviewer voting).
+- `POST /dataset/review/submit` enforces acceptance gating before submission package generation (requires at least 2 votes and an accept majority), then validates and renders the accepted draft for export.
 
-These are exposed in the interactive `/ui` through **Validate case draft** and **Suggest vectors** actions in the Dataset Contribution Draft panel.
+These are exposed in the interactive `/ui` through **Dataset Contribution Draft** and **Collaborative Case Review** actions.
 
 ### `POST /evaluate_stream`
 

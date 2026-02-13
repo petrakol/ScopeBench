@@ -874,7 +874,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <button id="dataset-review-comment" class="secondary">Add comment</button>
           <button id="dataset-review-suggest" class="secondary">Suggest edit</button>
           <button id="dataset-review-vote" class="secondary">Submit vote</button>
+          <button id="dataset-review-submit">Submit accepted draft</button>
         </div>
+        <div id="dataset-review-summary" class="muted" style="margin-bottom:6px"></div>
         <pre id="dataset-review-output"></pre>
       </section>
 
@@ -1135,6 +1137,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const datasetEditRationaleEl = el("dataset-edit-rationale");
       const datasetVoteValueEl = el("dataset-vote-value");
       const datasetReviewOutputEl = el("dataset-review-output");
+      const datasetReviewSummaryEl = el("dataset-review-summary");
       const datasetStepEls = {
         build: el("dataset-step-build"),
         suggest: el("dataset-step-suggest"),
@@ -3858,10 +3861,22 @@ Require rollback plan before high-irreversibility actions.</textarea>
         catch (_err) { return null; }
       }
 
+      function renderDatasetReviewSummary(data) {
+        const acceptance = data?.acceptance || {};
+        const status = acceptance.status || "pending";
+        const total = Number(acceptance.total || 0);
+        const accept = Number(acceptance.accept || 0);
+        const reject = Number(acceptance.reject || 0);
+        const abstain = Number(acceptance.abstain || 0);
+        const ready = Boolean(acceptance.ready);
+        datasetReviewSummaryEl.textContent = `Review status: ${status} | votes=${total} (accept ${accept}, reject ${reject}, abstain ${abstain}) | submission-ready=${ready ? "yes" : "no"}`;
+      }
+
       async function fetchDatasetReviewState() {
         const caseId = encodeURIComponent(reviewCaseIdFromDraft());
         const data = await fetch(`/dataset/review/${caseId}`).then((r) => r.json());
         datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+        renderDatasetReviewSummary(data);
       }
 
       async function addDatasetReviewComment() {
@@ -3879,6 +3894,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+        renderDatasetReviewSummary(data);
       }
 
       async function suggestDatasetReviewEdit() {
@@ -3898,6 +3914,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+        renderDatasetReviewSummary(data);
       }
 
       async function submitDatasetReviewVote() {
@@ -3914,6 +3931,29 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+        renderDatasetReviewSummary(data);
+      }
+
+      async function submitAcceptedDatasetReview() {
+        const payload = {
+          case_id: reviewCaseIdFromDraft(),
+          format: datasetExportFormatEl.value || "json",
+        };
+        const res = await fetch("/dataset/review/submit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail?.message || data.detail || JSON.stringify(data));
+        datasetContributionFileEl.value = data.rendered.content || "";
+        const blob = new Blob([data.rendered.content || ""], { type: data.rendered.content_type || "text/plain" });
+        datasetDownloadLinkEl.href = URL.createObjectURL(blob);
+        datasetDownloadLinkEl.download = data.rendered.filename || `${data.case_id}.json`;
+        datasetDownloadLinkEl.style.display = "inline-block";
+        datasetOutputEl.textContent = `Submission package ready for accepted review: ${data.case_id} (${String(data.review_status || "pending").toUpperCase()}).`;
+        renderDatasetReviewSummary(data);
         datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
       }
 
@@ -4114,6 +4154,11 @@ ${body}`;
       el("dataset-review-vote").addEventListener("click", () => {
         submitDatasetReviewVote().catch((err) => {
           datasetReviewOutputEl.textContent = `Vote error: ${err.message}`;
+        });
+      });
+      el("dataset-review-submit").addEventListener("click", () => {
+        submitAcceptedDatasetReview().catch((err) => {
+          datasetReviewOutputEl.textContent = `Submit error: ${err.message}`;
         });
       });
       suggestEffectsEl.addEventListener("click", () => suggestEffectsForPlan().catch((err) => {
