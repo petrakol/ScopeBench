@@ -263,6 +263,17 @@
       .learn-link:hover {
         background: #eff6ff;
       }
+
+      .onboarding-card { border: 1px solid #bfdbfe; background: #eff6ff; }
+      .tour-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+      .tour-step-list { display: grid; gap: 8px; }
+      .tour-step { border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px; background: #fff; }
+      .tour-step.active { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.15); }
+      .tour-step h4 { margin: 0 0 4px; }
+      .tour-step p { margin: 0 0 8px; }
+      .tour-inline-help { margin-top: 8px; border: 1px dashed #93c5fd; background: #f8fbff; border-radius: 8px; padding: 8px; }
+      .tour-target { scroll-margin-top: 16px; }
+      .tour-focus { outline: 3px solid #60a5fa; outline-offset: 2px; border-radius: 10px; }
       .patch-suggestion-list {
         display: grid;
         gap: 8px;
@@ -360,7 +371,19 @@
         </div>
       </section>
 
-      <section class="card" style="margin-top: 16px">
+      <section class="card onboarding-card" style="margin-top: 16px" id="onboarding-tour">
+        <h3>Guided onboarding tour</h3>
+        <p class="muted">Start the interactive tour for a first-run path. Each step includes inline help and a “run this example” action so you can test quickly using your own process data.</p>
+        <div class="tour-controls">
+          <button id="tour-start">Start tour</button>
+          <button id="tour-next" class="secondary">Next step</button>
+          <button id="tour-reset" class="secondary">Reset</button>
+          <span id="tour-status" class="muted">Tour idle.</span>
+        </div>
+        <div id="tour-steps" class="tour-step-list"></div>
+      </section>
+
+      <section class="card tour-target" id="tour-template" style="margin-top: 16px">
         <h3>Plan Generation Wizard</h3>
         <p class="muted">Pick a domain preset and variant, then generate/edit a baseline plan from templates.</p>
         <div class="wizard-grid">
@@ -379,9 +402,13 @@
           <button id="wizard-apply">Apply to editor</button>
         </div>
         <div id="wizard-steps" class="step-list"></div>
+        <div class="tour-inline-help">
+          <strong>Inline help:</strong> Choose a domain + variant, then click <em>Generate baseline</em> and <em>Apply to editor</em> to seed a plan from curated templates.
+          <button id="tour-run-template" class="secondary" style="margin-left:8px;">Run this example</button>
+        </div>
       </section>
 
-      <section class="grid two-col" style="margin-top: 16px">
+      <section class="grid two-col tour-target" id="tour-plan-edit" style="margin-top: 16px">
         <div class="card">
           <h3>Contract (JSON)</h3>
           <textarea id="contract"></textarea>
@@ -389,6 +416,9 @@
         <div class="card">
           <h3>Plan (JSON)</h3>
           <textarea id="plan"></textarea>
+          <div class="tour-inline-help"><strong>Inline help:</strong> Edit step descriptions/tools directly in JSON, then run evaluation to inspect impact.
+            <button id="tour-run-plan-edit" class="secondary" style="margin-left:8px;">Run this example</button>
+          </div>
         </div>
       </section>
 
@@ -476,11 +506,14 @@
         <pre id="streaming"></pre>
       </section>
 
-      <section class="card" style="margin-top: 16px">
+      <section class="card tour-target" id="tour-effects" style="margin-top: 16px">
         <h3>What-if Lab</h3>
         <p class="muted">Adjust descriptions, tools, and effect magnitudes. Updates flow into plan JSON and re-evaluate automatically.</p>
         <p class="muted">Use Suggest Effects in the top action bar to auto-populate step-level effects_v1 annotations from LLM/tool heuristics.</p>
         <div id="whatif-editors"></div>
+        <div class="tour-inline-help"><strong>Inline help:</strong> Use <em>Suggest Effects</em> to auto-annotate axes, then adjust sliders in What-if Lab.
+          <button id="tour-run-effects" class="secondary" style="margin-left:8px;">Run this example</button>
+        </div>
       </section>
 
       <section class="card" style="margin-top: 16px">
@@ -532,7 +565,7 @@
         <div id="negotiation-apply-status" class="negotiation-status muted">Run /evaluate_session to generate negotiation recommendations.</div>
         <div id="session-negotiation"></div>
       </section>
-      <section class="grid two-col" style="margin-top: 16px">
+      <section class="grid two-col tour-target" id="tour-plugin" style="margin-top: 16px">
         <div class="card">
           <h3>Plugin Marketplace</h3>
           <p class="muted">Browse domain plugins from the marketplace, including descriptions and risk classes, then inspect install status in one place.</p>
@@ -592,6 +625,9 @@
           <pre id="plugin-manager"></pre>
           <h4>Selected plugin details</h4>
           <pre id="plugin-details" class="plugin-details"></pre>
+          <div class="tour-inline-help"><strong>Inline help:</strong> Refresh marketplace, inspect signatures, then install a bundle into your plugin directory.
+            <button id="tour-run-plugin" class="secondary" style="margin-left:8px;">Run this example</button>
+          </div>
         </div>
       </section>
 
@@ -775,7 +811,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
           <pre id="cases-analytics-raw"></pre>
         </div>
         <div class="card">
-          <h3>Calibration Dashboard</h3>
+          <h3 id="tour-calibration" class="tour-target">Calibration Dashboard</h3>
+          <div class="tour-inline-help"><strong>Inline help:</strong> Open calibration dashboard, review abstain/decision rates, then apply threshold deltas to tune policy behavior.
+            <button id="tour-run-calibration" class="secondary" style="margin-left:8px;">Run this example</button>
+          </div>
           <p class="muted">Interactive analytics for telemetry-driven calibration, thresholds, and simulated plan impact.</p>
           <div class="controls" style="margin-bottom:8px">
             <label>Domain <select id="calibration-domain"></select></label>
@@ -996,6 +1035,15 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let negotiationEdits = {};
       let pluginMarketplaceState = [];
       let pluginInstalledState = [];
+
+      const TOUR_STEPS = [
+        { key: "template", title: "Template selection", target: "tour-template", help: "Generate and apply a baseline template for your workflow." },
+        { key: "plan", title: "Plan editing", target: "tour-plan-edit", help: "Edit plan JSON to reflect your own process and evaluate changes." },
+        { key: "effects", title: "Effect annotation", target: "tour-effects", help: "Auto-suggest effect annotations and refine magnitudes in the what-if lab." },
+        { key: "calibration", title: "Calibration tuning", target: "tour-calibration", help: "Inspect rates and tune calibration thresholds for decision quality." },
+        { key: "plugin", title: "Plugin installation", target: "tour-plugin", help: "Browse marketplace plugins, verify signatures, and install bundles." },
+      ];
+      let tourIndex = -1;
 
       contractEl.value = JSON.stringify(defaultContract, null, 2);
       planEl.value = JSON.stringify(defaultPlan, null, 2);
@@ -3144,6 +3192,87 @@ Body:
 ${body}`;
       }
 
+
+      function clearTourFocus() {
+        document.querySelectorAll('.tour-focus').forEach((node) => node.classList.remove('tour-focus'));
+      }
+
+      function renderTourSteps() {
+        const stepsEl = el('tour-steps');
+        if (!stepsEl) return;
+        stepsEl.innerHTML = TOUR_STEPS.map((step, idx) => `
+          <div class="tour-step ${idx === tourIndex ? 'active' : ''}">
+            <h4>${idx + 1}. ${step.title}</h4>
+            <p class="muted">${step.help}</p>
+          </div>
+        `).join('');
+      }
+
+      function setTourStep(nextIndex) {
+        if (nextIndex < 0 || nextIndex >= TOUR_STEPS.length) {
+          clearTourFocus();
+          tourIndex = -1;
+          el('tour-status').textContent = 'Tour complete. You can rerun any inline example button.';
+          renderTourSteps();
+          return;
+        }
+        tourIndex = nextIndex;
+        const step = TOUR_STEPS[tourIndex];
+        const target = el(step.target);
+        clearTourFocus();
+        if (target) {
+          target.classList.add('tour-focus');
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        el('tour-status').textContent = `Step ${tourIndex + 1}/${TOUR_STEPS.length}: ${step.title}`;
+        renderTourSteps();
+      }
+
+      async function runTourTemplateExample() {
+        if (wizardDomainEl.options.length > 0) {
+          wizardDomainEl.selectedIndex = 0;
+          renderWizardVariantOptions();
+          generateWizardDraft();
+        }
+        el('wizard-apply').click();
+        await runEvaluation();
+      }
+
+      async function runTourPlanEditExample() {
+        const plan = parsePlanJson(planEl.value);
+        if (!plan.steps || !plan.steps.length) return;
+        plan.steps[0].description = `${plan.steps[0].description} (tour sample edit)`;
+        planEl.value = JSON.stringify(plan, null, 2);
+        renderDag(plan);
+        renderWhatIfEditors(plan);
+        await runEvaluation();
+      }
+
+      async function runTourEffectsExample() {
+        await suggestEffectsForPlan();
+        await runEvaluation();
+      }
+
+      async function runTourCalibrationExample() {
+        await loadCalibrationDashboard();
+        const domainOption = Array.from(calibrationDomainEl.options || []).find((opt) => opt.value);
+        if (domainOption) {
+          calibrationDomainEl.value = domainOption.value;
+          calibrationSelection.domain = domainOption.value;
+          renderCalibrationViews();
+        }
+      }
+
+      async function runTourPluginExample() {
+        await loadPlugins();
+        const installBtn = document.querySelector('.plugin-install-market');
+        if (installBtn) {
+          installBtn.click();
+          return;
+        }
+        pluginManagerEl.textContent = 'No marketplace install action available. Set plugin source + target dir and click Install bundle.';
+      }
+
       el("load-template").addEventListener("click", () => {
         const picked = (templateSelectEl._options || []).find((opt) => opt.key === templateSelectEl.value);
         if (!picked) return;
@@ -3310,6 +3439,22 @@ ${body}`;
         catch (_err) { /* continue editing invalid JSON */ }
       });
 
+
+      el('tour-start').addEventListener('click', () => setTourStep(0));
+      el('tour-next').addEventListener('click', () => setTourStep(tourIndex + 1));
+      el('tour-reset').addEventListener('click', () => {
+        clearTourFocus();
+        tourIndex = -1;
+        el('tour-status').textContent = 'Tour reset. Click Start tour.';
+        renderTourSteps();
+      });
+      el('tour-run-template').addEventListener('click', () => runTourTemplateExample().catch((err) => { el('tour-status').textContent = `Template example failed: ${err.message}`; }));
+      el('tour-run-plan-edit').addEventListener('click', () => runTourPlanEditExample().catch((err) => { el('tour-status').textContent = `Plan example failed: ${err.message}`; }));
+      el('tour-run-effects').addEventListener('click', () => runTourEffectsExample().catch((err) => { el('tour-status').textContent = `Effects example failed: ${err.message}`; }));
+      el('tour-run-calibration').addEventListener('click', () => runTourCalibrationExample().catch((err) => { el('tour-status').textContent = `Calibration example failed: ${err.message}`; }));
+      el('tour-run-plugin').addEventListener('click', () => runTourPluginExample().catch((err) => { el('tour-status').textContent = `Plugin example failed: ${err.message}`; }));
+      renderTourSteps();
+
       applySessionGlobalBudgets(defaultSessionState.global_budgets || {});
       renderEffectLabWeightControls();
       renderDag(defaultPlan);
@@ -3363,10 +3508,6 @@ ${body}`;
       runStreamingEvaluation().catch((err) => { streamingEl.textContent = `Streaming load error: ${err.message}`; });
       loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
       runSessionEvaluation().catch((err) => { sessionResultEl.textContent = `Error: ${err.message}`; });
-    }
-      loadPlugins().catch((err) => { pluginManagerEl.textContent = `Plugin load error: ${err.message}`; });
-      loadPolicyWorkbenchState().catch((err) => { policyWorkbenchStateEl.textContent = `Policy state load error: ${err.message}`; });
-    }
     </script>
   </body>
 </html>
