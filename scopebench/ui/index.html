@@ -330,6 +330,9 @@
       .consensus-chip.reached { background: #dcfce7; color: #166534; }
       .consensus-chip.pending { background: #fef3c7; color: #92400e; }
       .negotiation-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+      .negotiation-preview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+      .negotiation-preview-card { border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; padding: 8px; }
+      .negotiation-preview-card h4 { margin: 0 0 6px; font-size: 13px; }
       .chart-block { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin-top: 8px; }
       .chart-title { font-weight: 600; margin-bottom: 6px; }
       .bar-row { display: grid; grid-template-columns: 140px minmax(0, 1fr) 64px; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
@@ -579,6 +582,7 @@
         </div>
         <div id="negotiation-apply-status" class="negotiation-status muted">Run /evaluate_session to generate negotiation recommendations.</div>
         <div id="session-negotiation"></div>
+        <div id="negotiation-impact-preview" class="negotiation-preview-grid"></div>
       </section>
       <section class="grid two-col tour-target" id="tour-plugin" style="margin-top: 16px">
         <div class="card">
@@ -1110,6 +1114,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const negotiationApplyStatusEl = el("negotiation-apply-status");
       const sessionSummaryChipsEl = el("session-summary-chips");
       const sessionScenarioEl = el("session-scenario");
+      const negotiationImpactPreviewEl = el("negotiation-impact-preview");
       const MAGNITUDE = ["none", "low", "medium", "high", "extreme"];
       let knownTools = [];
       let autoTimer = null;
@@ -1916,6 +1921,77 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
       }
 
+      function computeBudgetPreviewFromNegotiation(payload = latestSessionPayload, negotiation = payload?.negotiation) {
+        if (!payload?.dashboard?.per_agent) return null;
+        const budgetKeys = ["cost_usd", "time_horizon_days", "max_tool_calls"];
+        const recommendedTargets = {};
+        if (negotiation?.triggered) {
+          (negotiation.recommendations || []).forEach((recommendation, index) => {
+            const budgetKey = recommendation.budget_key;
+            if (!budgetKey) return;
+            const view = negotiatedRecommendationView(index, recommendation);
+            (view.reallocation || []).forEach((entry) => {
+              recommendedTargets[entry.agent_id] = recommendedTargets[entry.agent_id] || {};
+              recommendedTargets[entry.agent_id][budgetKey] = Math.max(0, asNumber(entry.target_budget));
+            });
+          });
+        }
+
+        const perAgent = {};
+        Object.entries(payload.dashboard.per_agent || {}).forEach(([agentId, entry]) => {
+          const source = sessionState.agents.find((agent) => agent.agent_id === agentId) || {};
+          const sourceBudgets = source.budgets || {};
+          const budgets = { ...sourceBudgets, ...(recommendedTargets[agentId] || {}) };
+          const consumption = entry.budget_consumption || {};
+          const utilization = {};
+          budgetKeys.forEach((budgetKey) => {
+            const used = asNumber(consumption[budgetKey]);
+            const limit = asNumber(budgets[budgetKey]);
+            utilization[budgetKey] = limit > 0 ? used / limit : 0;
+          });
+          perAgent[agentId] = { budgets, consumption, utilization };
+        });
+
+        const globalConsumption = payload.dashboard?.global?.budget_consumption || {};
+        const globalBudget = {
+          cost_usd: asNumber(el("session-budget-cost")?.value),
+          time_horizon_days: asNumber(el("session-budget-time")?.value),
+          max_tool_calls: asNumber(el("session-budget-tools")?.value)
+        };
+        const globalUtilization = {};
+        budgetKeys.forEach((budgetKey) => {
+          const used = asNumber(globalConsumption[budgetKey]);
+          const limit = asNumber(globalBudget[budgetKey]);
+          globalUtilization[budgetKey] = limit > 0 ? used / limit : 0;
+        });
+        return { perAgent, global: { budgets: globalBudget, consumption: globalConsumption, utilization: globalUtilization } };
+      }
+
+      function renderNegotiationImpactPreview(payload = latestSessionPayload, negotiation = payload?.negotiation) {
+        if (!negotiationImpactPreviewEl) return;
+        negotiationImpactPreviewEl.innerHTML = "";
+        if (!payload?.dashboard?.per_agent) {
+          negotiationImpactPreviewEl.innerHTML = '<div class="muted">Run /evaluate_session to preview negotiation impact on aggregates.</div>';
+          return;
+        }
+        if (!negotiation?.triggered) {
+          negotiationImpactPreviewEl.innerHTML = '<div class="muted">No active negotiation adjustments to preview.</div>';
+          return;
+        }
+        const preview = computeBudgetPreviewFromNegotiation(payload, negotiation);
+        if (!preview) return;
+        Object.entries(preview.perAgent || {}).forEach(([agentId, entry]) => {
+          const card = document.createElement("div");
+          card.className = "negotiation-preview-card";
+          card.innerHTML = `<h4>${agentId} adjusted utilization</h4>${utilizationMeter("cost_usd", entry.consumption.cost_usd, entry.budgets.cost_usd)}${utilizationMeter("time_horizon_days", entry.consumption.time_horizon_days, entry.budgets.time_horizon_days)}${utilizationMeter("max_tool_calls", entry.consumption.max_tool_calls, entry.budgets.max_tool_calls)}`;
+          negotiationImpactPreviewEl.appendChild(card);
+        });
+        const globalCard = document.createElement("div");
+        globalCard.className = "negotiation-preview-card";
+        globalCard.innerHTML = `<h4>global aggregate utilization</h4>${utilizationMeter("cost_usd", preview.global.consumption.cost_usd, preview.global.budgets.cost_usd)}${utilizationMeter("time_horizon_days", preview.global.consumption.time_horizon_days, preview.global.budgets.time_horizon_days)}${utilizationMeter("max_tool_calls", preview.global.consumption.max_tool_calls, preview.global.budgets.max_tool_calls)}`;
+        negotiationImpactPreviewEl.appendChild(globalCard);
+      }
+
       function renderSessionDashboard(payload = {}) {
         const launderingCount = (payload.laundering_signals || []).length;
         const recommendationCount = (payload.negotiation?.recommendations || []).length;
@@ -2015,6 +2091,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const launderingChips = (payload.laundering_signals || []).map((signal) => `<span class="signal-chip">${signal.axis} Δ${Number(signal.delta).toFixed(2)}</span>`).join("") || '<span class="muted">No laundering signals.</span>';
         globalCard.innerHTML = `<h4 style="margin:0 0 6px">Global</h4>${utilizationMeter("cost_usd", globalConsumption.cost_usd, globalBudget.cost_usd)}${utilizationMeter("time_horizon_days", globalConsumption.time_horizon_days, globalBudget.time_horizon_days)}${utilizationMeter("max_tool_calls", globalConsumption.max_tool_calls, globalBudget.max_tool_calls)}<div style="margin-top:8px"><strong>Laundering pressure</strong><div style="margin-top:4px">${launderingChips}</div></div>`;
         sessionLedgerEl.appendChild(globalCard);
+        renderNegotiationImpactPreview(payload, payload.negotiation);
       }
 
 
@@ -2086,6 +2163,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         sessionNegotiationEl.innerHTML = "";
         if (!negotiation?.triggered) {
           sessionNegotiationEl.innerHTML = '<div class="muted">No active negotiation recommendations. Run /evaluate_session with over-budget agents to generate proposals.</div>';
+          renderNegotiationImpactPreview(latestSessionPayload, negotiation);
           return;
         }
         (negotiation.recommendations || []).forEach((recommendation, index) => {
@@ -2144,6 +2222,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
           edit.transferApprovals[transferIndex] = Boolean(ev.target.checked);
           renderSessionNegotiation(negotiation);
         }));
+
+        renderNegotiationImpactPreview(latestSessionPayload, negotiation);
 
         sessionNegotiationEl.querySelectorAll("input[data-neg-target]").forEach((node) => node.addEventListener("input", (ev) => {
           const recIndex = String(ev.target.dataset.negTarget);
