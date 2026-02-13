@@ -719,6 +719,35 @@ Require rollback plan before high-irreversibility actions.</textarea>
         <div class="card">
           <h3>Cross-case Analytics Dashboard</h3>
           <p class="muted">Decision distributions by domain, top axes that drive ASK/DENY outcomes, and average effect vs threshold pressure by axis.</p>
+          <div class="controls" style="margin-bottom: 10px">
+            <label>Domain
+              <select id="analytics-domain-filter"><option value="ALL">All domains</option></select>
+            </label>
+            <label>Decision
+              <select id="analytics-decision-filter">
+                <option value="ALL">All decisions</option>
+                <option value="ALLOW">ALLOW</option>
+                <option value="ASK">ASK</option>
+                <option value="DENY">DENY</option>
+              </select>
+            </label>
+            <label>Tool
+              <select id="analytics-tool-filter"><option value="ALL">All tools</option></select>
+            </label>
+            <label>Pivot axis view
+              <select id="analytics-pivot-metric">
+                <option value="deny_count">DENY trigger count</option>
+                <option value="ask_count">ASK trigger count</option>
+                <option value="over_threshold_rate">Over-threshold rate</option>
+                <option value="average_margin">Average margin</option>
+              </select>
+            </label>
+            <button id="analytics-export-csv" class="secondary">Export CSV report</button>
+            <button id="analytics-export-chart" class="secondary">Export chart SVG</button>
+            <a id="analytics-export-link" style="display:none">Download export</a>
+          </div>
+          <div id="analytics-export-status" class="tiny-muted" style="margin-bottom:8px"></div>
+          <div id="analytics-pivot-chart" class="analytics-panel"></div>
           <div id="cases-analytics-dashboard" class="analytics-stack"></div>
           <h4 style="margin-top: 10px">Raw payload</h4>
           <pre id="cases-analytics-raw"></pre>
@@ -808,6 +837,15 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const calibrationRawEl = el("calibration-raw");
       const casesAnalyticsDashboardEl = el("cases-analytics-dashboard");
       const casesAnalyticsRawEl = el("cases-analytics-raw");
+      const analyticsDomainFilterEl = el("analytics-domain-filter");
+      const analyticsDecisionFilterEl = el("analytics-decision-filter");
+      const analyticsToolFilterEl = el("analytics-tool-filter");
+      const analyticsPivotMetricEl = el("analytics-pivot-metric");
+      const analyticsPivotChartEl = el("analytics-pivot-chart");
+      const analyticsExportCsvEl = el("analytics-export-csv");
+      const analyticsExportChartEl = el("analytics-export-chart");
+      const analyticsExportLinkEl = el("analytics-export-link");
+      const analyticsExportStatusEl = el("analytics-export-status");
       const calibrationDomainEl = el("calibration-domain");
       const calibrationControlsEl = el("calibration-controls");
       const calibrationDistributionsEl = el("calibration-distributions");
@@ -926,6 +964,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let calibrationSelection = { domain: null, axisScaleDelta: {}, axisThresholdFactorDelta: {}, abstainDelta: 0.0 };
       let latestEvaluation = null;
       let allCases = [];
+      let latestCasesAnalytics = null;
       let selectedCaseId = null;
       let effectLabAxisOrder = EFFECT_AXES.map(([, axis]) => axis);
       let latestSessionPayload = null;
@@ -2606,6 +2645,203 @@ Require rollback plan before high-irreversibility actions.</textarea>
         renderCalibrationControls(entry);
       }
 
+      function analyticsFilters() {
+        return {
+          domain: analyticsDomainFilterEl?.value || "ALL",
+          decision: analyticsDecisionFilterEl?.value || "ALL",
+          tool: analyticsToolFilterEl?.value || "ALL",
+          pivotMetric: analyticsPivotMetricEl?.value || "deny_count",
+        };
+      }
+
+      function analyticsCaseMatches(item, filters) {
+        if (filters.domain !== "ALL" && item.domain !== filters.domain) return false;
+        if (filters.decision !== "ALL" && item.expected_decision !== filters.decision) return false;
+        if (filters.tool !== "ALL") {
+          const tools = (item?.plan?.steps || []).map((step) => step?.tool).filter(Boolean);
+          if (!tools.includes(filters.tool)) return false;
+        }
+        return true;
+      }
+
+      function buildAnalyticsFromCases(cases) {
+        const axisNames = ["spatial", "temporal", "depth", "irreversibility", "resource_intensity", "legal_exposure", "dependency_creation", "stakeholder_radius", "power_concentration", "uncertainty"];
+        const decisionByDomain = new Map();
+        const triggerMap = new Map(axisNames.map((axis) => [axis, { axis, ask_count: 0, deny_count: 0 }]));
+        const effectMap = new Map(axisNames.map((axis) => [axis, { axis, average_effect: 0, average_threshold: 0, average_margin: 0, over_threshold_cases: 0, over_threshold_rate: 0 }]));
+        const dominant = { ASK: new Map(), DENY: new Map() };
+
+        (cases || []).forEach((item) => {
+          const decision = String(item.expected_decision || "ALLOW");
+          const domain = String(item.domain || "unknown");
+          if (!decisionByDomain.has(domain)) decisionByDomain.set(domain, { ALLOW: 0, ASK: 0, DENY: 0, total_cases: 0 });
+          const d = decisionByDomain.get(domain);
+          d[decision] = (d[decision] || 0) + 1;
+          d.total_cases += 1;
+
+          const vectors = Array.isArray(item.expected_step_vectors) ? item.expected_step_vectors : [];
+          const peakByAxis = {};
+          axisNames.forEach((axis) => {
+            peakByAxis[axis] = Math.max(0, ...vectors.map((row) => Number(row?.[axis] || 0)));
+          });
+          const topAxis = axisNames.slice().sort((a, b) => peakByAxis[b] - peakByAxis[a])[0];
+          if ((decision === "ASK" || decision === "DENY") && topAxis) {
+            const bucket = dominant[decision];
+            bucket.set(topAxis, (bucket.get(topAxis) || 0) + 1);
+          }
+
+          const contractThresholds = item?.contract?.thresholds || {};
+          const askThreshold = Number(item?.contract?.escalation?.ask_if_any_axis_over || 0.6);
+          const askUncertainty = Number(item?.contract?.escalation?.ask_if_uncertainty_over || askThreshold);
+          axisNames.forEach((axis) => {
+            const effect = Number(peakByAxis[axis] || 0);
+            const thresholdField = `max_${axis}`;
+            const threshold = Number(contractThresholds[thresholdField] ?? 0.6);
+            const margin = effect - threshold;
+            const row = effectMap.get(axis);
+            row.average_effect += effect;
+            row.average_threshold += threshold;
+            row.average_margin += margin;
+            if (margin > 0) row.over_threshold_cases += 1;
+            if (decision === "DENY" && margin > 0) triggerMap.get(axis).deny_count += 1;
+            if (decision === "ASK" && (effect > askThreshold || (axis === "uncertainty" && effect > askUncertainty))) triggerMap.get(axis).ask_count += 1;
+          });
+        });
+
+        const totalCases = Math.max(1, (cases || []).length);
+        const decision_distribution_by_domain = Array.from(decisionByDomain.entries()).sort((a,b)=>a[0].localeCompare(b[0])).map(([domain, counts]) => ({
+          domain,
+          total_cases: counts.total_cases,
+          decision_counts: { ALLOW: counts.ALLOW || 0, ASK: counts.ASK || 0, DENY: counts.DENY || 0 },
+          decision_rates: {
+            ALLOW: counts.total_cases ? (counts.ALLOW || 0) / counts.total_cases : 0,
+            ASK: counts.total_cases ? (counts.ASK || 0) / counts.total_cases : 0,
+            DENY: counts.total_cases ? (counts.DENY || 0) / counts.total_cases : 0,
+          }
+        }));
+
+        const effect_magnitude_vs_threshold = axisNames.map((axis) => {
+          const row = effectMap.get(axis);
+          return {
+            axis,
+            average_effect: row.average_effect / totalCases,
+            average_threshold: row.average_threshold / totalCases,
+            average_margin: row.average_margin / totalCases,
+            over_threshold_cases: row.over_threshold_cases,
+            over_threshold_rate: row.over_threshold_cases / totalCases,
+          };
+        });
+
+        const top_trigger_axes_by_decision = ["ASK", "DENY"].map((decision) => {
+          const map = dominant[decision];
+          const rows = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
+          const total = rows.reduce((acc, [,count]) => acc + count, 0);
+          return {
+            decision,
+            total_cases: total,
+            top_axes: rows.slice(0,5).map(([axis,count]) => ({ axis, count, rate_within_decision: total ? count / total : 0 }))
+          };
+        });
+
+        return {
+          source: "client-filtered",
+          count: (cases || []).length,
+          decision_distribution_by_domain,
+          trigger_axes: axisNames.map((axis) => triggerMap.get(axis)),
+          effect_magnitude_vs_threshold,
+          top_trigger_axes_by_decision,
+          effect_magnitude_profiles: [],
+        };
+      }
+
+      function renderAnalyticsPivotChart(dashboard) {
+        const metric = analyticsFilters().pivotMetric;
+        const rows = (dashboard.trigger_axes || []).map((entry) => {
+          if (metric === "ask_count") return { axis: entry.axis, value: Number(entry.ask_count || 0) };
+          if (metric === "deny_count") return { axis: entry.axis, value: Number(entry.deny_count || 0) };
+          const effectRow = (dashboard.effect_magnitude_vs_threshold || []).find((e) => e.axis === entry.axis) || {};
+          if (metric === "over_threshold_rate") return { axis: entry.axis, value: Number(effectRow.over_threshold_rate || 0) };
+          return { axis: entry.axis, value: Number(effectRow.average_margin || 0) };
+        }).sort((a,b) => b.value - a.value);
+        const titleMap = {
+          ask_count: "Pivot: ASK trigger count by axis",
+          deny_count: "Pivot: DENY trigger count by axis",
+          over_threshold_rate: "Pivot: Over-threshold rate by axis",
+          average_margin: "Pivot: Average effect-threshold margin by axis",
+        };
+        const maxVal = Math.max(0.0001, ...rows.map((r) => Math.abs(r.value)));
+        const bars = rows.map((row) => {
+          const width = Math.max(1, Math.round((Math.abs(row.value) / maxVal) * 100));
+          const signed = metric === "average_margin" ? row.value.toFixed(3) : (metric === "over_threshold_rate" ? `${(100 * row.value).toFixed(1)}%` : `${Math.round(row.value)}`);
+          return `<div class="bar-row"><span>${row.axis}</span><span class="bar-track"><span class="bar-fill ${metric === 'ask_count' ? 'ask-axis' : (metric === 'deny_count' ? 'deny-axis' : '')}" style="width:${width}%"></span></span><span>${signed}</span></div>`;
+        }).join('');
+        analyticsPivotChartEl.innerHTML = `<h4 style="margin:0 0 8px">${titleMap[metric]}</h4>${bars || '<p class="tiny-muted">No axis data.</p>'}`;
+      }
+
+      function setAnalyticsExport(content, filename, type, label) {
+        const blob = new Blob([content], { type });
+        analyticsExportLinkEl.href = URL.createObjectURL(blob);
+        analyticsExportLinkEl.download = filename;
+        analyticsExportLinkEl.textContent = `Download ${label}`;
+        analyticsExportLinkEl.style.display = "inline-block";
+        analyticsExportStatusEl.textContent = `${label} ready: ${filename}`;
+      }
+
+      function exportAnalyticsCsv() {
+        if (!latestCasesAnalytics) return;
+        const lines = ["axis,ask_count,deny_count,average_effect,average_threshold,average_margin,over_threshold_cases,over_threshold_rate"];
+        const effects = new Map((latestCasesAnalytics.effect_magnitude_vs_threshold || []).map((entry) => [entry.axis, entry]));
+        (latestCasesAnalytics.trigger_axes || []).forEach((entry) => {
+          const e = effects.get(entry.axis) || {};
+          lines.push([
+            entry.axis,
+            Number(entry.ask_count || 0),
+            Number(entry.deny_count || 0),
+            Number(e.average_effect || 0).toFixed(4),
+            Number(e.average_threshold || 0).toFixed(4),
+            Number(e.average_margin || 0).toFixed(4),
+            Number(e.over_threshold_cases || 0),
+            Number(e.over_threshold_rate || 0).toFixed(4)
+          ].join(","));
+        });
+        setAnalyticsExport(lines.join("
+"), "cases_analytics_report.csv", "text/csv", "CSV report");
+      }
+
+      function exportAnalyticsChartSvg() {
+        if (!latestCasesAnalytics) return;
+        const metric = analyticsFilters().pivotMetric;
+        const rows = (latestCasesAnalytics.trigger_axes || []).map((entry) => {
+          if (metric === "ask_count") return { axis: entry.axis, value: Number(entry.ask_count || 0) };
+          if (metric === "deny_count") return { axis: entry.axis, value: Number(entry.deny_count || 0) };
+          const effectRow = (latestCasesAnalytics.effect_magnitude_vs_threshold || []).find((e) => e.axis === entry.axis) || {};
+          if (metric === "over_threshold_rate") return { axis: entry.axis, value: Number(effectRow.over_threshold_rate || 0) };
+          return { axis: entry.axis, value: Number(effectRow.average_margin || 0) };
+        });
+        const width = 900;
+        const rowH = 24;
+        const height = 80 + rows.length * rowH;
+        const maxVal = Math.max(0.0001, ...rows.map((r) => Math.abs(r.value)));
+        const bars = rows.map((row, idx) => {
+          const y = 40 + idx * rowH;
+          const w = Math.max(2, Math.round((Math.abs(row.value) / maxVal) * 460));
+          const fill = metric === 'ask_count' ? '#f59e0b' : metric === 'deny_count' ? '#dc2626' : '#2563eb';
+          return `<text x="10" y="${y + 14}" font-size="12" font-family="ui-sans-serif">${row.axis}</text><rect x="220" y="${y + 3}" width="${w}" height="12" fill="${fill}" rx="6" /><text x="${230 + w}" y="${y + 14}" font-size="12" font-family="ui-sans-serif">${row.value.toFixed(3)}</text>`;
+        }).join('');
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="white"/><text x="10" y="24" font-size="16" font-family="ui-sans-serif" fill="#0f172a">ScopeBench cross-case analytics pivot (${metric})</text>${bars}</svg>`;
+        setAnalyticsExport(svg, `cases_analytics_${metric}.svg`, "image/svg+xml", "chart SVG");
+      }
+
+      function refreshCasesAnalyticsDashboard() {
+        const filters = analyticsFilters();
+        const filtered = allCases.filter((item) => analyticsCaseMatches(item, filters));
+        latestCasesAnalytics = buildAnalyticsFromCases(filtered);
+        renderCasesAnalyticsDashboard(latestCasesAnalytics);
+        renderAnalyticsPivotChart(latestCasesAnalytics);
+        const toolLabel = filters.tool === "ALL" ? "all tools" : filters.tool;
+        analyticsExportStatusEl.textContent = `Filtered to ${filtered.length} cases (${filters.domain}, ${filters.decision}, ${toolLabel}).`;
+      }
+
       function renderCasesAnalyticsDashboard(dashboard) {
         const domainRows = dashboard.decision_distribution_by_domain || [];
         const axisRows = dashboard.trigger_axes || [];
@@ -2719,8 +2955,12 @@ Require rollback plan before high-irreversibility actions.</textarea>
       }
 
       async function loadCasesAnalyticsDashboard() {
-        const dashboard = await fetch('/cases/analytics').then((r) => r.json());
-        renderCasesAnalyticsDashboard(dashboard);
+        await loadCatalog();
+        const domains = ["ALL", ...Array.from(new Set(allCases.map((item) => item.domain).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)))];
+        analyticsDomainFilterEl.innerHTML = domains.map((domain) => `<option value="${domain}">${domain === "ALL" ? "All domains" : domain}</option>`).join('');
+        const tools = ["ALL", ...Array.from(new Set(allCases.flatMap((item) => (item?.plan?.steps || []).map((step) => step?.tool)).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)))];
+        analyticsToolFilterEl.innerHTML = tools.map((tool) => `<option value="${tool}">${tool === "ALL" ? "All tools" : tool}</option>`).join('');
+        refreshCasesAnalyticsDashboard();
       }
 
       async function validateCaseDraft() {
@@ -2919,6 +3159,11 @@ ${body}`;
       el("cases-analytics").addEventListener("click", () => loadCasesAnalyticsDashboard().catch((err) => {
         casesAnalyticsRawEl.textContent = `Error: ${err.message}`;
       }));
+      [analyticsDomainFilterEl, analyticsDecisionFilterEl, analyticsToolFilterEl, analyticsPivotMetricEl].forEach((node) => {
+        node.addEventListener('change', () => refreshCasesAnalyticsDashboard());
+      });
+      analyticsExportCsvEl.addEventListener('click', () => exportAnalyticsCsv());
+      analyticsExportChartEl.addEventListener('click', () => exportAnalyticsChartSvg());
       calibrationDomainEl.addEventListener("change", (ev) => {
         calibrationSelection.domain = ev.target.value;
         calibrationSelection.axisScaleDelta = {};
