@@ -537,12 +537,20 @@
           <div></div>
         </div>
         <h4 style="margin: 10px 0 6px">Category weighting and precedence order</h4>
-        <p class="muted">Set relative emphasis across the four effect categories. The table below shows how each weight shifts weighted aggregate risk and final decision in real time.</p>
+        <p class="muted">Set relative emphasis across effect axes like resource cost, legal risk, stakeholder radius, reversibility, and other scope dimensions. The tables below show how each weight shifts weighted aggregate risk and final decision in real time.</p>
         <div id="effect-lab-weights" class="slider-grid"></div>
         <div class="effect-kpi-grid">
           <div class="effect-kpi"><div class="label">Baseline weighted risk</div><div class="value" id="effect-lab-baseline-risk">0.000</div></div>
           <div class="effect-kpi"><div class="label">Adjusted weighted risk</div><div class="value" id="effect-lab-adjusted-risk">0.000</div></div>
           <div class="effect-kpi"><div class="label">Decision shift</div><div class="value" id="effect-lab-decision-shift">ALLOW → ALLOW</div></div>
+        </div>
+        <div class="controls" style="margin-top:10px">
+          <label>Sample plan bundle
+            <select id="effect-lab-sample-bundle">
+              <option value="core">Core trade-off scenarios</option>
+            </select>
+          </label>
+          <button id="effect-lab-refresh-samples" class="secondary">Refresh sample aggregates</button>
         </div>
         <div class="grid two-col" style="margin-top:12px">
           <div>
@@ -550,10 +558,12 @@
             <pre id="effect-lab-summary"></pre>
           </div>
           <div>
-            <h4 style="margin: 0 0 6px">Category causal trade-offs</h4>
-            <table><thead><tr><th>Category</th><th>Weight</th><th>Baseline score</th><th>Adjusted score</th><th>Contribution Δ</th></tr></thead><tbody id="effect-lab-table"></tbody></table>
+            <h4 style="margin: 0 0 6px">Axis-level causal trade-offs</h4>
+            <table><thead><tr><th>Axis</th><th>Weight</th><th>Baseline score</th><th>Adjusted score</th><th>Contribution Δ</th></tr></thead><tbody id="effect-lab-table"></tbody></table>
           </div>
         </div>
+        <h4 style="margin: 12px 0 6px">Sample plan aggregate impact</h4>
+        <table><thead><tr><th>Sample plan</th><th>Baseline weighted risk</th><th>Adjusted weighted risk</th><th>Decision shift</th><th>Weighted Δ</th><th>Dominant adjusted axis</th></tr></thead><tbody id="effect-lab-sample-table"></tbody></table>
       </section>
 
       <section class="card" style="margin-top: 16px">
@@ -1123,6 +1133,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const effectLabBaselineRiskEl = el("effect-lab-baseline-risk");
       const effectLabAdjustedRiskEl = el("effect-lab-adjusted-risk");
       const effectLabDecisionShiftEl = el("effect-lab-decision-shift");
+      const effectLabSampleBundleEl = el("effect-lab-sample-bundle");
+      const effectLabRefreshSamplesEl = el("effect-lab-refresh-samples");
+      const effectLabSampleTableEl = el("effect-lab-sample-table");
       const caseSearchEl = el("case-search");
       const caseDomainFilterEl = el("case-domain-filter");
       const caseDecisionFilterEl = el("case-decision-filter");
@@ -1199,10 +1212,54 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let canonicalCasesAnalytics = null;
       let selectedCaseId = null;
       const EFFECT_LAB_CATEGORIES = [
-        ["resource_use", "resource_intensity"],
+        ["resource_cost", "resource_intensity"],
         ["legal_risk", "legal_exposure"],
-        ["stakeholder_impact", "stakeholder_radius"],
-        ["irreversibility", "irreversibility"]
+        ["stakeholder_radius", "stakeholder_radius"],
+        ["reversibility", "irreversibility"],
+        ["dependency_creation", "dependency_creation"],
+        ["power_concentration", "power_concentration"],
+        ["uncertainty", "uncertainty"],
+        ["temporal_horizon", "temporal"],
+        ["spatial_reach", "spatial"],
+        ["operational_depth", "depth"]
+      ];
+      const EFFECT_LAB_SAMPLES = [
+        {
+          id: "ops_rollout",
+          label: "Ops rollout hardening",
+          plan: {
+            task: "Roll out production hardening updates",
+            steps: [
+              { id: "1", description: "Deploy canary changes to production edge clusters", tool: "prod_deploy", effects: { stakeholders: "high", resources: "high", irreversible_actions: "medium", time_horizon: "medium" } },
+              { id: "2", description: "Rotate keys and enforce stricter IAM policies", tool: "iam_change", depends_on: ["1"], effects: { legal: "medium", irreversible_actions: "high", resources: "medium" } },
+              { id: "3", description: "Run post-deploy audit report and publish status", tool: "analysis", depends_on: ["2"], effects: { legal: "low", resources: "medium", stakeholders: "medium" } }
+            ]
+          }
+        },
+        {
+          id: "legal_review",
+          label: "Cross-border legal review",
+          plan: {
+            task: "Launch new data retention policy",
+            steps: [
+              { id: "1", description: "Draft compliance checklist for regional rollout", tool: "analysis", effects: { legal: "high", stakeholders: "medium", time_horizon: "high" } },
+              { id: "2", description: "Review policy with legal and privacy counsel", tool: "analysis", depends_on: ["1"], effects: { legal: "extreme", stakeholders: "high", geo_scope: "high" } },
+              { id: "3", description: "Publish rollout guidance and controls", tool: "git_patch", depends_on: ["2"], effects: { legal: "medium", irreversible_actions: "medium", stakeholders: "high" } }
+            ]
+          }
+        },
+        {
+          id: "cost_optimization",
+          label: "Resource-cost optimization",
+          plan: {
+            task: "Reduce cloud spending while preserving reliability",
+            steps: [
+              { id: "1", description: "Audit infrastructure utilization and underused workloads", tool: "analysis", effects: { resources: "high", time_horizon: "medium" } },
+              { id: "2", description: "Apply autoscaling and storage tiering changes", tool: "infra_provision", depends_on: ["1"], effects: { resources: "high", irreversible_actions: "medium", stakeholders: "low" } },
+              { id: "3", description: "Monitor SLOs and rollback if regressions appear", tool: "pytest", depends_on: ["2"], effects: { resources: "medium", irreversible_actions: "low", legal: "low" } }
+            ]
+          }
+        }
       ];
       let effectLabAxisOrder = EFFECT_LAB_CATEGORIES.map(([, axis]) => axis);
       let latestSessionPayload = null;
@@ -1400,7 +1457,7 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         const heuristicsByAxis = {};
         const priorsByAxis = {};
         const explicitByAxis = {};
-        Object.values(EFFECT_AXES).forEach(([, axis]) => {
+        EFFECT_LAB_CATEGORIES.forEach(([, axis]) => {
           heuristicsByAxis[axis] = Number(baseline[axis] || 0);
           priorsByAxis[axis] = Number(baseline[axis] || 0) * 0.7;
           explicitByAxis[axis] = 0;
@@ -1453,6 +1510,7 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         if (!latestEvaluation?.aggregate) {
           effectLabSummaryEl.textContent = "Run /evaluate to populate baseline aggregate scores.";
           effectLabTableEl.innerHTML = "";
+          renderEffectLabSampleComparison(getEffectLabState());
           return;
         }
         const baseline = latestEvaluation.aggregate || {};
@@ -1480,16 +1538,44 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           note: "Change category weights to model causal trade-offs: higher weight magnifies that axis' impact on weighted risk and decision boundaries."
         }, null, 2);
         effectLabTableEl.innerHTML = "";
-        EFFECT_LAB_CATEGORIES.forEach(([category, axis]) => {
+        EFFECT_LAB_CATEGORIES.forEach(([axisLabel, axis]) => {
           const b = Number(baseline[axis] || 0);
           const a = Number(adjusted[axis] || 0);
           const normalizedWeight = Number(state.normalizedAxisWeights[axis] || 0);
           const contributionDelta = (a - b) * normalizedWeight;
           const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${category}</td><td>${normalizedWeight.toFixed(2)}</td><td>${b.toFixed(3)}</td><td>${a.toFixed(3)}</td><td>${contributionDelta.toFixed(3)}</td>`;
+          tr.innerHTML = `<td>${axisLabel}</td><td>${normalizedWeight.toFixed(2)}</td><td>${b.toFixed(3)}</td><td>${a.toFixed(3)}</td><td>${contributionDelta.toFixed(3)}</td>`;
           effectLabTableEl.appendChild(tr);
         });
+        renderEffectLabSampleComparison(state);
       }
+      function sampleAxisScoresFromPlan(plan = {}) {
+        const signals = inferAxisSignalScores(plan, {});
+        return Object.fromEntries(EFFECT_LAB_CATEGORIES.map(([, axis]) => {
+          const explicit = Number(signals.explicitByAxis?.[axis] || 0);
+          const heuristics = Number(signals.heuristicsByAxis?.[axis] || 0);
+          const priors = Number(signals.priorsByAxis?.[axis] || 0);
+          return [axis, Math.max(explicit, heuristics, priors)];
+        }));
+      }
+
+      function renderEffectLabSampleComparison(state = getEffectLabState()) {
+        if (!effectLabSampleTableEl) return;
+        effectLabSampleTableEl.innerHTML = "";
+        EFFECT_LAB_SAMPLES.forEach((sample) => {
+          const baseline = sampleAxisScoresFromPlan(sample.plan);
+          const { adjusted } = applyEffectLabWeighting(baseline, sample.plan);
+          const baselineWeightedRisk = weightedAggregateRisk(baseline, state.normalizedAxisWeights);
+          const adjustedWeightedRisk = weightedAggregateRisk(adjusted, state.normalizedAxisWeights);
+          const baselineDecision = effectLabDecision(baselineWeightedRisk);
+          const adjustedDecision = effectLabDecision(adjustedWeightedRisk);
+          const dominantAdjustedAxis = Object.entries(adjusted).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0]?.[0] || "n/a";
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${sample.label}</td><td>${baselineWeightedRisk.toFixed(3)}</td><td>${adjustedWeightedRisk.toFixed(3)}</td><td>${baselineDecision} → ${adjustedDecision}</td><td>${(adjustedWeightedRisk - baselineWeightedRisk).toFixed(3)}</td><td>${dominantAdjustedAxis}</td>`;
+          effectLabSampleTableEl.appendChild(tr);
+        });
+      }
+
       function renderStepRationales(steps = [], rationaleSummary = []) {
         rationaleTableEl.innerHTML = "";
         if (!Array.isArray(rationaleSummary) || rationaleSummary.length === 0) {
@@ -4372,6 +4458,11 @@ ${body}`;
       renderTourSteps();
 
       applySessionGlobalBudgets(defaultSessionState.global_budgets || {});
+      if (effectLabSampleBundleEl) {
+        effectLabSampleBundleEl.innerHTML = `<option value="core">Core trade-off scenarios (${EFFECT_LAB_SAMPLES.length})</option>`;
+        effectLabSampleBundleEl.addEventListener("change", () => renderEffectLabSampleComparison(getEffectLabState()));
+      }
+      if (effectLabRefreshSamplesEl) effectLabRefreshSamplesEl.addEventListener("click", () => renderEffectLabSampleComparison(getEffectLabState()));
       renderEffectLabWeightControls();
       renderDag(defaultPlan);
       renderWhatIfEditors(defaultPlan);
