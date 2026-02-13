@@ -182,6 +182,45 @@ def test_uncertainty_contracts_thresholds():
     assert policy.decision.value == "DENY"
 
 
+
+
+def test_axis_weights_tighten_and_relax_thresholds():
+    agg = ScopeAggregate(
+        spatial=0.1,
+        temporal=0.1,
+        depth=0.1,
+        irreversibility=0.1,
+        resource_intensity=0.35,
+        legal_exposure=0.1,
+        dependency_creation=0.1,
+        stakeholder_radius=0.1,
+        power_concentration=0.1,
+        uncertainty=0.0,
+        n_steps=1,
+    )
+
+    weighted_strict = TaskContract.model_validate(
+        {
+            "goal": "Weight resources heavily",
+            "thresholds": {"max_resource_intensity": 0.4},
+            "axis_weights": {"resource_intensity": 2.0},
+        }
+    )
+    weighted_relaxed = TaskContract.model_validate(
+        {
+            "goal": "Weight resources lightly",
+            "thresholds": {"max_resource_intensity": 0.4},
+            "axis_weights": {"resource_intensity": 0.5},
+        }
+    )
+
+    strict_policy = evaluate_policy(weighted_strict, agg)
+    relaxed_policy = evaluate_policy(weighted_relaxed, agg)
+
+    assert strict_policy.decision.value == "DENY"
+    assert "resource_intensity" in strict_policy.exceeded
+    assert relaxed_policy.decision.value == "ALLOW"
+
 def test_swe_write_without_read_triggers_ask():
     contract = TaskContract.model_validate({"goal": "Fix bug", "preset": "team"})
     plan = PlanDAG.model_validate(
