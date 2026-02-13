@@ -2921,11 +2921,21 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           const usage = row.usage || {};
           const usageLabel = `d30:${usage.downloads_30d || 0} · active:${usage.active_installs || 0} · i7:${usage.invocations_7d || 0}`;
           const trust = row.trust || {};
-          const scan = trust.security_scan || {};
+          const ratings = trust.ratings || {};
+          const reviews = (trust.user_reviews && Array.isArray(trust.user_reviews.recent)) ? trust.user_reviews.recent : (Array.isArray(trust.recent_reviews) ? trust.recent_reviews : []);
+          const scan = trust.security_scan_results || trust.security_scan || {};
+          const scanIssues = Array.isArray(scan.issues) ? scan.issues : [];
           const proportionality = trust.proportionality || {};
+          const coreConflicts = Array.isArray(proportionality.core_principles_conflicts) ? proportionality.core_principles_conflicts : [];
           const scanLabel = scan.status || "unknown";
           const warningCount = Array.isArray(proportionality.warnings) ? proportionality.warnings.length : 0;
-          const trustLabel = `${trust.average_rating ?? "n/a"}★ (${trust.review_count || 0}) · scan:${scanLabel} · prop:${proportionality.status || "unknown"}${warningCount ? ` (${warningCount}⚠)` : ""}`;
+          const ratingValue = ratings.average ?? trust.average_rating ?? "n/a";
+          const ratingCount = (ratings.count ?? trust.review_count) || 0;
+          const reviewSnippet = reviews
+            .slice(-2)
+            .map((entry) => `“${String(entry.comment || "").trim() || "no comment"}”`)
+            .join(" · ");
+          const trustLabel = `${ratingValue}★ (${ratingCount}) · scan:${scanLabel}${scanIssues.length ? `/${scanIssues.length} issue${scanIssues.length > 1 ? "s" : ""}` : ""} · prop:${proportionality.status || "unknown"}${warningCount ? ` (${warningCount}⚠)` : ""}${reviewSnippet ? `<br><span class="tiny-muted">Reviews: ${reviewSnippet}</span>` : ""}${coreConflicts.length ? `<br><span class="tiny-muted">⚠ Core-principle conflicts: ${coreConflicts.length}</span>` : ""}`;
           const warningTitle = warningCount ? ` title="${proportionality.warnings.join(" | ")}"` : "";
           const statusBadge = warningCount ? `<span class="muted"${warningTitle}>⚠️ ${warningCount} proportionality warning${warningCount > 1 ? "s" : ""}</span>` : "";
           return `<tr>

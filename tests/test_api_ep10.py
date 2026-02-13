@@ -563,7 +563,10 @@ def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
     assert "usage" in robotics
     assert "trust" in robotics
     assert "security_scan" in robotics["trust"]
+    assert "security_scan_results" in robotics["trust"]
     assert "proportionality" in robotics["trust"]
+    assert "ratings" in robotics["trust"]
+    assert "user_reviews" in robotics["trust"]
     assert robotics["trust"]["review_count"] >= 1
 
     public_sector = next(
@@ -574,6 +577,7 @@ def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
     proportionality = public_sector["trust"]["proportionality"]
     assert proportionality["status"] == "warn"
     assert proportionality["warnings"]
+    assert "core_principles_conflicts" in proportionality
     assert "trust_summary" in marketplace
 
 
@@ -608,6 +612,15 @@ def test_plugin_marketplace_review_and_security_scan(tmp_path: Path, monkeypatch
     assert scanned["ok"] is True
     assert scanned["security_scan"]["status"] == "fail"
     assert scanned["security_scan"]["policy_rules_count"] == 1
+    marketplace = _endpoint(app, "/plugin_marketplace")()
+    robotics = next(
+        item
+        for item in marketplace["plugins"]
+        if isinstance(item, dict) and item.get("plugin_bundle") == "robotics-starter"
+    )
+    assert robotics["trust"]["ratings"]["average"] is not None
+    assert robotics["trust"]["user_reviews"]["count"] >= 1
+
 
 def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) -> None:
     plugin_dir = tmp_path / "installed_plugins"
@@ -785,3 +798,36 @@ def test_policy_workbench_test_and_apply(monkeypatch, tmp_path: Path) -> None:
     assert saved.exists()
     payload = json.loads(saved.read_text(encoding="utf-8"))
     assert payload["summary"] == "tighten temporal limits"
+
+
+def test_plugin_marketplace_flags_core_principle_policy_conflicts(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    bundle = {
+        "name": "robotics-starter",
+        "version": "0.2.0",
+        "publisher": "community",
+        "contributions": {
+            "policy_rules": [
+                {
+                    "id": "conflict.allow_critical_without_validation",
+                    "when": {"risk_class": "critical", "validation_after_write": False},
+                    "action": "ALLOW",
+                }
+            ]
+        },
+    }
+    (plugin_dir / "conflict.json").write_text(json.dumps(bundle), encoding="utf-8")
+    monkeypatch.setenv("SCOPEBENCH_PLUGIN_DIRS", str(plugin_dir))
+
+    app = create_app()
+    payload = _endpoint(app, "/plugin_marketplace")()
+    listed = next(
+        item
+        for item in payload["plugins"]
+        if isinstance(item, dict) and item.get("plugin_bundle") == "robotics-starter"
+    )
+    proportionality = listed["trust"]["proportionality"]
+    assert proportionality["status"] == "warn"
+    assert proportionality["core_principles_conflicts"]
+    assert any("core proportionality principles" in warning for warning in proportionality["warnings"])

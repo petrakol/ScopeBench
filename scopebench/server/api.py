@@ -2318,11 +2318,52 @@ def create_app(
         )
         rows = [row for row in domains if isinstance(row, dict)]
 
+        def _detect_core_principles_conflicts(installed_bundle: Optional[Dict[str, Any]]) -> List[str]:
+            if not isinstance(installed_bundle, dict):
+                return []
+            policy_rules = installed_bundle.get("policy_rules")
+            if not isinstance(policy_rules, list):
+                return []
+            conflicts: List[str] = []
+            for rule in policy_rules:
+                if not isinstance(rule, dict):
+                    continue
+                rule_id = str(rule.get("id") or "unnamed_rule")
+                action = str(rule.get("action") or "").strip().upper()
+                when_payload = rule.get("when") if isinstance(rule.get("when"), dict) else {}
+                when_text = json.dumps(when_payload, sort_keys=True).lower()
+                risk_class = str(when_payload.get("risk_class") or "").strip().lower()
+                if action == "ALLOW" and (not when_payload):
+                    conflicts.append(
+                        f"{rule_id}: broad ALLOW action without conditions can bypass proportionality guardrails."
+                    )
+                if action == "ALLOW" and risk_class in {"high", "critical"}:
+                    conflicts.append(
+                        f"{rule_id}: ALLOW for {risk_class} risk_class may conflict with core proportionality principles."
+                    )
+                if "validation_after_write" in when_payload and when_payload.get("validation_after_write") is False:
+                    conflicts.append(
+                        f"{rule_id}: disables validation_after_write expectations required by core review principles."
+                    )
+                if "read_before_write" in when_payload and when_payload.get("read_before_write") is False:
+                    conflicts.append(
+                        f"{rule_id}: permits writes without read-before-write checks, conflicting with core safe-adoption principles."
+                    )
+                if action == "ALLOW" and any(
+                    token in when_text
+                    for token in ("skip_validation", "force_bypass", "ignore_threshold", "disable_guardrail")
+                ):
+                    conflicts.append(
+                        f"{rule_id}: ALLOW rule references guardrail bypass semantics; requires manual safety review."
+                    )
+            return conflicts
+
         def _proportionality_signals(
             row_payload: Dict[str, Any],
             installed_bundle: Optional[Dict[str, Any]],
             rating_value: Optional[float],
             security_scan_payload: Dict[str, Any],
+            core_principles_conflicts: List[str],
         ) -> Dict[str, Any]:
             warnings: List[str] = []
             policy_rules_count = int((installed_bundle or {}).get("policy_rules_count") or 0)
@@ -2352,12 +2393,17 @@ def create_app(
                 warnings.append(
                     "Community rating is below 3.0★; inspect policy/effects behavior for disproportionate side effects."
                 )
+            if core_principles_conflicts:
+                warnings.append(
+                    "One or more policy rules may conflict with ScopeBench core proportionality principles."
+                )
             status = "warn" if warnings else "ok"
             return {
                 "status": status,
                 "warnings": warnings,
                 "policy_rules_count": policy_rules_count,
                 "effects_mappings_count": effects_mappings_count,
+                "core_principles_conflicts": core_principles_conflicts,
             }
 
         installed_by_bundle = {
@@ -2391,6 +2437,11 @@ def create_app(
                 else discovered_risk_classes
             )
             usage = row.get("usage") if isinstance(row.get("usage"), dict) else {}
+            usage_stats = {
+                "downloads_30d": int(usage.get("downloads_30d") or 0),
+                "active_installs": int(usage.get("active_installs") or 0),
+                "invocations_7d": int(usage.get("invocations_7d") or 0),
+            }
             trust_seed = row.get("trust") if isinstance(row.get("trust"), dict) else {}
             ratings_seed = (
                 trust_seed.get("ratings") if isinstance(trust_seed.get("ratings"), dict) else {}
@@ -2411,20 +2462,27 @@ def create_app(
                 if combined_count
                 else None
             )
-            trust_totals["reviews"] += review_count
-            trust_totals["ratings"] += sum(float(item.get("rating", 0)) for item in reviews)
+            trust_totals["reviews"] += combined_count
+            trust_totals["ratings"] += live_rating_total + seeded_rating_total
             security_scan = _scan_bundle_security(installed)
             seeded_scan = (
                 trust_seed.get("security_scan")
                 if isinstance(trust_seed.get("security_scan"), dict)
                 else None
             )
-            if security_scan.get("status") == "unknown" and seeded_scan:
+            if security_scan.get("status") == "missing" and seeded_scan:
                 security_scan = {
                     **security_scan,
                     **seeded_scan,
                 }
-            proportionality = _proportionality_signals(row, installed, avg_rating, security_scan)
+            core_principles_conflicts = _detect_core_principles_conflicts(installed)
+            proportionality = _proportionality_signals(
+                row,
+                installed,
+                avg_rating,
+                security_scan,
+                core_principles_conflicts,
+            )
             enriched_rows.append(
                 {
                     **row,
@@ -2439,18 +2497,24 @@ def create_app(
                     ),
                     "installed": installed is not None,
                     "installed_bundle": installed,
-                    "usage": {
-                        "downloads_30d": int(usage.get("downloads_30d") or 0),
-                        "active_installs": int(usage.get("active_installs") or 0),
-                        "invocations_7d": int(usage.get("invocations_7d") or 0),
-                    },
+                    "usage": usage_stats,
                     "trust": {
                         "average_rating": avg_rating,
                         "review_count": combined_count,
                         "live_review_count": review_count,
                         "seeded_review_count": seeded_count,
+                        "ratings": {
+                            "average": avg_rating,
+                            "count": combined_count,
+                        },
+                        "user_reviews": {
+                            "count": combined_count,
+                            "recent": reviews[-5:],
+                        },
                         "recent_reviews": reviews[-5:],
                         "security_scan": security_scan,
+                        "security_scan_results": security_scan,
+                        "usage_stats": usage_stats,
                         "proportionality": proportionality,
                     },
                 }
