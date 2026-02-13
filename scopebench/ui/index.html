@@ -70,6 +70,20 @@
         border-radius: 6px;
         font-size: 12px;
       }
+      .effect-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .effect-kpi {
+        border: 1px solid #dbeafe;
+        background: #eff6ff;
+        border-radius: 8px;
+        padding: 8px;
+      }
+      .effect-kpi .label { font-size: 12px; color: #334155; }
+      .effect-kpi .value { font-size: 20px; font-weight: 600; }
       .inline-label {
         display: flex;
         justify-content: space-between;
@@ -260,6 +274,28 @@
       .tour-inline-help { margin-top: 8px; border: 1px dashed #93c5fd; background: #f8fbff; border-radius: 8px; padding: 8px; }
       .tour-target { scroll-margin-top: 16px; }
       .tour-focus { outline: 3px solid #60a5fa; outline-offset: 2px; border-radius: 10px; }
+      .patch-suggestion-list {
+        display: grid;
+        gap: 8px;
+      }
+      .patch-suggestion-card {
+        border: 1px solid #dbeafe;
+        border-radius: 8px;
+        background: #f8fbff;
+        padding: 10px;
+      }
+      .patch-suggestion-card h4 {
+        margin: 0 0 6px;
+      }
+      .patch-op-chip {
+        display: inline-block;
+        border-radius: 999px;
+        background: #dbeafe;
+        color: #1d4ed8;
+        font-size: 11px;
+        padding: 2px 8px;
+        margin-right: 6px;
+      }
       @media (max-width: 900px) {
         .two-col, .analytics-grid { grid-template-columns: 1fr; }
       }
@@ -398,6 +434,15 @@
         </div>
       </section>
 
+      <section class="card" style="margin-top: 16px">
+        <h3>Interactive plan patch suggestions</h3>
+        <p class="muted">When policy returns ASK or DENY, apply suggested plan fixes directly into the editor.</p>
+        <div class="controls" style="margin-bottom: 8px">
+          <button id="apply-all-patches" class="secondary">Apply all suggestions</button>
+        </div>
+        <div id="patch-suggestions" class="patch-suggestion-list"></div>
+      </section>
+
       <section class="grid two-col" style="margin-top: 16px">
         <div class="card">
           <h3>Axis Scores</h3>
@@ -405,6 +450,7 @@
         </div>
         <div class="card">
           <h3>Per-axis Rationales (LLM Judge + rules)</h3>
+          <div id="rationale-summary" class="muted" style="margin-bottom:8px">Theme summary will appear after evaluation.</div>
           <table><thead><tr><th>Step</th><th>Axis</th><th>Score</th><th>Confidence</th><th>Rationale</th></tr></thead><tbody id="rationale-table"></tbody></table>
         </div>
       </section>
@@ -429,16 +475,21 @@
           <div></div>
         </div>
         <h4 style="margin: 10px 0 6px">Category weighting and precedence order</h4>
-        <p class="muted">Drag priority via up/down. Higher-ranked categories receive stronger precedence multipliers in adjusted scoring.</p>
+        <p class="muted">Set relative emphasis across the four effect categories. The table below shows how each weight shifts weighted aggregate risk and final decision in real time.</p>
         <div id="effect-lab-weights" class="slider-grid"></div>
+        <div class="effect-kpi-grid">
+          <div class="effect-kpi"><div class="label">Baseline weighted risk</div><div class="value" id="effect-lab-baseline-risk">0.000</div></div>
+          <div class="effect-kpi"><div class="label">Adjusted weighted risk</div><div class="value" id="effect-lab-adjusted-risk">0.000</div></div>
+          <div class="effect-kpi"><div class="label">Decision shift</div><div class="value" id="effect-lab-decision-shift">ALLOW → ALLOW</div></div>
+        </div>
         <div class="grid two-col" style="margin-top:12px">
           <div>
             <h4 style="margin: 0 0 6px">Baseline vs adjusted summary</h4>
             <pre id="effect-lab-summary"></pre>
           </div>
           <div>
-            <h4 style="margin: 0 0 6px">Per-axis comparison</h4>
-            <table><thead><tr><th>Axis</th><th>Baseline</th><th>Adjusted</th><th>Δ</th></tr></thead><tbody id="effect-lab-table"></tbody></table>
+            <h4 style="margin: 0 0 6px">Category causal trade-offs</h4>
+            <table><thead><tr><th>Category</th><th>Weight</th><th>Baseline score</th><th>Adjusted score</th><th>Contribution Δ</th></tr></thead><tbody id="effect-lab-table"></tbody></table>
           </div>
         </div>
       </section>
@@ -840,8 +891,11 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const decisionEl = el("decision");
       const axisTableEl = el("axis-table");
       const rationaleTableEl = el("rationale-table");
+      const rationaleSummaryEl = el("rationale-summary");
       const contribTableEl = el("contrib-table");
       const whatIfEditorsEl = el("whatif-editors");
+      const patchSuggestionsEl = el("patch-suggestions");
+      const applyAllPatchesEl = el("apply-all-patches");
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
       const calibrationRawEl = el("calibration-raw");
@@ -903,6 +957,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const effectLabWeightsEl = el("effect-lab-weights");
       const effectLabSummaryEl = el("effect-lab-summary");
       const effectLabTableEl = el("effect-lab-table");
+      const effectLabBaselineRiskEl = el("effect-lab-baseline-risk");
+      const effectLabAdjustedRiskEl = el("effect-lab-adjusted-risk");
+      const effectLabDecisionShiftEl = el("effect-lab-decision-shift");
       const caseSearchEl = el("case-search");
       const caseDomainFilterEl = el("case-domain-filter");
       const caseDecisionFilterEl = el("case-decision-filter");
@@ -932,6 +989,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         generate: el("dataset-step-generate"),
       };
       const suggestEffectsEl = el("suggest-effects");
+      let latestPatchSuggestions = [];
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
         ["legal", "legal_exposure"],
@@ -966,7 +1024,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let latestEvaluation = null;
       let allCases = [];
       let selectedCaseId = null;
-      let effectLabAxisOrder = EFFECT_AXES.map(([, axis]) => axis);
+      const EFFECT_LAB_CATEGORIES = [
+        ["resource_use", "resource_intensity"],
+        ["legal_risk", "legal_exposure"],
+        ["stakeholder_impact", "stakeholder_radius"],
+        ["irreversibility", "irreversibility"]
+      ];
+      let effectLabAxisOrder = EFFECT_LAB_CATEGORIES.map(([, axis]) => axis);
       let latestSessionPayload = null;
       let negotiationEdits = {};
       let pluginMarketplaceState = [];
@@ -1059,12 +1123,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
           Array.from(effectLabWeightsEl.querySelectorAll("input[data-axis-weight]")).map((node) => [node.dataset.axisWeight, Number(node.value || 1)])
         );
         effectLabWeightsEl.innerHTML = effectLabAxisOrder.map((axisKey, rankIndex) => {
+          const categoryName = EFFECT_LAB_CATEGORIES.find(([, axis]) => axis === axisKey)?.[0] || axisKey;
           const sliderValue = Number(axisWeightState[axisKey] || 1);
           return `
             <div class="slider-row">
               <div class="effect-row-header">
                 <span class="effect-row-rank" title="precedence rank">${rankIndex + 1}</span>
-                <div class="inline-label"><strong>${axisKey}</strong><span data-axis-value="${axisKey}">${sliderValue.toFixed(2)}x</span></div>
+                <div class="inline-label"><strong>${categoryName}</strong><span data-axis-value="${axisKey}">${sliderValue.toFixed(2)}x</span></div>
                 <div class="axis-order-controls">
                   <button class="secondary" type="button" data-axis-move="up" data-axis-key="${axisKey}" ${rankIndex === 0 ? "disabled" : ""}>↑</button>
                   <button class="secondary" type="button" data-axis-move="down" data-axis-key="${axisKey}" ${rankIndex === effectLabAxisOrder.length - 1 ? "disabled" : ""}>↓</button>
@@ -1092,6 +1157,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       function getEffectLabState() {
         const axisWeights = Object.fromEntries(Array.from(effectLabWeightsEl.querySelectorAll("input[data-axis-weight]")).map((node) => [node.dataset.axisWeight, Number(node.value || 1)]));
+        const totalWeight = Math.max(0.001, Object.values(axisWeights).reduce((acc, v) => acc + Number(v || 0), 0));
         const axisPrecedence = Object.fromEntries(effectLabAxisOrder.map((axis, index) => {
           const multiplier = 1 + ((effectLabAxisOrder.length - 1 - index) * 0.05);
           return [axis, Number(multiplier.toFixed(2))];
@@ -1102,9 +1168,18 @@ Require rollback plan before high-irreversibility actions.</textarea>
           priorsWeight: Number(effectLabPriorsEl.value || 0),
           heuristicsWeight: Number(effectLabHeuristicsEl.value || 0),
           axisWeights,
+          normalizedAxisWeights: Object.fromEntries(Object.entries(axisWeights).map(([axis, value]) => [axis, Number(value || 0) / totalWeight])),
           axisOrder: [...effectLabAxisOrder],
           axisPrecedence
         };
+      }
+
+      function weightedAggregateRisk(aggregate = {}, normalizedWeights = {}) {
+        return EFFECT_LAB_CATEGORIES.reduce((acc, [, axis]) => {
+          const score = Number(aggregate?.[axis] || 0);
+          const weight = Number(normalizedWeights?.[axis] || 0);
+          return acc + (score * weight);
+        }, 0);
       }
 
       function inferAxisSignalScores(plan, baseline = {}) {
@@ -1158,10 +1233,10 @@ Require rollback plan before high-irreversibility actions.</textarea>
         return { adjusted, signals, state };
       }
 
-      function effectLabDecision(aggregate = {}) {
-        const top = Math.max(0, ...Object.values(aggregate).map((v) => Number(v || 0)));
-        if (top >= 0.85) return "DENY";
-        if (top >= 0.55) return "ASK";
+      function effectLabDecision(value = 0) {
+        const score = Number(value || 0);
+        if (score >= 0.75) return "DENY";
+        if (score >= 0.45) return "ASK";
         return "ALLOW";
       }
 
@@ -1174,29 +1249,49 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const baseline = latestEvaluation.aggregate || {};
         const plan = latestEvaluation.plan || {};
         const { adjusted, state } = applyEffectLabWeighting(baseline, plan);
-        const baseDecision = effectLabDecision(baseline);
-        const adjustedDecision = effectLabDecision(adjusted);
+        const baselineWeightedRisk = weightedAggregateRisk(baseline, state.normalizedAxisWeights);
+        const adjustedWeightedRisk = weightedAggregateRisk(adjusted, state.normalizedAxisWeights);
+        const baseDecision = effectLabDecision(baselineWeightedRisk);
+        const adjustedDecision = effectLabDecision(adjustedWeightedRisk);
         const maxAdjustedAxis = Object.entries(adjusted).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))[0]?.[0] || "n/a";
+        effectLabBaselineRiskEl.textContent = baselineWeightedRisk.toFixed(3);
+        effectLabAdjustedRiskEl.textContent = adjustedWeightedRisk.toFixed(3);
+        effectLabDecisionShiftEl.textContent = `${baseDecision} → ${adjustedDecision}`;
         effectLabSummaryEl.textContent = JSON.stringify({
           precedence_mode: state.mode,
-          axis_order: state.axisOrder,
+          category_order: state.axisOrder,
+          category_weights: state.axisWeights,
+          normalized_weights: state.normalizedAxisWeights,
           axis_precedence_multipliers: state.axisPrecedence,
+          baseline_weighted_risk: Number(baselineWeightedRisk.toFixed(3)),
+          adjusted_weighted_risk: Number(adjustedWeightedRisk.toFixed(3)),
           baseline_decision: baseDecision,
           adjusted_decision: adjustedDecision,
           dominant_adjusted_axis: maxAdjustedAxis,
-          note: "Explicit effects can dominate in strict mode, or be blended/overridden for domain-specific sensitivity analysis."
+          note: "Change category weights to model causal trade-offs: higher weight magnifies that axis' impact on weighted risk and decision boundaries."
         }, null, 2);
         effectLabTableEl.innerHTML = "";
-        Object.keys(baseline).sort((a, b) => Number(adjusted[b] || 0) - Number(adjusted[a] || 0)).forEach((axis) => {
+        EFFECT_LAB_CATEGORIES.forEach(([category, axis]) => {
           const b = Number(baseline[axis] || 0);
           const a = Number(adjusted[axis] || 0);
+          const normalizedWeight = Number(state.normalizedAxisWeights[axis] || 0);
+          const contributionDelta = (a - b) * normalizedWeight;
           const tr = document.createElement("tr");
-          tr.innerHTML = `<td>${axis}</td><td>${b.toFixed(3)}</td><td>${a.toFixed(3)}</td><td>${(a - b).toFixed(3)}</td>`;
+          tr.innerHTML = `<td>${category}</td><td>${normalizedWeight.toFixed(2)}</td><td>${b.toFixed(3)}</td><td>${a.toFixed(3)}</td><td>${contributionDelta.toFixed(3)}</td>`;
           effectLabTableEl.appendChild(tr);
         });
       }
-      function renderStepRationales(steps = []) {
+      function renderStepRationales(steps = [], rationaleSummary = []) {
         rationaleTableEl.innerHTML = "";
+        if (!Array.isArray(rationaleSummary) || rationaleSummary.length === 0) {
+          rationaleSummaryEl.textContent = "No theme-level rationale summary available for this run.";
+        } else {
+          const themes = rationaleSummary.map((theme) => {
+            const topReasons = (theme.top_reasons || []).map((reason) => `${reason.rationale} (${reason.count} steps)`).join("; ");
+            return `${theme.theme} [${Number(theme.contribution || 0).toFixed(2)}]: ${topReasons || "n/a"}`;
+          });
+          rationaleSummaryEl.textContent = `Top rationale themes: ${themes.join(" | ")}`;
+        }
         const rows = [];
         steps.forEach((step) => Object.entries(step.axes || {}).forEach(([axis, detail]) => rows.push({ step: step.step_id || "unknown", axis, ...detail })));
         rows.sort((a, b) => b.value - a.value).forEach((row) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${row.step}</td><td>${row.axis}</td><td>${Number(row.value).toFixed(3)}</td><td>${Number(row.confidence || 0).toFixed(2)}</td><td>${row.rationale || "n/a"}</td>`; rationaleTableEl.appendChild(tr); });
@@ -1315,6 +1410,160 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       function clone(value) {
         return JSON.parse(JSON.stringify(value));
+      }
+
+      function ensureUniqueStepId(steps, candidateId) {
+        const existing = new Set((steps || []).map((step) => String(step.id || "")).filter(Boolean));
+        if (!existing.has(candidateId)) return candidateId;
+        let suffix = 2;
+        while (existing.has(`${candidateId}_${suffix}`)) suffix += 1;
+        return `${candidateId}_${suffix}`;
+      }
+
+      function normalizePlanPatchSuggestions(suggestions) {
+        if (!Array.isArray(suggestions)) return [];
+        return suggestions.filter((item) => item && typeof item === "object" && item.op);
+      }
+
+      function classifyPatchSuggestion(patch) {
+        const op = String(patch.op || "").toLowerCase();
+        if (op === "split_plan") return "Split large step sequence";
+        if (op === "replace") return "Reduce tool scope";
+        if (op === "insert_before" || op === "insert_after") {
+          const text = String(patch.step?.description || "").toLowerCase();
+          if (text.includes("approval")) return "Insert approval gate";
+          if (text.includes("test") || text.includes("validation") || text.includes("rollback") || text.includes("dry-run")) {
+            return "Insert validation step";
+          }
+          return "Insert safety step";
+        }
+        return "Patch suggestion";
+      }
+
+      function describePatchSuggestion(patch) {
+        const op = String(patch.op || "").toLowerCase();
+        if (op === "insert_before" || op === "insert_after") {
+          const relative = op === "insert_before" ? "before" : "after";
+          return `Insert step \"${patch.step?.id || "new_step"}\" ${relative} \"${patch.target_step_id || "target"}\".`;
+        }
+        if (op === "replace") {
+          return `Replace step \"${patch.target_step_id || "target"}\" with \"${patch.step?.id || "replacement"}\" to lower risk.`;
+        }
+        if (op === "split_plan") {
+          const chunks = (patch.chunks || []).map((chunk) => `${chunk.name || "phase"}: ${(chunk.step_ids || []).join(", ") || "(none)"}`).join(" | ");
+          return `Split the plan after \"${patch.after_step_id || "step"}\" into phased checkpoints. ${chunks}`;
+        }
+        return JSON.stringify(patch);
+      }
+
+      function applyPatchToPlan(plan, patch) {
+        const next = clone(plan || {});
+        next.steps = Array.isArray(next.steps) ? next.steps : [];
+        const steps = next.steps;
+        const op = String(patch.op || "").toLowerCase();
+        if (op === "insert_before" || op === "insert_after") {
+          const targetIndex = steps.findIndex((step) => step.id === patch.target_step_id);
+          if (targetIndex < 0 || !patch.step) return { plan: next, applied: false, reason: "Target step not found" };
+          const newStep = clone(patch.step);
+          newStep.id = ensureUniqueStepId(steps, String(newStep.id || "suggested_step"));
+          const insertIndex = op === "insert_before" ? targetIndex : targetIndex + 1;
+          steps.splice(insertIndex, 0, newStep);
+          return { plan: next, applied: true };
+        }
+        if (op === "replace") {
+          const targetIndex = steps.findIndex((step) => step.id === patch.target_step_id);
+          if (targetIndex < 0 || !patch.step) return { plan: next, applied: false, reason: "Target step not found" };
+          const oldId = steps[targetIndex].id;
+          const replacement = clone(patch.step);
+          replacement.id = ensureUniqueStepId(steps.filter((_, idx) => idx !== targetIndex), String(replacement.id || oldId || "replacement_step"));
+          steps[targetIndex] = replacement;
+          steps.forEach((step) => {
+            if (!Array.isArray(step.depends_on)) return;
+            step.depends_on = step.depends_on.map((dep) => (dep === oldId ? replacement.id : dep));
+          });
+          return { plan: next, applied: true };
+        }
+        if (op === "split_plan") {
+          const splitIndex = steps.findIndex((step) => step.id === patch.after_step_id);
+          if (splitIndex < 0) return { plan: next, applied: false, reason: "Split anchor step not found" };
+          const checkpointId = ensureUniqueStepId(steps, "phase_checkpoint");
+          const checkpoint = {
+            id: checkpointId,
+            description: "Validation checkpoint between execution phases.",
+            tool: "analysis",
+            depends_on: [patch.after_step_id]
+          };
+          steps.splice(splitIndex + 1, 0, checkpoint);
+          return { plan: next, applied: true };
+        }
+        return { plan: next, applied: false, reason: `Unsupported op: ${patch.op}` };
+      }
+
+      function applyPatchSuggestionByIndex(index) {
+        const patch = latestPatchSuggestions[index];
+        if (!patch) return;
+        const currentPlan = parsePlanJson(planEl.value);
+        const applied = applyPatchToPlan(currentPlan, patch);
+        if (!applied.applied) {
+          resultEl.textContent = `Patch suggestion could not be applied: ${applied.reason || "unknown error"}.`;
+          return;
+        }
+        planEl.value = JSON.stringify(applied.plan, null, 2);
+        renderDag(applied.plan);
+        renderWhatIfEditors(applied.plan);
+        scheduleAutoEvaluate();
+        resultEl.textContent = `Applied plan patch suggestion: ${classifyPatchSuggestion(patch)}.`;
+      }
+
+      function applyAllPatchSuggestions() {
+        const startPlan = parsePlanJson(planEl.value);
+        let workingPlan = clone(startPlan);
+        let appliedCount = 0;
+        latestPatchSuggestions.forEach((patch) => {
+          const result = applyPatchToPlan(workingPlan, patch);
+          if (result.applied) {
+            workingPlan = result.plan;
+            appliedCount += 1;
+          }
+        });
+        if (!appliedCount) {
+          resultEl.textContent = "No patch suggestions were applied.";
+          return;
+        }
+        planEl.value = JSON.stringify(workingPlan, null, 2);
+        renderDag(workingPlan);
+        renderWhatIfEditors(workingPlan);
+        scheduleAutoEvaluate();
+        resultEl.textContent = `Applied ${appliedCount} patch suggestion(s) to the plan editor.`;
+      }
+
+      function renderPatchSuggestions(decision, suggestions) {
+        latestPatchSuggestions = normalizePlanPatchSuggestions(suggestions);
+        patchSuggestionsEl.innerHTML = "";
+        const shouldShow = ["ASK", "DENY"].includes(String(decision || "").toUpperCase());
+        applyAllPatchesEl.disabled = !(shouldShow && latestPatchSuggestions.length);
+        if (!shouldShow) {
+          patchSuggestionsEl.innerHTML = '<div class="muted">No remediation needed: decision is ALLOW.</div>';
+          return;
+        }
+        if (!latestPatchSuggestions.length) {
+          patchSuggestionsEl.innerHTML = '<div class="muted">Policy flagged ASK/DENY, but no structured patch suggestions were returned.</div>';
+          return;
+        }
+        latestPatchSuggestions.forEach((patch, index) => {
+          const card = document.createElement("div");
+          card.className = "patch-suggestion-card";
+          card.innerHTML = `
+            <h4><span class="patch-op-chip">${escapeHtml(String(patch.op || "patch"))}</span>${escapeHtml(classifyPatchSuggestion(patch))}</h4>
+            <p>${escapeHtml(describePatchSuggestion(patch))}</p>
+            <p class="muted">${escapeHtml(patch.rationale || "No rationale provided by API.")}</p>
+            <div class="controls"><button data-apply-patch-index="${index}">Apply patch</button></div>
+          `;
+          patchSuggestionsEl.appendChild(card);
+        });
+        patchSuggestionsEl.querySelectorAll("button[data-apply-patch-index]").forEach((button) => {
+          button.addEventListener("click", () => applyPatchSuggestionByIndex(Number(button.dataset.applyPatchIndex)));
+        });
       }
 
       function applySessionGlobalBudgets(globalBudgets = {}) {
@@ -2360,8 +2609,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const payload = await res.json();
         decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
         resultEl.textContent = JSON.stringify({ trace_id: payload.trace_id, span_id: payload.span_id, summary: payload.summary, next_steps: payload.next_steps, telemetry: payload.telemetry }, null, 2);
+        renderPatchSuggestions(payload.decision, payload.plan_patch_suggestion || []);
         latestEvaluation = { aggregate: payload.aggregate || {}, steps: payload.steps || [], plan };
-        renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
+        renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || [], payload.rationale_summary || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
         renderEffectLabComparison();
       }
 
@@ -2458,7 +2708,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
         streamingEl.textContent = summarizeStreaming(payload);
         renderAggregate(payload.aggregate || {});
-        renderStepRationales(payload.steps || []);
+        renderStepRationales(payload.steps || [], payload.rationale_summary || []);
         renderContributions(plan, payload.steps || [], payload.aggregate || {});
       }
 
@@ -3094,6 +3344,9 @@ ${body}`;
       suggestEffectsEl.addEventListener("click", () => suggestEffectsForPlan().catch((err) => {
         resultEl.textContent = `Suggest effects error: ${err.message}`;
       }));
+      applyAllPatchesEl.addEventListener("click", () => {
+        applyAllPatchSuggestions();
+      });
       el("stream").addEventListener("click", () => runStreamingEvaluation().catch((err) => {
         streamingEl.textContent = `Error: ${err.message}`;
       }));

@@ -245,6 +245,7 @@ class EvaluateResponse(BaseModel):
     aggregate: Dict[str, float]
     n_steps: int
     steps: Optional[List[StepDetail]] = None
+    rationale_summary: Optional[List[Dict[str, Any]]] = None
     summary: Optional[str] = None
     next_steps: Optional[List[str]] = None
     plan_patch_suggestion: Optional[List[Dict[str, Any]]] = None
@@ -778,6 +779,77 @@ def _vector_axes_by_step(vectors: List[Any]) -> Dict[str, Dict[str, Dict[str, An
             }
         payload[vector.step_id] = step_axes
     return payload
+
+
+def _summarize_step_rationales(
+    step_details: Optional[List[StepDetail]],
+    aggregate: Dict[str, float],
+    top_themes: int = 3,
+    top_reasons_per_theme: int = 3,
+) -> List[Dict[str, Any]]:
+    if not step_details:
+        return []
+
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for step in step_details:
+        for axis, detail in (step.axes or {}).items():
+            grouped.setdefault(axis, []).append(
+                {
+                    "step_id": step.step_id or "unknown",
+                    "value": float(detail.value),
+                    "confidence": float(detail.confidence),
+                    "rationale": (detail.rationale or "").strip(),
+                }
+            )
+
+    summaries: List[Dict[str, Any]] = []
+    for axis, entries in grouped.items():
+        sorted_entries = sorted(entries, key=lambda item: item["value"], reverse=True)
+        rationale_index: Dict[str, Dict[str, Any]] = {}
+        for entry in sorted_entries:
+            rationale = entry["rationale"] or "n/a"
+            bucket = rationale_index.setdefault(
+                rationale,
+                {
+                    "rationale": rationale,
+                    "count": 0,
+                    "peak_value": 0.0,
+                    "steps": [],
+                },
+            )
+            bucket["count"] += 1
+            bucket["peak_value"] = max(bucket["peak_value"], entry["value"])
+            bucket["steps"].append(entry["step_id"])
+
+        top_reasons = sorted(
+            rationale_index.values(),
+            key=lambda item: (item["count"], item["peak_value"]),
+            reverse=True,
+        )[:top_reasons_per_theme]
+
+        summaries.append(
+            {
+                "theme": axis,
+                "contribution": float(aggregate.get(axis, 0.0)),
+                "step_count": len(entries),
+                "peak_value": sorted_entries[0]["value"],
+                "top_reasons": [
+                    {
+                        "rationale": reason["rationale"],
+                        "count": reason["count"],
+                        "peak_value": reason["peak_value"],
+                        "steps": sorted(set(reason["steps"])),
+                    }
+                    for reason in top_reasons
+                ],
+            }
+        )
+
+    return sorted(
+        summaries,
+        key=lambda item: (item["contribution"], item["peak_value"], item["step_count"]),
+        reverse=True,
+    )[:top_themes]
 
 
 def _judge_output_deltas(
@@ -2798,12 +2870,16 @@ def create_app(
         summary = None
         next_steps = None
         patch_suggestion = None
+        rationale_summary = None
         if req.include_summary:
             summary = _summarize_response(
                 pol, res.aggregate.as_dict(), effective_decision
             )
             next_steps = _next_steps_from_policy(pol)
             patch_suggestion = _suggest_plan_patch(pol, plan)
+            rationale_summary = _summarize_step_rationales(
+                steps, res.aggregate.as_dict()
+            )
 
         telemetry = (
             _build_telemetry(contract, plan, pol, req.ask_action, req.outcome)
@@ -2857,6 +2933,7 @@ def create_app(
             aggregate=res.aggregate.as_dict(),
             n_steps=res.aggregate.n_steps,
             steps=steps,
+            rationale_summary=rationale_summary,
             summary=summary,
             next_steps=next_steps,
             plan_patch_suggestion=patch_suggestion,
