@@ -305,6 +305,20 @@
         padding: 2px 8px;
         margin-right: 6px;
       }
+      .plan-guidance-panel {
+        margin-top: 12px;
+        border: 1px solid #dbeafe;
+        border-radius: 8px;
+        background: #f8fbff;
+        padding: 10px;
+      }
+      .plan-guidance-panel h4 { margin: 0 0 6px; }
+      .plan-next-steps {
+        margin: 0 0 10px;
+        padding-left: 18px;
+        display: grid;
+        gap: 4px;
+      }
       @media (max-width: 900px) {
         .two-col, .analytics-grid { grid-template-columns: 1fr; }
       }
@@ -434,6 +448,17 @@
           <div class="tour-inline-help"><strong>Inline help:</strong> Edit step descriptions/tools directly in JSON, then run evaluation to inspect impact.
             <button id="tour-run-plan-edit" class="secondary" style="margin-left:8px;">Run this example</button>
           </div>
+          <div class="plan-guidance-panel">
+            <h4>Patch suggestions</h4>
+            <p id="plan-guidance-summary" class="muted">Run evaluation to get summary and remediation guidance.</p>
+            <ul id="plan-next-steps" class="plan-next-steps muted">
+              <li>No next-step guidance yet.</li>
+            </ul>
+            <div class="controls" style="margin-bottom: 8px">
+              <button id="apply-all-patches" class="secondary">Apply all suggestions</button>
+            </div>
+            <div id="patch-suggestions" class="patch-suggestion-list"></div>
+          </div>
         </div>
       </section>
 
@@ -447,15 +472,6 @@
           <div id="decision"></div>
           <pre id="result"></pre>
         </div>
-      </section>
-
-      <section class="card" style="margin-top: 16px">
-        <h3>Interactive plan patch suggestions</h3>
-        <p class="muted">When policy returns ASK or DENY, apply suggested plan fixes directly into the editor.</p>
-        <div class="controls" style="margin-bottom: 8px">
-          <button id="apply-all-patches" class="secondary">Apply all suggestions</button>
-        </div>
-        <div id="patch-suggestions" class="patch-suggestion-list"></div>
       </section>
 
       <section class="grid two-col" style="margin-top: 16px">
@@ -972,6 +988,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const whatIfEditorsEl = el("whatif-editors");
       const patchSuggestionsEl = el("patch-suggestions");
       const applyAllPatchesEl = el("apply-all-patches");
+      const planGuidanceSummaryEl = el("plan-guidance-summary");
+      const planNextStepsEl = el("plan-next-steps");
       const catalogEl = el("catalog");
       const telemetryEl = el("telemetry");
       const calibrationRawEl = el("calibration-raw");
@@ -1635,9 +1653,21 @@ Require rollback plan before high-irreversibility actions.</textarea>
         resultEl.textContent = `Applied ${appliedCount} patch suggestion(s) to the plan editor.`;
       }
 
-      function renderPatchSuggestions(decision, suggestions) {
+      function renderPatchSuggestions(decision, suggestions, summary, nextSteps = []) {
         latestPatchSuggestions = normalizePlanPatchSuggestions(suggestions);
         patchSuggestionsEl.innerHTML = "";
+        const resolvedSummary = String(summary || "").trim();
+        if (planGuidanceSummaryEl) {
+          planGuidanceSummaryEl.textContent = resolvedSummary || "No summary guidance returned for this run.";
+        }
+        if (planNextStepsEl) {
+          const steps = Array.isArray(nextSteps) ? nextSteps.filter((item) => typeof item === "string" && item.trim()) : [];
+          if (!steps.length) {
+            planNextStepsEl.innerHTML = '<li>No next-step guidance returned.</li>';
+          } else {
+            planNextStepsEl.innerHTML = steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+          }
+        }
         const shouldShow = ["ASK", "DENY"].includes(String(decision || "").toUpperCase());
         applyAllPatchesEl.disabled = !(shouldShow && latestPatchSuggestions.length);
         if (!shouldShow) {
@@ -2847,7 +2877,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         const payload = await res.json();
         decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
         resultEl.textContent = JSON.stringify({ trace_id: payload.trace_id, span_id: payload.span_id, summary: payload.summary, next_steps: payload.next_steps, telemetry: payload.telemetry }, null, 2);
-        renderPatchSuggestions(payload.decision, payload.plan_patch_suggestion || []);
+        renderPatchSuggestions(payload.decision, payload.plan_patch_suggestion || [], payload.summary, payload.next_steps || []);
         latestEvaluation = { aggregate: payload.aggregate || {}, steps: payload.steps || [], plan };
         renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || [], payload.rationale_summary || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
         renderEffectLabComparison();
