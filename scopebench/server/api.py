@@ -330,6 +330,43 @@ class DatasetWizardResponse(BaseModel):
     rendered: DatasetRenderResponse
 
 
+class DatasetReviewCommentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str
+    reviewer: str
+    comment: str
+    draft_case: Optional[Dict[str, Any]] = None
+
+
+class DatasetReviewSuggestEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str
+    reviewer: str
+    field_path: str = Field(description="Dot-path describing the suggested edit target")
+    proposed_value: str
+    rationale: str
+    draft_case: Optional[Dict[str, Any]] = None
+
+
+class DatasetReviewVoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str
+    reviewer: str
+    vote: str = Field(description="accept|reject|abstain")
+    draft_case: Optional[Dict[str, Any]] = None
+
+
+class DatasetReviewStateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    case_id: str
+    draft_case: Optional[Dict[str, Any]] = None
+    comments: List[Dict[str, str]]
+    suggested_edits: List[Dict[str, str]]
+    votes: Dict[str, str]
+    acceptance: Dict[str, Any]
+    updated_utc: str
+
+
 class PluginWizardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     domain: str
@@ -2030,6 +2067,57 @@ def create_app(
         PluginManager._load_keyring(os.getenv("SCOPEBENCH_PLUGIN_KEYS_JSON", "")),
     )
 
+    dataset_review_state: Dict[str, Dict[str, Any]] = {}
+
+    def _utc_now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _empty_review(case_id: str, draft_case: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return {
+            "case_id": case_id,
+            "draft_case": draft_case,
+            "comments": [],
+            "suggested_edits": [],
+            "votes": {},
+            "acceptance": {
+                "accept": 0,
+                "reject": 0,
+                "abstain": 0,
+                "total": 0,
+                "ready": False,
+                "status": "pending",
+            },
+            "updated_utc": _utc_now_iso(),
+        }
+
+    def _refresh_acceptance(review: Dict[str, Any]) -> None:
+        votes = review.get("votes", {})
+        accept = sum(1 for value in votes.values() if value == "accept")
+        reject = sum(1 for value in votes.values() if value == "reject")
+        abstain = sum(1 for value in votes.values() if value == "abstain")
+        total = len(votes)
+        ready = total >= 2 and accept > reject
+        status = "accepted" if ready else ("rejected" if total >= 2 and reject >= accept else "pending")
+        review["acceptance"] = {
+            "accept": accept,
+            "reject": reject,
+            "abstain": abstain,
+            "total": total,
+            "ready": ready,
+            "status": status,
+        }
+        review["updated_utc"] = _utc_now_iso()
+
+    def _ensure_review(case_id: str, draft_case: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        review = dataset_review_state.get(case_id)
+        if review is None:
+            review = _empty_review(case_id, draft_case=draft_case)
+            dataset_review_state[case_id] = review
+        elif draft_case is not None:
+            review["draft_case"] = draft_case
+            review["updated_utc"] = _utc_now_iso()
+        return review
+
     def _reload_plugins() -> None:
         nonlocal plugin_manager
         plugin_manager = PluginManager.from_dirs(
@@ -2708,6 +2796,66 @@ def create_app(
             case=suggested.case,
             rendered=rendered,
         )
+
+    @app.post("/dataset/review/comment", response_model=DatasetReviewStateResponse)
+    def dataset_review_comment_endpoint(req: DatasetReviewCommentRequest):
+        review = _ensure_review(req.case_id, draft_case=req.draft_case)
+        text = req.comment.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="comment must not be empty")
+        review["comments"].append(
+            {
+                "reviewer": req.reviewer.strip() or "anonymous",
+                "comment": text,
+                "created_utc": _utc_now_iso(),
+            }
+        )
+        review["updated_utc"] = _utc_now_iso()
+        _refresh_acceptance(review)
+        return DatasetReviewStateResponse(**review)
+
+    @app.post("/dataset/review/suggest_edit", response_model=DatasetReviewStateResponse)
+    def dataset_review_suggest_edit_endpoint(req: DatasetReviewSuggestEditRequest):
+        review = _ensure_review(req.case_id, draft_case=req.draft_case)
+        field_path = req.field_path.strip()
+        proposed = req.proposed_value.strip()
+        rationale = req.rationale.strip()
+        if not field_path:
+            raise HTTPException(status_code=400, detail="field_path must not be empty")
+        if not proposed:
+            raise HTTPException(status_code=400, detail="proposed_value must not be empty")
+        if not rationale:
+            raise HTTPException(status_code=400, detail="rationale must not be empty")
+        review["suggested_edits"].append(
+            {
+                "reviewer": req.reviewer.strip() or "anonymous",
+                "field_path": field_path,
+                "proposed_value": proposed,
+                "rationale": rationale,
+                "created_utc": _utc_now_iso(),
+            }
+        )
+        review["updated_utc"] = _utc_now_iso()
+        _refresh_acceptance(review)
+        return DatasetReviewStateResponse(**review)
+
+    @app.post("/dataset/review/vote", response_model=DatasetReviewStateResponse)
+    def dataset_review_vote_endpoint(req: DatasetReviewVoteRequest):
+        review = _ensure_review(req.case_id, draft_case=req.draft_case)
+        vote = req.vote.strip().lower()
+        if vote not in {"accept", "reject", "abstain"}:
+            raise HTTPException(status_code=400, detail="vote must be one of: accept, reject, abstain")
+        reviewer = req.reviewer.strip() or "anonymous"
+        review["votes"][reviewer] = vote
+        review["updated_utc"] = _utc_now_iso()
+        _refresh_acceptance(review)
+        return DatasetReviewStateResponse(**review)
+
+    @app.get("/dataset/review/{case_id}", response_model=DatasetReviewStateResponse)
+    def dataset_review_state_endpoint(case_id: str):
+        review = _ensure_review(case_id)
+        _refresh_acceptance(review)
+        return DatasetReviewStateResponse(**review)
 
     @app.post("/suggest_effects", response_model=SuggestEffectsResponse)
     def suggest_effects_endpoint(req: SuggestEffectsRequest):

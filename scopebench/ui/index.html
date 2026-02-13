@@ -796,6 +796,30 @@ Require rollback plan before high-irreversibility actions.</textarea>
         <textarea id="dataset-contribution-file" style="min-height: 100px" readonly></textarea>
         <a id="dataset-download-link" href="#" download="community_case_001.json" style="display:none">Download rendered file</a>
         <pre id="dataset-output"></pre>
+
+        <h4 style="margin: 14px 0 6px">Collaborative Case Review</h4>
+        <p class="muted">Invite peers to leave comments, suggest edits, and vote on acceptance before submission.</p>
+        <div class="field-grid">
+          <label>Reviewer<input id="dataset-reviewer" type="text" value="reviewer-1" /></label>
+          <label>Edit field path<input id="dataset-edit-field" type="text" value="expected_rationale" /></label>
+          <label>Vote
+            <select id="dataset-vote-value">
+              <option value="accept">accept</option>
+              <option value="reject">reject</option>
+              <option value="abstain">abstain</option>
+            </select>
+          </label>
+        </div>
+        <label>Comment<input id="dataset-comment" type="text" placeholder="Suggest concerns, improvements, or blockers" /></label>
+        <label>Proposed value<input id="dataset-edit-value" type="text" placeholder="Updated text for the selected field" /></label>
+        <label>Edit rationale<input id="dataset-edit-rationale" type="text" placeholder="Why this change improves case quality" /></label>
+        <div class="controls" style="margin: 10px 0">
+          <button id="dataset-review-refresh" class="secondary">Refresh review</button>
+          <button id="dataset-review-comment" class="secondary">Add comment</button>
+          <button id="dataset-review-suggest" class="secondary">Suggest edit</button>
+          <button id="dataset-review-vote" class="secondary">Submit vote</button>
+        </div>
+        <pre id="dataset-review-output"></pre>
       </section>
 
       <section class="grid two-col" style="margin-top: 16px">
@@ -982,6 +1006,13 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const datasetContributionFileEl = el("dataset-contribution-file");
       const datasetExportFormatEl = el("dataset-export-format");
       const datasetDownloadLinkEl = el("dataset-download-link");
+      const datasetReviewerEl = el("dataset-reviewer");
+      const datasetCommentEl = el("dataset-comment");
+      const datasetEditFieldEl = el("dataset-edit-field");
+      const datasetEditValueEl = el("dataset-edit-value");
+      const datasetEditRationaleEl = el("dataset-edit-rationale");
+      const datasetVoteValueEl = el("dataset-vote-value");
+      const datasetReviewOutputEl = el("dataset-review-output");
       const datasetStepEls = {
         build: el("dataset-step-build"),
         suggest: el("dataset-step-suggest"),
@@ -3167,6 +3198,79 @@ Require rollback plan before high-irreversibility actions.</textarea>
       }
 
 
+      function reviewCaseIdFromDraft() {
+        try {
+          const draft = JSON.parse(caseDraftEl.value || "{}");
+          return draft.id || datasetCaseIdEl.value.trim() || "community_case_001";
+        } catch (_err) {
+          return datasetCaseIdEl.value.trim() || "community_case_001";
+        }
+      }
+
+      function reviewDraftPayload() {
+        try { return JSON.parse(caseDraftEl.value || "{}"); }
+        catch (_err) { return null; }
+      }
+
+      async function fetchDatasetReviewState() {
+        const caseId = encodeURIComponent(reviewCaseIdFromDraft());
+        const data = await fetch(`/dataset/review/${caseId}`).then((r) => r.json());
+        datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+      }
+
+      async function addDatasetReviewComment() {
+        const payload = {
+          case_id: reviewCaseIdFromDraft(),
+          reviewer: datasetReviewerEl.value.trim() || "anonymous",
+          comment: datasetCommentEl.value.trim(),
+          draft_case: reviewDraftPayload(),
+        };
+        const res = await fetch('/dataset/review/comment', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+      }
+
+      async function suggestDatasetReviewEdit() {
+        const payload = {
+          case_id: reviewCaseIdFromDraft(),
+          reviewer: datasetReviewerEl.value.trim() || "anonymous",
+          field_path: datasetEditFieldEl.value.trim(),
+          proposed_value: datasetEditValueEl.value.trim(),
+          rationale: datasetEditRationaleEl.value.trim(),
+          draft_case: reviewDraftPayload(),
+        };
+        const res = await fetch('/dataset/review/suggest_edit', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+      }
+
+      async function submitDatasetReviewVote() {
+        const payload = {
+          case_id: reviewCaseIdFromDraft(),
+          reviewer: datasetReviewerEl.value.trim() || "anonymous",
+          vote: datasetVoteValueEl.value,
+          draft_case: reviewDraftPayload(),
+        };
+        const res = await fetch('/dataset/review/vote', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        datasetReviewOutputEl.textContent = JSON.stringify(data, null, 2);
+      }
+
       function generateDatasetPrText() {
         const draft = buildCaseDraftFromInputs();
         const title = `dataset: add ${draft.id}`;
@@ -3340,6 +3444,26 @@ ${body}`;
       el("dataset-generate-pr").addEventListener("click", () => {
         try { generateDatasetPrText(); }
         catch (err) { datasetOutputEl.textContent = `Generate PR text error: ${err.message}`; }
+      });
+      el("dataset-review-refresh").addEventListener("click", () => {
+        fetchDatasetReviewState().catch((err) => {
+          datasetReviewOutputEl.textContent = `Review fetch error: ${err.message}`;
+        });
+      });
+      el("dataset-review-comment").addEventListener("click", () => {
+        addDatasetReviewComment().catch((err) => {
+          datasetReviewOutputEl.textContent = `Comment error: ${err.message}`;
+        });
+      });
+      el("dataset-review-suggest").addEventListener("click", () => {
+        suggestDatasetReviewEdit().catch((err) => {
+          datasetReviewOutputEl.textContent = `Suggest edit error: ${err.message}`;
+        });
+      });
+      el("dataset-review-vote").addEventListener("click", () => {
+        submitDatasetReviewVote().catch((err) => {
+          datasetReviewOutputEl.textContent = `Vote error: ${err.message}`;
+        });
       });
       suggestEffectsEl.addEventListener("click", () => suggestEffectsForPlan().catch((err) => {
         resultEl.textContent = `Suggest effects error: ${err.message}`;
