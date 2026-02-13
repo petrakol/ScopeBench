@@ -517,7 +517,44 @@ def test_plugin_marketplace_endpoint_returns_domain_listings() -> None:
     assert robotics["description"]
     assert isinstance(robotics["risk_classes"], list)
     assert "high" in robotics["risk_classes"]
+    assert "usage" in robotics
+    assert "trust" in robotics
+    assert "security_scan" in robotics["trust"]
+    assert "trust_summary" in marketplace
 
+
+
+def test_plugin_marketplace_review_and_security_scan(tmp_path: Path, monkeypatch) -> None:
+    plugin_dir = tmp_path / "plugins"
+    plugin_dir.mkdir()
+    bundle = {
+        "name": "robotics-starter",
+        "version": "0.1.0",
+        "publisher": "community",
+        "contributions": {
+            "policy_rules": [
+                {"id": "robotics.requires_dry_run", "when": {"tool_category": "robotics_operations"}, "action": "ASK"}
+            ]
+        },
+    }
+    source_path = plugin_dir / "robotics.json"
+    source_path.write_text(json.dumps(bundle), encoding="utf-8")
+    monkeypatch.setenv("SCOPEBENCH_PLUGIN_DIRS", str(plugin_dir))
+
+    app = create_app()
+    review_endpoint = _endpoint(app, "/plugin_marketplace/review")
+    reviewed = review_endpoint(
+        {"plugin_bundle": "robotics-starter", "publisher": "community", "rating": 4, "comment": "Helpful controls"}
+    )
+    assert reviewed["ok"] is True
+    assert reviewed["trust"]["review_count"] == 1
+    assert reviewed["trust"]["average_rating"] == 4.0
+
+    scan_endpoint = _endpoint(app, "/plugins/security_scan")
+    scanned = scan_endpoint({"plugin_bundle": "robotics-starter", "publisher": "community"})
+    assert scanned["ok"] is True
+    assert scanned["security_scan"]["status"] == "fail"
+    assert scanned["security_scan"]["policy_rules_count"] == 1
 
 def test_plugins_install_and_uninstall_endpoints(tmp_path: Path, monkeypatch) -> None:
     plugin_dir = tmp_path / "installed_plugins"
