@@ -375,6 +375,7 @@
         </div>
         <div class="card">
           <h3>Per-axis Rationales (LLM Judge + rules)</h3>
+          <div id="rationale-summary" class="muted" style="margin-bottom:8px">Theme summary will appear after evaluation.</div>
           <table><thead><tr><th>Step</th><th>Axis</th><th>Score</th><th>Confidence</th><th>Rationale</th></tr></thead><tbody id="rationale-table"></tbody></table>
         </div>
       </section>
@@ -801,6 +802,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const decisionEl = el("decision");
       const axisTableEl = el("axis-table");
       const rationaleTableEl = el("rationale-table");
+      const rationaleSummaryEl = el("rationale-summary");
       const contribTableEl = el("contrib-table");
       const whatIfEditorsEl = el("whatif-editors");
       const catalogEl = el("catalog");
@@ -1148,8 +1150,17 @@ Require rollback plan before high-irreversibility actions.</textarea>
           effectLabTableEl.appendChild(tr);
         });
       }
-      function renderStepRationales(steps = []) {
+      function renderStepRationales(steps = [], rationaleSummary = []) {
         rationaleTableEl.innerHTML = "";
+        if (!Array.isArray(rationaleSummary) || rationaleSummary.length === 0) {
+          rationaleSummaryEl.textContent = "No theme-level rationale summary available for this run.";
+        } else {
+          const themes = rationaleSummary.map((theme) => {
+            const topReasons = (theme.top_reasons || []).map((reason) => `${reason.rationale} (${reason.count} steps)`).join("; ");
+            return `${theme.theme} [${Number(theme.contribution || 0).toFixed(2)}]: ${topReasons || "n/a"}`;
+          });
+          rationaleSummaryEl.textContent = `Top rationale themes: ${themes.join(" | ")}`;
+        }
         const rows = [];
         steps.forEach((step) => Object.entries(step.axes || {}).forEach(([axis, detail]) => rows.push({ step: step.step_id || "unknown", axis, ...detail })));
         rows.sort((a, b) => b.value - a.value).forEach((row) => { const tr = document.createElement("tr"); tr.innerHTML = `<td>${row.step}</td><td>${row.axis}</td><td>${Number(row.value).toFixed(3)}</td><td>${Number(row.confidence || 0).toFixed(2)}</td><td>${row.rationale || "n/a"}</td>`; rationaleTableEl.appendChild(tr); });
@@ -2314,7 +2325,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
         decisionEl.innerHTML = `${decisionBadge(payload.decision)} effective=${payload.effective_decision || "n/a"}`;
         resultEl.textContent = JSON.stringify({ trace_id: payload.trace_id, span_id: payload.span_id, summary: payload.summary, next_steps: payload.next_steps, telemetry: payload.telemetry }, null, 2);
         latestEvaluation = { aggregate: payload.aggregate || {}, steps: payload.steps || [], plan };
-        renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
+        renderAggregate(payload.aggregate || {}); renderStepRationales(payload.steps || [], payload.rationale_summary || []); renderContributions(plan, payload.steps || [], payload.aggregate || {});
         renderEffectLabComparison();
       }
 
@@ -2411,7 +2422,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
         streamingEl.textContent = summarizeStreaming(payload);
         renderAggregate(payload.aggregate || {});
-        renderStepRationales(payload.steps || []);
+        renderStepRationales(payload.steps || [], payload.rationale_summary || []);
         renderContributions(plan, payload.steps || [], payload.aggregate || {});
       }
 
