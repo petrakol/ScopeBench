@@ -1178,6 +1178,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let latestEvaluation = null;
       let allCases = [];
       let latestCasesAnalytics = null;
+      let canonicalCasesAnalytics = null;
       let selectedCaseId = null;
       const EFFECT_LAB_CATEGORIES = [
         ["resource_use", "resource_intensity"],
@@ -3548,11 +3549,17 @@ Require rollback plan before high-irreversibility actions.</textarea>
       function refreshCasesAnalyticsDashboard() {
         const filters = analyticsFilters();
         const filtered = allCases.filter((item) => analyticsCaseMatches(item, filters));
-        latestCasesAnalytics = buildAnalyticsFromCases(filtered);
+        const usingCanonical =
+          canonicalCasesAnalytics
+          && filters.domain === "ALL"
+          && filters.decision === "ALL"
+          && filters.tool === "ALL";
+        latestCasesAnalytics = usingCanonical ? canonicalCasesAnalytics : buildAnalyticsFromCases(filtered);
         renderCasesAnalyticsDashboard(latestCasesAnalytics);
         renderAnalyticsPivotChart(latestCasesAnalytics);
         const toolLabel = filters.tool === "ALL" ? "all tools" : filters.tool;
-        analyticsExportStatusEl.textContent = `Filtered to ${filtered.length} cases (${filters.domain}, ${filters.decision}, ${toolLabel}).`;
+        const source = usingCanonical ? "source: /cases/analytics" : "source: filtered local recompute";
+        analyticsExportStatusEl.textContent = `Filtered to ${filtered.length} cases (${filters.domain}, ${filters.decision}, ${toolLabel}) • ${source}.`;
       }
 
       function renderCasesAnalyticsDashboard(dashboard) {
@@ -3669,6 +3676,15 @@ Require rollback plan before high-irreversibility actions.</textarea>
 
       async function loadCasesAnalyticsDashboard() {
         await loadCatalog();
+        canonicalCasesAnalytics = null;
+        try {
+          const analyticsRes = await fetch("/cases/analytics");
+          const analyticsData = await analyticsRes.json();
+          if (!analyticsRes.ok) throw new Error(analyticsData.detail || JSON.stringify(analyticsData));
+          canonicalCasesAnalytics = analyticsData;
+        } catch (err) {
+          analyticsExportStatusEl.textContent = `Fell back to local analytics build: ${err.message}`;
+        }
         const domains = ["ALL", ...Array.from(new Set(allCases.map((item) => item.domain).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)))];
         analyticsDomainFilterEl.innerHTML = domains.map((domain) => `<option value="${domain}">${domain === "ALL" ? "All domains" : domain}</option>`).join('');
         const tools = ["ALL", ...Array.from(new Set(allCases.flatMap((item) => (item?.plan?.steps || []).map((step) => step?.tool)).filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b)))];
