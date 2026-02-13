@@ -96,6 +96,49 @@ def test_step_rationale_summary_groups_by_theme_and_top_reasons() -> None:
     assert summary[0]["theme"] == "stakeholder_radius"
     assert summary[0]["top_reasons"][0]["rationale"] == "broad user impact"
     assert summary[0]["top_reasons"][0]["count"] == 2
+    assert summary[0]["contribution_score"] > 0
+    assert summary[0]["theme_clusters"][0]["theme"] == "impact broad user"
+
+
+def test_step_rationale_summary_clusters_repeated_themes_per_axis() -> None:
+    steps = [
+        StepDetail(
+            step_id="1",
+            tool="analysis",
+            tool_category="read",
+            axes={
+                "stakeholder_radius": AxisDetail(value=0.9, confidence=0.9, rationale="stakeholder radius concern for external users"),
+            },
+        ),
+        StepDetail(
+            step_id="2",
+            tool="review",
+            tool_category="read",
+            axes={
+                "stakeholder_radius": AxisDetail(value=0.8, confidence=0.8, rationale="broad external stakeholder concern in rollout"),
+            },
+        ),
+        StepDetail(
+            step_id="3",
+            tool="deploy",
+            tool_category="write",
+            axes={
+                "uncertainty": AxisDetail(value=0.6, confidence=0.7, rationale="runtime behavior unclear"),
+            },
+        ),
+    ]
+
+    summary = _summarize_step_rationales(
+        steps,
+        {"stakeholder_radius": 0.85, "uncertainty": 0.6},
+        top_themes=2,
+        top_reasons_per_theme=3,
+    )
+
+    stakeholder = next(item for item in summary if item["theme"] == "stakeholder_radius")
+    assert stakeholder["theme_clusters"][0]["count"] == 2
+    assert stakeholder["theme_clusters"][0]["steps"] == ["1", "2"]
+    assert stakeholder["theme_clusters"][0]["peak_value"] == pytest.approx(0.9)
 
 def test_evaluate_includes_trace_context_fields() -> None:
     app = create_app()
