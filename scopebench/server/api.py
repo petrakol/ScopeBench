@@ -2302,6 +2302,49 @@ def create_app(
             payload.get("domains") if isinstance(payload.get("domains"), list) else []
         )
         rows = [row for row in domains if isinstance(row, dict)]
+
+        def _proportionality_signals(
+            row_payload: Dict[str, Any],
+            installed_bundle: Optional[Dict[str, Any]],
+            rating_value: Optional[float],
+            security_scan_payload: Dict[str, Any],
+        ) -> Dict[str, Any]:
+            warnings: List[str] = []
+            policy_rules_count = int((installed_bundle or {}).get("policy_rules_count") or 0)
+            effects_mappings_count = int((installed_bundle or {}).get("effects_mappings_count") or 0)
+            risk_classes = {
+                str(item).strip().lower()
+                for item in (row_payload.get("risk_classes") or [])
+                if str(item).strip()
+            }
+            if security_scan_payload.get("status") == "fail":
+                warnings.append(
+                    "Security scan failed: policy contributions may bypass trusted proportionality controls."
+                )
+            if effects_mappings_count > 0 and policy_rules_count == 0:
+                warnings.append(
+                    "Effects mappings are present without policy_rules safeguards; review proportionality constraints before install."
+                )
+            if policy_rules_count > 3 and not (installed_bundle or {}).get("signature_valid"):
+                warnings.append(
+                    "Multiple policy rules are present but signature validation is missing/invalid."
+                )
+            if risk_classes.intersection({"high", "critical"}) and policy_rules_count == 0:
+                warnings.append(
+                    "High-impact risk classes listed without plugin policy guardrails; require manual review."
+                )
+            if rating_value is not None and rating_value < 3.0:
+                warnings.append(
+                    "Community rating is below 3.0★; inspect policy/effects behavior for disproportionate side effects."
+                )
+            status = "warn" if warnings else "ok"
+            return {
+                "status": status,
+                "warnings": warnings,
+                "policy_rules_count": policy_rules_count,
+                "effects_mappings_count": effects_mappings_count,
+            }
+
         installed_by_bundle = {
             f"{item.get('publisher')}::{item.get('name')}": item for item in plugin_manager.bundles_payload()
         }
@@ -2333,16 +2376,40 @@ def create_app(
                 else discovered_risk_classes
             )
             usage = row.get("usage") if isinstance(row.get("usage"), dict) else {}
+            trust_seed = row.get("trust") if isinstance(row.get("trust"), dict) else {}
+            ratings_seed = (
+                trust_seed.get("ratings") if isinstance(trust_seed.get("ratings"), dict) else {}
+            )
             reviews = plugin_reviews.get(key, [])
             review_count = len(reviews)
+            seeded_count = int(ratings_seed.get("count") or 0)
+            seeded_avg = (
+                round(float(ratings_seed.get("average")), 2)
+                if isinstance(ratings_seed.get("average"), (int, float))
+                else None
+            )
+            live_rating_total = sum(float(item.get("rating", 0)) for item in reviews)
+            seeded_rating_total = (seeded_avg * seeded_count) if seeded_avg is not None else 0.0
+            combined_count = review_count + seeded_count
             avg_rating = (
-                round(sum(float(item.get("rating", 0)) for item in reviews) / review_count, 2)
-                if review_count
+                round((live_rating_total + seeded_rating_total) / combined_count, 2)
+                if combined_count
                 else None
             )
             trust_totals["reviews"] += review_count
             trust_totals["ratings"] += sum(float(item.get("rating", 0)) for item in reviews)
             security_scan = _scan_bundle_security(installed)
+            seeded_scan = (
+                trust_seed.get("security_scan")
+                if isinstance(trust_seed.get("security_scan"), dict)
+                else None
+            )
+            if security_scan.get("status") == "unknown" and seeded_scan:
+                security_scan = {
+                    **security_scan,
+                    **seeded_scan,
+                }
+            proportionality = _proportionality_signals(row, installed, avg_rating, security_scan)
             enriched_rows.append(
                 {
                     **row,
@@ -2364,9 +2431,12 @@ def create_app(
                     },
                     "trust": {
                         "average_rating": avg_rating,
-                        "review_count": review_count,
+                        "review_count": combined_count,
+                        "live_review_count": review_count,
+                        "seeded_review_count": seeded_count,
                         "recent_reviews": reviews[-5:],
                         "security_scan": security_scan,
+                        "proportionality": proportionality,
                     },
                 }
             )

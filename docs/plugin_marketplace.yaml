@@ -1,68 +1,121 @@
 version: 1
-updated_utc: "2026-02-10T00:00:00Z"
+updated_utc: '2026-02-10T00:00:00Z'
 domains:
-  - slug: robotics
-    title: Robotics and Industrial Automation
-    description: Safety-first controls for industrial robots, motion planning, and rollback-aware actuation.
-    risk_classes: [high, critical]
-    maintainer: community-robotics
-    publisher: community
-    plugin_bundle: robotics-starter
-    repo: https://example.org/scopebench/plugins/robotics
-    status: incubating
-    usage:
-      downloads_30d: 124
-      active_installs: 37
-      invocations_7d: 452
-  - slug: biotech
-    title: Biotech and Wet-Lab Operations
-    description: Lab protocol safeguards, sample tracking, and contamination-aware planning helpers.
-    risk_classes: [moderate, high]
-    maintainer: community-biotech
-    publisher: community
-    plugin_bundle: biotech-safety-pack
-    repo: https://example.org/scopebench/plugins/biotech
-    status: incubating
-    usage:
-      downloads_30d: 89
-      active_installs: 28
-      invocations_7d: 301
-  - slug: supply-chain
-    title: Supply Chain and Logistics
-    description: Demand/supplier risk tooling for disruption simulation and resilient routing operations.
-    risk_classes: [low, moderate]
-    maintainer: community-supply-chain
-    publisher: community
-    plugin_bundle: supplychain-resilience
-    repo: https://example.org/scopebench/plugins/supply-chain
-    status: incubating
-    usage:
-      downloads_30d: 64
-      active_installs: 22
-      invocations_7d: 198
-  - slug: fintech-risk
-    title: FinTech Risk and Controls
-    description: Financial controls for compliance checks, fraud triage, and audit-ready policy workflows.
-    risk_classes: [moderate, high]
-    maintainer: community-fintech
-    publisher: community
-    plugin_bundle: fintech-risk-controls
-    repo: https://example.org/scopebench/plugins/fintech
-    status: incubating
-    usage:
-      downloads_30d: 101
-      active_installs: 34
-      invocations_7d: 389
-  - slug: public-sector
-    title: Public Sector Service Delivery
-    description: Civic service automation with transparency controls, fairness checks, and review gates.
-    risk_classes: [low, moderate, high]
-    maintainer: community-govtech
-    publisher: community
-    plugin_bundle: gov-service-ops
-    repo: https://example.org/scopebench/plugins/public-sector
-    status: incubating
-    usage:
-      downloads_30d: 73
-      active_installs: 19
-      invocations_7d: 167
+- slug: robotics
+  title: Robotics and Industrial Automation
+  description: Safety-first controls for industrial robots, motion planning, and rollback-aware
+    actuation.
+  risk_classes:
+  - high
+  - critical
+  maintainer: community-robotics
+  publisher: community
+  plugin_bundle: robotics-starter
+  repo: https://example.org/scopebench/plugins/robotics
+  status: incubating
+  usage:
+    downloads_30d: 124
+    active_installs: 37
+    invocations_7d: 452
+  trust:
+    ratings:
+      average: 4.6
+      count: 34
+    security_scan:
+      status: pass
+      issues: []
+- slug: biotech
+  title: Biotech and Wet-Lab Operations
+  description: Lab protocol safeguards, sample tracking, and contamination-aware planning
+    helpers.
+  risk_classes:
+  - moderate
+  - high
+  maintainer: community-biotech
+  publisher: community
+  plugin_bundle: biotech-safety-pack
+  repo: https://example.org/scopebench/plugins/biotech
+  status: incubating
+  usage:
+    downloads_30d: 89
+    active_installs: 28
+    invocations_7d: 301
+  trust:
+    ratings:
+      average: 4.1
+      count: 22
+    security_scan:
+      status: warn
+      issues:
+      - Includes external dependency fetch; pin hashes before production install.
+- slug: supply-chain
+  title: Supply Chain and Logistics
+  description: Demand/supplier risk tooling for disruption simulation and resilient
+    routing operations.
+  risk_classes:
+  - low
+  - moderate
+  maintainer: community-supply-chain
+  publisher: community
+  plugin_bundle: supplychain-resilience
+  repo: https://example.org/scopebench/plugins/supply-chain
+  status: incubating
+  usage:
+    downloads_30d: 64
+    active_installs: 22
+    invocations_7d: 198
+  trust:
+    ratings:
+      average: 3.8
+      count: 17
+    security_scan:
+      status: pass
+      issues: []
+- slug: fintech-risk
+  title: FinTech Risk and Controls
+  description: Financial controls for compliance checks, fraud triage, and audit-ready
+    policy workflows.
+  risk_classes:
+  - moderate
+  - high
+  maintainer: community-fintech
+  publisher: community
+  plugin_bundle: fintech-risk-controls
+  repo: https://example.org/scopebench/plugins/fintech
+  status: incubating
+  usage:
+    downloads_30d: 101
+    active_installs: 34
+    invocations_7d: 389
+  trust:
+    ratings:
+      average: 4.4
+      count: 29
+    security_scan:
+      status: pass
+      issues: []
+- slug: public-sector
+  title: Public Sector Service Delivery
+  description: Civic service automation with transparency controls, fairness checks,
+    and review gates.
+  risk_classes:
+  - low
+  - moderate
+  - high
+  maintainer: community-govtech
+  publisher: community
+  plugin_bundle: gov-service-ops
+  repo: https://example.org/scopebench/plugins/public-sector
+  status: incubating
+  usage:
+    downloads_30d: 73
+    active_installs: 19
+    invocations_7d: 167
+  trust:
+    ratings:
+      average: 2.9
+      count: 11
+    security_scan:
+      status: warn
+      issues:
+      - Policy templates can broaden stakeholder radius; verify proportionality thresholds.
