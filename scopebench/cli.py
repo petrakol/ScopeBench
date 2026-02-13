@@ -19,7 +19,8 @@ from scopebench.bench.community import (
     validate_cases_file,
 )
 from scopebench.bench.plugin_harness import run_plugin_test_harness
-from scopebench.bench.dataset import default_cases_path
+from scopebench.bench.dataset import default_cases_path, load_cases
+from scopebench.bench.fairness import evaluate_dataset_fairness, fairness_report_to_dict
 from scopebench.bench.continuous_learning import (
     analyze_continuous_learning,
     apply_learning_to_registry,
@@ -699,6 +700,68 @@ def dataset_pr(
         console.print_json(json.dumps(payload))
     else:
         console.print(f"Created PR: {url}")
+
+
+def _mini_bar(share: float, *, width: int = 24) -> str:
+    filled = int(round(max(0.0, min(1.0, share)) * width))
+    return "█" * filled + "·" * (width - filled)
+
+
+def _print_distribution_table(title: str, rows: list[dict[str, Any]]) -> None:
+    table = Table(title=title)
+    table.add_column("Category")
+    table.add_column("Count", justify="right")
+    table.add_column("Share", justify="right")
+    table.add_column("Distribution")
+    table.add_column("Deficit", justify="right")
+    for row in rows:
+        style = "yellow" if int(row["deficit"]) > 0 else ""
+        table.add_row(
+            str(row["category"]),
+            str(row["count"]),
+            f"{float(row['share']) * 100:.1f}%",
+            _mini_bar(float(row["share"])),
+            str(row["deficit"]),
+            style=style,
+        )
+    console.print(table)
+
+
+@app.command("dataset-fairness")
+def dataset_fairness(
+    cases_jsonl: Path = typer.Argument(..., help="Path to cases JSONL."),
+    min_share: float = typer.Option(
+        0.1,
+        "--min-share",
+        min=0.01,
+        max=0.95,
+        help="Minimum desired representation share per category before flagging deficits.",
+    ),
+    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+):
+    """Evaluate dataset fairness/coverage across domains, decisions, and dominant axes."""
+    cases = load_cases(cases_jsonl)
+    report = evaluate_dataset_fairness(cases, min_share=min_share)
+    payload = fairness_report_to_dict(report)
+    payload.update({"path": str(cases_jsonl), "min_share": min_share})
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+        return
+
+    console.print(
+        f"[bold]Dataset fairness evaluator[/bold] cases={report.total_cases} min_share={min_share:.2f}"
+    )
+    _print_distribution_table("Coverage by domain", payload["domain_distribution"])
+    _print_distribution_table("Coverage by expected decision", payload["decision_distribution"])
+    _print_distribution_table("Coverage by dominant axis", payload["axis_distribution"])
+
+    if payload["contribution_suggestions"]:
+        console.print("[bold]Suggested areas for new contributions[/bold]")
+        for suggestion in payload["contribution_suggestions"]:
+            console.print(f" - {suggestion}")
+    else:
+        console.print("[green]No underrepresented categories detected at the selected min-share threshold.[/green]")
 
 
 @app.command()
