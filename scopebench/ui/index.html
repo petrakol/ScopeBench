@@ -290,6 +290,14 @@
       .tour-inline-help { margin-top: 8px; border: 1px dashed #93c5fd; background: #f8fbff; border-radius: 8px; padding: 8px; }
       .tour-target { scroll-margin-top: 16px; }
       .tour-focus { outline: 3px solid #60a5fa; outline-offset: 2px; border-radius: 10px; }
+      .tour-command-box {
+        margin-top: 10px;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        background: #fff;
+        padding: 10px;
+      }
+      .tour-command-box pre { min-height: 72px; }
       .patch-suggestion-list {
         display: grid;
         gap: 8px;
@@ -413,6 +421,13 @@
           <button id="tour-next" class="secondary">Next step</button>
           <button id="tour-reset" class="secondary">Reset</button>
           <span id="tour-status" class="muted">Tour idle.</span>
+        </div>
+        <div class="tour-command-box">
+          <div class="inline-label">
+            <strong>Quickstart command for this step</strong>
+            <button id="tour-copy-command" class="secondary">Copy command</button>
+          </div>
+          <pre id="tour-command">Click Start tour to load a command snippet.</pre>
         </div>
         <div id="tour-steps" class="tour-step-list"></div>
       </section>
@@ -1192,11 +1207,46 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let pluginInstalledState = [];
 
       const TOUR_STEPS = [
-        { key: "template", title: "Template selection", target: "tour-template", help: "Generate and apply a baseline template for your workflow." },
-        { key: "plan", title: "Plan editing", target: "tour-plan-edit", help: "Edit plan JSON to reflect your own process and evaluate changes." },
-        { key: "effects", title: "Effect annotation", target: "tour-effects", help: "Auto-suggest effect annotations and refine magnitudes in the what-if lab." },
-        { key: "calibration", title: "Calibration tuning", target: "tour-calibration", help: "Inspect rates and tune calibration thresholds for decision quality." },
-        { key: "plugin", title: "Plugin installation", target: "tour-plugin", help: "Browse marketplace plugins, verify signatures, and install bundles." },
+        {
+          key: "template",
+          title: "Template selection",
+          target: "tour-template",
+          help: "Generate and apply a baseline template for your workflow.",
+          quickstartCommand: `scopebench list-templates
+scopebench run examples/coding_bugfix.contract.yaml examples/coding_bugfix.plan.yaml --json | jq '.decision, .scores, .reasons'`,
+        },
+        {
+          key: "plan",
+          title: "Plan editing",
+          target: "tour-plan-edit",
+          help: "Edit plan JSON to reflect your own process and evaluate changes.",
+          quickstartCommand: `cp examples/coding_bugfix.plan.yaml /tmp/coding_bugfix.plan.yaml
+scopebench run examples/coding_bugfix.contract.yaml /tmp/coding_bugfix.plan.yaml --json | jq '.decision, .reasons, .scores'`,
+        },
+        {
+          key: "effects",
+          title: "Effect annotation",
+          target: "tour-effects",
+          help: "Auto-suggest effect annotations and refine magnitudes in the what-if lab.",
+          quickstartCommand: `scopebench suggest-effects /tmp/coding_bugfix.plan.yaml --json | jq
+scopebench suggest-effects /tmp/coding_bugfix.plan.yaml --in-place`,
+        },
+        {
+          key: "calibration",
+          title: "Calibration tuning",
+          target: "tour-calibration",
+          help: "Inspect rates and tune calibration thresholds for decision quality.",
+          quickstartCommand: `scopebench serve --host 0.0.0.0 --port 8080
+curl -s http://localhost:8080/calibration/dashboard | jq`,
+        },
+        {
+          key: "plugin",
+          title: "Plugin installation",
+          target: "tour-plugin",
+          help: "Browse marketplace plugins, verify signatures, and install bundles.",
+          quickstartCommand: `scopebench plugin-generate --non-interactive --domain robotics --publisher community --name robotics-starter --tools move_arm,calibrate_sensor --signing-secret demo-secret --out /tmp/robotics-plugin.yaml
+scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plugins`,
+        },
       ];
       let tourIndex = -1;
 
@@ -3937,11 +3987,28 @@ ${body}`;
         `).join('');
       }
 
+      function renderTourCommand(step) {
+        const commandEl = el('tour-command');
+        if (!commandEl) return;
+        commandEl.textContent = step?.quickstartCommand || 'Click Start tour to load a command snippet.';
+      }
+
+      async function copyTourCommand() {
+        const step = TOUR_STEPS[tourIndex];
+        if (!step?.quickstartCommand) {
+          el('tour-status').textContent = 'Start the tour to copy the current quickstart command.';
+          return;
+        }
+        await navigator.clipboard.writeText(step.quickstartCommand);
+        el('tour-status').textContent = `Copied command for ${step.title}.`;
+      }
+
       function setTourStep(nextIndex) {
         if (nextIndex < 0 || nextIndex >= TOUR_STEPS.length) {
           clearTourFocus();
           tourIndex = -1;
           el('tour-status').textContent = 'Tour complete. You can rerun any inline example button.';
+          renderTourCommand(null);
           renderTourSteps();
           return;
         }
@@ -3954,6 +4021,7 @@ ${body}`;
           target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         el('tour-status').textContent = `Step ${tourIndex + 1}/${TOUR_STEPS.length}: ${step.title}`;
+        renderTourCommand(step);
         renderTourSteps();
       }
 
@@ -4225,6 +4293,7 @@ ${body}`;
         clearTourFocus();
         tourIndex = -1;
         el('tour-status').textContent = 'Tour reset. Click Start tour.';
+        renderTourCommand(null);
         renderTourSteps();
       });
       el('tour-run-template').addEventListener('click', () => runTourTemplateExample().catch((err) => { el('tour-status').textContent = `Template example failed: ${err.message}`; }));
@@ -4232,6 +4301,8 @@ ${body}`;
       el('tour-run-effects').addEventListener('click', () => runTourEffectsExample().catch((err) => { el('tour-status').textContent = `Effects example failed: ${err.message}`; }));
       el('tour-run-calibration').addEventListener('click', () => runTourCalibrationExample().catch((err) => { el('tour-status').textContent = `Calibration example failed: ${err.message}`; }));
       el('tour-run-plugin').addEventListener('click', () => runTourPluginExample().catch((err) => { el('tour-status').textContent = `Plugin example failed: ${err.message}`; }));
+      el('tour-copy-command').addEventListener('click', () => copyTourCommand().catch((err) => { el('tour-status').textContent = `Copy failed: ${err.message}`; }));
+      renderTourCommand(null);
       renderTourSteps();
 
       applySessionGlobalBudgets(defaultSessionState.global_budgets || {});
