@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 from scopebench.plan import PlanDAG
 from scopebench.server.api import (
+    AxisDetail,
     CalibrationAdjustmentRequest,
     EvaluateRequest,
     EvaluateStreamRequest,
@@ -22,7 +23,9 @@ from scopebench.server.api import (
     PolicyWorkbenchTestRequest,
     SuggestEffectsRequest,
     _suggest_plan_patch,
+    _summarize_step_rationales,
     create_app,
+    StepDetail,
 )
 
 
@@ -59,12 +62,49 @@ def _endpoint(app, path: str):
     raise AssertionError(f"missing route: {path}")
 
 
+
+
+def test_step_rationale_summary_groups_by_theme_and_top_reasons() -> None:
+    steps = [
+        StepDetail(
+            step_id="1",
+            tool="analysis",
+            tool_category="read",
+            axes={
+                "stakeholder_radius": AxisDetail(value=0.8, confidence=0.9, rationale="broad user impact"),
+                "uncertainty": AxisDetail(value=0.2, confidence=0.7, rationale="limited context"),
+            },
+        ),
+        StepDetail(
+            step_id="2",
+            tool="prod_deploy",
+            tool_category="write",
+            axes={
+                "stakeholder_radius": AxisDetail(value=0.7, confidence=0.8, rationale="broad user impact"),
+                "uncertainty": AxisDetail(value=0.6, confidence=0.6, rationale="production behavior inferred"),
+            },
+        ),
+    ]
+
+    summary = _summarize_step_rationales(
+        steps,
+        {"stakeholder_radius": 0.75, "uncertainty": 0.6},
+        top_themes=2,
+        top_reasons_per_theme=2,
+    )
+
+    assert summary[0]["theme"] == "stakeholder_radius"
+    assert summary[0]["top_reasons"][0]["rationale"] == "broad user impact"
+    assert summary[0]["top_reasons"][0]["count"] == 2
+
 def test_evaluate_includes_trace_context_fields() -> None:
     app = create_app()
     evaluate_endpoint = _endpoint(app, "/evaluate")
     response = evaluate_endpoint(EvaluateRequest.model_validate(_payload()))
     assert hasattr(response, "trace_id")
     assert hasattr(response, "span_id")
+    assert isinstance(response.rationale_summary, list)
+    assert len(response.rationale_summary) >= 1
 
 
 def test_templates_tools_cases_endpoints() -> None:
