@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import subprocess
 from dataclasses import asdict
@@ -48,6 +49,23 @@ SWE_READ_TOOLS = {"git_read", "file_read"}
 SWE_WRITE_TOOLS = {"git_patch", "git_rewrite", "file_write"}
 VALIDATION_TOOLS = {"analysis", "test_run", "pytest"}
 VALIDATION_HINTS = ("test", "verify", "validation", "assert", "check")
+RATIONALE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "for",
+    "from",
+    "in",
+    "into",
+    "is",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+}
 
 
 class EvaluateRequest(BaseModel):
@@ -827,6 +845,18 @@ def _summarize_step_rationales(
     if not step_details:
         return []
 
+    def _theme_tokens(axis: str, rationale: str) -> List[str]:
+        axis_tokens = set(axis.split("_"))
+        tokens = re.findall(r"[a-z0-9]+", rationale.lower())
+        return [
+            token
+            for token in tokens
+            if token not in RATIONALE_STOPWORDS and token not in axis_tokens and len(token) > 2
+        ]
+
+    def _theme_signature(axis: str, rationale: str) -> set[str]:
+        return set(_theme_tokens(axis, rationale))
+
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for step in step_details:
         for axis, detail in (step.axes or {}).items():
@@ -843,6 +873,7 @@ def _summarize_step_rationales(
     for axis, entries in grouped.items():
         sorted_entries = sorted(entries, key=lambda item: item["value"], reverse=True)
         rationale_index: Dict[str, Dict[str, Any]] = {}
+        theme_clusters: List[Dict[str, Any]] = []
         for entry in sorted_entries:
             rationale = entry["rationale"] or "n/a"
             bucket = rationale_index.setdefault(
@@ -858,16 +889,58 @@ def _summarize_step_rationales(
             bucket["peak_value"] = max(bucket["peak_value"], entry["value"])
             bucket["steps"].append(entry["step_id"])
 
+            theme_tokens = _theme_signature(axis, rationale)
+            if not theme_tokens:
+                theme_tokens = {"unspecified"}
+            theme_bucket = next(
+                (
+                    cluster
+                    for cluster in theme_clusters
+                    if len(cluster["tokens"] & theme_tokens) > 0
+                ),
+                None,
+            )
+            if theme_bucket is None:
+                theme_bucket = {
+                    "tokens": set(theme_tokens),
+                    "count": 0,
+                    "peak_value": 0.0,
+                    "total_value": 0.0,
+                    "steps": [],
+                    "rationale_examples": [],
+                    "token_freq": {},
+                }
+                theme_clusters.append(theme_bucket)
+
+            theme_bucket["count"] += 1
+            theme_bucket["peak_value"] = max(theme_bucket["peak_value"], entry["value"])
+            theme_bucket["total_value"] += entry["value"]
+            theme_bucket["steps"].append(entry["step_id"])
+            if rationale not in theme_bucket["rationale_examples"]:
+                theme_bucket["rationale_examples"].append(rationale)
+            theme_bucket["tokens"] |= theme_tokens
+            for token in theme_tokens:
+                theme_bucket["token_freq"][token] = theme_bucket["token_freq"].get(token, 0) + 1
+
         top_reasons = sorted(
             rationale_index.values(),
             key=lambda item: (item["count"], item["peak_value"]),
             reverse=True,
         )[:top_reasons_per_theme]
 
+        top_theme_clusters = sorted(
+            theme_clusters,
+            key=lambda item: (item["count"], item["peak_value"], item["total_value"]),
+            reverse=True,
+        )[:top_reasons_per_theme]
+        axis_contribution = float(aggregate.get(axis, 0.0))
+        contribution_score = axis_contribution * sorted_entries[0]["value"] * len(entries)
+
         summaries.append(
             {
                 "theme": axis,
-                "contribution": float(aggregate.get(axis, 0.0)),
+                "contribution": axis_contribution,
+                "contribution_score": contribution_score,
                 "step_count": len(entries),
                 "peak_value": sorted_entries[0]["value"],
                 "top_reasons": [
@@ -879,12 +952,37 @@ def _summarize_step_rationales(
                     }
                     for reason in top_reasons
                 ],
+                "theme_clusters": [
+                    {
+                        "theme": " ".join(
+                            sorted(
+                                cluster["token_freq"].keys(),
+                                key=lambda token: (
+                                    cluster["token_freq"].get(token, 0),
+                                    len(token),
+                                    token,
+                                ),
+                                reverse=True,
+                            )[:3]
+                        ),
+                        "count": cluster["count"],
+                        "peak_value": cluster["peak_value"],
+                        "avg_value": (
+                            cluster["total_value"] / cluster["count"]
+                            if cluster["count"]
+                            else 0.0
+                        ),
+                        "steps": sorted(set(cluster["steps"])),
+                        "rationale_examples": cluster["rationale_examples"][:2],
+                    }
+                    for cluster in top_theme_clusters
+                ],
             }
         )
 
     return sorted(
         summaries,
-        key=lambda item: (item["contribution"], item["peak_value"], item["step_count"]),
+        key=lambda item: (item["contribution_score"], item["contribution"], item["peak_value"]),
         reverse=True,
     )[:top_themes]
 
