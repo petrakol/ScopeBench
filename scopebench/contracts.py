@@ -53,6 +53,24 @@ class EscalationRules(BaseModel):
     ask_if_tool_category_in: Set[str] = Field(default_factory=set)
 
 
+class AxisWeights(BaseModel):
+    """Relative weighting per axis for domain-specific proportionality tuning.
+
+    Higher weights make an axis stricter by shrinking the effective threshold.
+    """
+
+    spatial: float = Field(default=1.0, gt=0)
+    temporal: float = Field(default=1.0, gt=0)
+    depth: float = Field(default=1.0, gt=0)
+    irreversibility: float = Field(default=1.0, gt=0)
+    resource_intensity: float = Field(default=1.0, gt=0)
+    legal_exposure: float = Field(default=1.0, gt=0)
+    dependency_creation: float = Field(default=1.0, gt=0)
+    stakeholder_radius: float = Field(default=1.0, gt=0)
+    power_concentration: float = Field(default=1.0, gt=0)
+    uncertainty: float = Field(default=1.0, gt=0)
+
+
 class TaskContract(BaseModel):
     """A machine-checkable representation of the user's implied envelope.
 
@@ -70,6 +88,7 @@ class TaskContract(BaseModel):
     budgets: Budget = Field(default_factory=Budget)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     escalation: EscalationRules = Field(default_factory=EscalationRules)
+    axis_weights: AxisWeights = Field(default_factory=AxisWeights)
 
     notes: Dict[str, Any] = Field(default_factory=dict)
 

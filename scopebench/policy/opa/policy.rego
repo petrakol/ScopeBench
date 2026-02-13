@@ -13,14 +13,18 @@ default decision := {
 contraction := max([0, 1 - input.aggregate.uncertainty])
 ask_any := input.contract.escalation.ask_if_any_axis_over * contraction
 
+axis_weight(axis) := w if {
+  w := object.get(input.contract.axis_weights, axis, 1)
+}
+
 max_threshold(axis) := t if {
   axis == "uncertainty"
-  t := input.contract.thresholds.max_uncertainty
+  t := input.contract.thresholds.max_uncertainty / axis_weight(axis)
 }
 
 max_threshold(axis) := t if {
   axis != "uncertainty"
-  t := input.contract.thresholds[sprintf("max_%s", [axis])] * contraction
+  t := input.contract.thresholds[sprintf("max_%s", [axis])] * contraction / axis_weight(axis)
 }
 
 axis_exceeded[axis] if {

@@ -51,16 +51,16 @@ class PythonPolicyBackend(PolicyBackend):
 
         contraction = max(0.0, 1.0 - agg.uncertainty)
         axis_to_thresh = {
-            "spatial": contract.thresholds.max_spatial * contraction,
-            "temporal": contract.thresholds.max_temporal * contraction,
-            "depth": contract.thresholds.max_depth * contraction,
-            "irreversibility": contract.thresholds.max_irreversibility * contraction,
-            "resource_intensity": contract.thresholds.max_resource_intensity * contraction,
-            "legal_exposure": contract.thresholds.max_legal_exposure * contraction,
-            "dependency_creation": contract.thresholds.max_dependency_creation * contraction,
-            "stakeholder_radius": contract.thresholds.max_stakeholder_radius * contraction,
-            "power_concentration": contract.thresholds.max_power_concentration * contraction,
-            "uncertainty": contract.thresholds.max_uncertainty,
+            "spatial": contract.thresholds.max_spatial * contraction / contract.axis_weights.spatial,
+            "temporal": contract.thresholds.max_temporal * contraction / contract.axis_weights.temporal,
+            "depth": contract.thresholds.max_depth * contraction / contract.axis_weights.depth,
+            "irreversibility": contract.thresholds.max_irreversibility * contraction / contract.axis_weights.irreversibility,
+            "resource_intensity": contract.thresholds.max_resource_intensity * contraction / contract.axis_weights.resource_intensity,
+            "legal_exposure": contract.thresholds.max_legal_exposure * contraction / contract.axis_weights.legal_exposure,
+            "dependency_creation": contract.thresholds.max_dependency_creation * contraction / contract.axis_weights.dependency_creation,
+            "stakeholder_radius": contract.thresholds.max_stakeholder_radius * contraction / contract.axis_weights.stakeholder_radius,
+            "power_concentration": contract.thresholds.max_power_concentration * contraction / contract.axis_weights.power_concentration,
+            "uncertainty": contract.thresholds.max_uncertainty / contract.axis_weights.uncertainty,
         }
         agg_dict = agg.as_dict()
         for axis, thresh in axis_to_thresh.items():

@@ -114,6 +114,15 @@
         display: grid;
         gap: 8px;
       }
+      .axis-weight-grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .axis-weight-grid label { font-size: 12px; }
+      .axis-weight-grid input { width: 100%; padding: 6px; border: 1px solid #cbd5e1; border-radius: 6px; }
+      .axis-weight-controls { display: flex; gap: 8px; margin-top: 8px; }
       .wizard-step {
         border: 1px solid #e5e7eb;
         border-radius: 8px;
@@ -401,6 +410,11 @@
         <div class="controls" style="margin-top: 10px">
           <button id="wizard-generate" class="secondary">Generate baseline</button>
           <button id="wizard-apply">Apply to editor</button>
+        </div>
+        <p class="muted" style="margin-top:8px">Domain-specific axis weighting (higher = stricter threshold). Used by wizard generation and what-if evaluations.</p>
+        <div id="wizard-axis-weights" class="axis-weight-grid"></div>
+        <div class="axis-weight-controls">
+          <button id="wizard-axis-weights-defaults" class="secondary">Reset weights to 1.0</button>
         </div>
         <div id="wizard-steps" class="step-list"></div>
         <div class="tour-inline-help">
@@ -879,7 +893,7 @@ Require rollback plan before high-irreversibility actions.</textarea>
     </main>
 
     <script>
-      const defaultContract = { goal: "Fix flaky CI test", preset: "team" };
+      const defaultContract = { goal: "Fix flaky CI test", preset: "team", axis_weights: { spatial: 1.0, temporal: 1.0, depth: 1.0, irreversibility: 1.0, resource_intensity: 1.0, legal_exposure: 1.0, dependency_creation: 1.0, stakeholder_radius: 1.0, power_concentration: 1.0, uncertainty: 1.0 } };
       const defaultPlan = {
         task: "Fix flaky CI test",
         steps: [
@@ -977,6 +991,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const wizardVariantEl = el("wizard-variant");
       const wizardPresetEl = el("wizard-preset");
       const wizardStepsEl = el("wizard-steps");
+      const wizardAxisWeightsEl = el("wizard-axis-weights");
+      const CONTRACT_AXES = ["spatial", "temporal", "depth", "irreversibility", "resource_intensity", "legal_exposure", "dependency_creation", "stakeholder_radius", "power_concentration", "uncertainty"];
       const caseDraftEl = el("case-draft");
       const datasetOutputEl = el("dataset-output");
       const policyBackendSelectEl = el("policy-backend-select");
@@ -2189,6 +2205,45 @@ Require rollback plan before high-irreversibility actions.</textarea>
         });
       }
 
+      function ensureAxisWeights(contract) {
+        contract.axis_weights = contract.axis_weights || {};
+        CONTRACT_AXES.forEach((axis) => {
+          const raw = Number(contract.axis_weights?.[axis]);
+          contract.axis_weights[axis] = Number.isFinite(raw) && raw > 0 ? raw : 1.0;
+        });
+      }
+
+      function renderAxisWeightControls(contract) {
+        if (!wizardAxisWeightsEl) return;
+        ensureAxisWeights(contract);
+        wizardAxisWeightsEl.innerHTML = CONTRACT_AXES.map((axis) => `
+          <label>${axis}<input type="number" min="0.1" step="0.1" data-axis-weight="${axis}" value="${Number(contract.axis_weights[axis]).toFixed(1)}" /></label>
+        `).join("");
+        wizardAxisWeightsEl.querySelectorAll("input[data-axis-weight]").forEach((node) => {
+          node.addEventListener("input", () => {
+            let parsed;
+            try { parsed = JSON.parse(contractEl.value); } catch (_err) { return; }
+            ensureAxisWeights(parsed);
+            const axis = node.dataset.axisWeight;
+            const value = Number(node.value);
+            parsed.axis_weights[axis] = Number.isFinite(value) && value > 0 ? value : 1.0;
+            contractEl.value = JSON.stringify(parsed, null, 2);
+            if (wizardDraft?.contract) {
+              ensureAxisWeights(wizardDraft.contract);
+              wizardDraft.contract.axis_weights[axis] = parsed.axis_weights[axis];
+            }
+            scheduleAutoEvaluate();
+          });
+        });
+      }
+
+      function syncAxisWeightControlsFromContract() {
+        let parsed;
+        try { parsed = JSON.parse(contractEl.value); } catch (_err) { parsed = { axis_weights: {} }; }
+        ensureAxisWeights(parsed);
+        renderAxisWeightControls(parsed);
+      }
+
       function generateWizardDraft() {
         const domain = wizardDomainEl.value;
         const variant = wizardVariantEl.value;
@@ -2206,8 +2261,16 @@ Require rollback plan before high-irreversibility actions.</textarea>
         contract.preset = preset;
         plan.task = goal;
 
+        let currentContract = {};
+        try { currentContract = JSON.parse(contractEl.value); } catch (_err) { currentContract = {}; }
+        if (currentContract?.axis_weights) {
+          contract.axis_weights = JSON.parse(JSON.stringify(currentContract.axis_weights));
+        }
+        ensureAxisWeights(contract);
+
         wizardDraft = { contract, plan };
         renderWizardSteps(plan);
+        renderAxisWeightControls(contract);
       }
 
       function computeCaseSeverity(item) {
@@ -3694,6 +3757,9 @@ ${body}`;
         try { const plan = JSON.parse(planEl.value); renderDag(plan); renderWhatIfEditors(plan); scheduleAutoEvaluate(); }
         catch (_err) { /* continue editing invalid JSON */ }
       });
+      contractEl.addEventListener("input", () => {
+        syncAxisWeightControlsFromContract();
+      });
       caseDraftEl.addEventListener("input", () => {
         try { syncDatasetFieldsFromDraft(JSON.parse(caseDraftEl.value)); }
         catch (_err) { /* continue editing invalid JSON */ }
@@ -3719,6 +3785,7 @@ ${body}`;
       renderEffectLabWeightControls();
       renderDag(defaultPlan);
       renderWhatIfEditors(defaultPlan);
+      syncAxisWeightControlsFromContract();
       renderEffectLabComparison();
       wizardDomainEl.addEventListener("change", () => {
         renderWizardVariantOptions();
@@ -3730,10 +3797,25 @@ ${body}`;
       el("wizard-generate").addEventListener("click", () => generateWizardDraft());
       el("wizard-apply").addEventListener("click", () => {
         if (!wizardDraft) return;
+        ensureAxisWeights(wizardDraft.contract);
         contractEl.value = JSON.stringify(wizardDraft.contract, null, 2);
         planEl.value = JSON.stringify(wizardDraft.plan, null, 2);
         renderDag(wizardDraft.plan);
         renderWhatIfEditors(wizardDraft.plan);
+        syncAxisWeightControlsFromContract();
+        scheduleAutoEvaluate();
+      });
+      el("wizard-axis-weights-defaults").addEventListener("click", () => {
+        let contract = {};
+        try { contract = JSON.parse(contractEl.value); } catch (_err) { contract = {}; }
+        ensureAxisWeights(contract);
+        CONTRACT_AXES.forEach((axis) => { contract.axis_weights[axis] = 1.0; });
+        if (wizardDraft?.contract) {
+          ensureAxisWeights(wizardDraft.contract);
+          CONTRACT_AXES.forEach((axis) => { wizardDraft.contract.axis_weights[axis] = 1.0; });
+        }
+        contractEl.value = JSON.stringify(contract, null, 2);
+        syncAxisWeightControlsFromContract();
         scheduleAutoEvaluate();
       });
 
