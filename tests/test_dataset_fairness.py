@@ -30,7 +30,17 @@ def _case(case_id: str, domain: str, decision: str, axis: str) -> dict:
         "domain": domain,
         "instruction": "Test instruction",
         "contract": {"goal": "Goal", "preset": "team"},
-        "plan": {"task": "Task", "steps": [{"id": "s1", "description": "d", "tool": "analysis"}]},
+        "plan": {
+            "task": "Task",
+            "steps": [
+                {
+                    "id": "s1",
+                    "description": "d",
+                    "tool": "analysis",
+                    "effects": {"version": "effects_v1", "legal": {"magnitude": "high"}} if axis == "legal_exposure" else {"version": "effects_v1", "resources": {"magnitude": "medium"}},
+                }
+            ],
+        },
         "expected_decision": decision,
         "expected_rationale": "rationale",
         "expected_step_vectors": [vector],
@@ -48,6 +58,9 @@ def test_fairness_flags_underrepresented_categories() -> None:
     assert report.total_cases == 3
     assert any(item["type"] == "decision" and item["category"] == "ASK" for item in report.underrepresented)
     assert any(item["type"] == "axis" and item["category"] == "temporal" for item in report.underrepresented)
+    assert report.effect_distribution
+    assert report.priority_matrix
+    assert any(item["priority_score"] > 0 for item in report.priority_matrix)
     assert report.contribution_suggestions
 
 
@@ -67,4 +80,8 @@ def test_dataset_fairness_cli_json(tmp_path) -> None:
     payload = json.loads(result.stdout)
     assert payload["total_cases"] == 3
     assert payload["underrepresented"]
+    assert payload["effect_distribution"]
+    assert payload["decision_by_domain"]
+    assert payload["decision_by_effect"]
+    assert payload["priority_matrix"]
     assert "contribution_suggestions" in payload

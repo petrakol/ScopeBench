@@ -754,7 +754,44 @@ def dataset_fairness(
     )
     _print_distribution_table("Coverage by domain", payload["domain_distribution"])
     _print_distribution_table("Coverage by expected decision", payload["decision_distribution"])
+    _print_distribution_table("Coverage by effect category", payload["effect_distribution"])
     _print_distribution_table("Coverage by dominant axis", payload["axis_distribution"])
+
+    by_domain = Table(title="Decision mix by domain")
+    by_domain.add_column("Domain")
+    by_domain.add_column("ALLOW", justify="right")
+    by_domain.add_column("ASK", justify="right")
+    by_domain.add_column("DENY", justify="right")
+    for domain, counts in sorted(payload["decision_by_domain"].items()):
+        by_domain.add_row(domain, str(counts.get("ALLOW", 0)), str(counts.get("ASK", 0)), str(counts.get("DENY", 0)))
+    console.print(by_domain)
+
+    by_effect = Table(title="Decision mix by effect category")
+    by_effect.add_column("Effect category")
+    by_effect.add_column("ALLOW", justify="right")
+    by_effect.add_column("ASK", justify="right")
+    by_effect.add_column("DENY", justify="right")
+    for effect, counts in sorted(payload["decision_by_effect"].items()):
+        by_effect.add_row(effect, str(counts.get("ALLOW", 0)), str(counts.get("ASK", 0)), str(counts.get("DENY", 0)))
+    console.print(by_effect)
+
+    priority = Table(title="Highest-priority new-case combinations")
+    priority.add_column("Domain")
+    priority.add_column("Effect")
+    priority.add_column("Decision")
+    priority.add_column("Current", justify="right")
+    priority.add_column("Score", justify="right")
+    for row in payload["priority_matrix"][:12]:
+        style = "yellow" if int(row["count"]) == 0 else ""
+        priority.add_row(
+            str(row["domain"]),
+            str(row["effect_category"]),
+            str(row["decision"]),
+            str(row["count"]),
+            str(row["priority_score"]),
+            style=style,
+        )
+    console.print(priority)
 
     if payload["contribution_suggestions"]:
         console.print("[bold]Suggested areas for new contributions[/bold]")
