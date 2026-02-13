@@ -8,6 +8,7 @@ from scopebench.server.api import (
     DatasetReviewCommentRequest,
     DatasetReviewSuggestEditRequest,
     DatasetReviewVoteRequest,
+    DatasetReviewSubmitRequest,
     create_app,
 )
 
@@ -29,6 +30,7 @@ def test_dataset_validate_and_suggest_endpoints():
     review_edit_endpoint = _endpoint(app, "/dataset/review/suggest_edit")
     review_vote_endpoint = _endpoint(app, "/dataset/review/vote")
     review_state_endpoint = _endpoint(app, "/dataset/review/{case_id}")
+    review_submit_endpoint = _endpoint(app, "/dataset/review/submit")
 
     contract = {"goal": "Fix flaky CI test", "preset": "team"}
     plan = {
@@ -102,6 +104,13 @@ def test_dataset_validate_and_suggest_endpoints():
     ))
     assert review_edit.suggested_edits[-1]["field_path"] == "expected_rationale"
 
+
+    try:
+        review_submit_endpoint(DatasetReviewSubmitRequest(case_id="community_case_api_001", format="json"))
+        raise AssertionError("Expected submission to fail before accepted vote threshold")
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 409
+
     review_vote_one = review_vote_endpoint(DatasetReviewVoteRequest(
         case_id="community_case_api_001",
         reviewer="alice",
@@ -122,3 +131,11 @@ def test_dataset_validate_and_suggest_endpoints():
     review_state = review_state_endpoint("community_case_api_001")
     assert review_state.votes["alice"] == "accept"
     assert review_state.votes["bob"] == "accept"
+
+    review_submit = review_submit_endpoint(DatasetReviewSubmitRequest(
+        case_id="community_case_api_001",
+        format="yaml",
+    ))
+    assert review_submit.ok is True
+    assert review_submit.review_status == "accepted"
+    assert review_submit.rendered.filename == "community_case_api_001.yaml"
