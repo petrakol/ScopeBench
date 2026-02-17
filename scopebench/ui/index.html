@@ -308,6 +308,10 @@
         background: #f8fbff;
         padding: 10px;
       }
+      .inline-suggestion-list { display: grid; gap: 6px; margin-bottom: 10px; }
+      .inline-suggestion-item { border: 1px solid #dbeafe; border-radius: 6px; background: #f8fbff; padding: 8px; }
+      .inline-suggestion-item p { margin: 0 0 6px; font-size: 13px; }
+      .inline-suggestion-item .muted { display: block; margin-bottom: 6px; }
       .patch-suggestion-card h4 {
         margin: 0 0 6px;
       }
@@ -1174,6 +1178,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
       };
       const suggestEffectsEl = el("suggest-effects");
       let latestPatchSuggestions = [];
+      let lastDecision = "";
+      let lastGuidanceSummary = "";
+      let lastGuidanceNextSteps = [];
       const EFFECT_AXES = [
         ["resources", "resource_intensity"],
         ["legal", "legal_exposure"],
@@ -1670,11 +1677,22 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           const container = document.createElement("div"); container.className = "step-editor";
           const options = knownTools.map((tool) => `<option value="${tool}" ${step.tool === tool ? "selected" : ""}>${tool}</option>`).join("");
           const sliders = EFFECT_AXES.map(([effectKey, axisKey]) => { const raw = step.effects?.[effectKey] || "none"; const value = Math.max(0, MAGNITUDE.indexOf(raw)) / (MAGNITUDE.length - 1); return `<div class="slider-row"><div class="inline-label"><strong>${axisKey}</strong><span>${raw}</span></div><input type="range" min="0" max="1" step="0.25" value="${value}" data-step="${stepIndex}" data-effect="${effectKey}" /></div>`; }).join("");
-          container.innerHTML = `<h4>${step.id}</h4><label>Description</label><textarea data-field="description" data-step="${stepIndex}" style="min-height:72px">${step.description || ""}</textarea><label>Tool</label><select data-field="tool" data-step="${stepIndex}">${options}</select><div class="slider-grid" style="margin-top:10px">${sliders}</div>`;
+          const inlineSuggestions = getInlinePatchSuggestionsForStep(step.id).map(({ patch, index }) => `
+            <div class="inline-suggestion-item">
+              <p><span class="patch-op-chip">${escapeHtml(String(patch.op || "patch"))}</span>${escapeHtml(classifyPatchSuggestion(patch))}</p>
+              <span class="muted">${escapeHtml(describePatchSuggestion(patch))}</span>
+              <button class="secondary" data-inline-apply-patch-index="${index}">Apply</button>
+            </div>
+          `).join("");
+          const inlineSuggestionsHtml = inlineSuggestions ? `<div class="inline-suggestion-list">${inlineSuggestions}</div>` : "";
+          container.innerHTML = `<h4>${step.id}</h4>${inlineSuggestionsHtml}<label>Description</label><textarea data-field="description" data-step="${stepIndex}" style="min-height:72px">${step.description || ""}</textarea><label>Tool</label><select data-field="tool" data-step="${stepIndex}">${options}</select><div class="slider-grid" style="margin-top:10px">${sliders}</div>`;
           whatIfEditorsEl.appendChild(container);
         });
         whatIfEditorsEl.querySelectorAll("textarea[data-field], select[data-field]").forEach((node) => node.addEventListener("input", (ev) => updatePlanField(Number(ev.target.dataset.step), ev.target.dataset.field, ev.target.value)));
         whatIfEditorsEl.querySelectorAll("input[type='range']").forEach((node) => node.addEventListener("input", (ev) => { const value = Number(ev.target.value); ev.target.previousElementSibling.querySelector("span").textContent = toMagnitude(value); updateEffectMagnitude(Number(ev.target.dataset.step), ev.target.dataset.effect, value); }));
+        whatIfEditorsEl.querySelectorAll("button[data-inline-apply-patch-index]").forEach((button) => {
+          button.addEventListener("click", () => applyPatchSuggestionByIndex(Number(button.dataset.inlineApplyPatchIndex)));
+        });
       }
 
       function parsePlanJson(text) {
@@ -1733,6 +1751,29 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
           return "Insert safety step";
         }
         return "Patch suggestion";
+      }
+
+      function patchTargetsStep(stepId, patch = {}) {
+        if (!stepId || !patch) return false;
+        const op = String(patch.op || "").toLowerCase();
+        const targetId = String(patch.target_step_id || "");
+        const anchorId = String(patch.after_step_id || "");
+        const patchStepId = String(patch.step?.id || "");
+        if (targetId && targetId === stepId) return true;
+        if (anchorId && anchorId === stepId) return true;
+        if ((op === "insert_before" || op === "insert_after" || op === "replace") && patchStepId && patchStepId === stepId) return true;
+        if (op === "split_plan") {
+          return (patch.chunks || []).some((chunk) => (chunk.step_ids || []).map((id) => String(id)).includes(stepId));
+        }
+        return false;
+      }
+
+      function getInlinePatchSuggestionsForStep(stepId) {
+        const scoped = [];
+        latestPatchSuggestions.forEach((patch, index) => {
+          if (patchTargetsStep(String(stepId || ""), patch)) scoped.push({ patch, index });
+        });
+        return scoped;
       }
 
       function describePatchSuggestion(patch) {
@@ -1806,6 +1847,7 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         planEl.value = JSON.stringify(applied.plan, null, 2);
         renderDag(applied.plan);
         renderWhatIfEditors(applied.plan);
+        renderPatchSuggestions(lastDecision, latestPatchSuggestions, lastGuidanceSummary, lastGuidanceNextSteps);
         scheduleAutoEvaluate();
         resultEl.textContent = `Applied plan patch suggestion: ${classifyPatchSuggestion(patch)}.`;
       }
@@ -1828,14 +1870,18 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         planEl.value = JSON.stringify(workingPlan, null, 2);
         renderDag(workingPlan);
         renderWhatIfEditors(workingPlan);
+        renderPatchSuggestions(lastDecision, latestPatchSuggestions, lastGuidanceSummary, lastGuidanceNextSteps);
         scheduleAutoEvaluate();
         resultEl.textContent = `Applied ${appliedCount} patch suggestion(s) to the plan editor.`;
       }
 
       function renderPatchSuggestions(decision, suggestions, summary, nextSteps = []) {
+        lastDecision = String(decision || "").toUpperCase();
+        lastGuidanceSummary = String(summary || "").trim();
+        lastGuidanceNextSteps = Array.isArray(nextSteps) ? nextSteps.slice() : [];
         latestPatchSuggestions = normalizePlanPatchSuggestions(suggestions);
         patchSuggestionsEl.innerHTML = "";
-        const resolvedSummary = String(summary || "").trim();
+        const resolvedSummary = lastGuidanceSummary;
         if (planGuidanceSummaryEl) {
           planGuidanceSummaryEl.textContent = resolvedSummary || "No summary guidance returned for this run.";
         }
@@ -1847,7 +1893,7 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
             planNextStepsEl.innerHTML = steps.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
           }
         }
-        const shouldShow = ["ASK", "DENY"].includes(String(decision || "").toUpperCase());
+        const shouldShow = ["ASK", "DENY"].includes(lastDecision);
         applyAllPatchesEl.disabled = !(shouldShow && latestPatchSuggestions.length);
         if (!shouldShow) {
           patchSuggestionsEl.innerHTML = '<div class="muted">No remediation needed: decision is ALLOW.</div>';
@@ -1871,6 +1917,7 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         patchSuggestionsEl.querySelectorAll("button[data-apply-patch-index]").forEach((button) => {
           button.addEventListener("click", () => applyPatchSuggestionByIndex(Number(button.dataset.applyPatchIndex)));
         });
+        renderWhatIfEditors(parsePlanJson(planEl.value));
       }
 
       function applySessionGlobalBudgets(globalBudgets = {}) {
