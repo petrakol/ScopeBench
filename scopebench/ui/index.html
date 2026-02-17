@@ -130,6 +130,8 @@
         gap: 6px;
       }
       .axis-weight-controls { display: flex; gap: 8px; margin-top: 8px; }
+      .axis-weight-controls-wrap { margin-top: 8px; }
+      .axis-weight-status { margin-top: 6px; }
       .wizard-step {
         border: 1px solid #e5e7eb;
         border-radius: 8px;
@@ -462,8 +464,13 @@
           <button id="wizard-axis-weights-load-profile" class="secondary">Apply profile</button>
         </div>
         <div id="wizard-axis-weights" class="axis-weight-grid"></div>
-        <div class="axis-weight-controls">
-          <button id="wizard-axis-weights-defaults" class="secondary">Reset weights to 1.0</button>
+        <div class="axis-weight-controls-wrap">
+          <div class="axis-weight-controls">
+            <button id="wizard-axis-weights-defaults" class="secondary">Reset weights to 1.0</button>
+            <button id="wizard-axis-weights-save-domain" class="secondary">Save as domain defaults</button>
+            <button id="wizard-axis-weights-load-domain" class="secondary">Use saved domain defaults</button>
+          </div>
+          <div id="wizard-axis-weight-domain-status" class="muted axis-weight-status">No saved defaults for this domain yet.</div>
         </div>
         <div id="wizard-steps" class="step-list"></div>
         <div class="tour-inline-help">
@@ -1098,6 +1105,9 @@ Require rollback plan before high-irreversibility actions.</textarea>
       const wizardAxisWeightsEl = el("wizard-axis-weights");
       const wizardAxisWeightProfileEl = el("wizard-axis-weight-profile");
       const wizardAxisWeightsLoadProfileEl = el("wizard-axis-weights-load-profile");
+      const wizardAxisWeightsSaveDomainEl = el("wizard-axis-weights-save-domain");
+      const wizardAxisWeightsLoadDomainEl = el("wizard-axis-weights-load-domain");
+      const wizardAxisWeightDomainStatusEl = el("wizard-axis-weight-domain-status");
       const CONTRACT_AXES = ["spatial", "temporal", "depth", "irreversibility", "resource_intensity", "legal_exposure", "dependency_creation", "stakeholder_radius", "power_concentration", "uncertainty"];
       const AXIS_WEIGHT_LABELS = {
         spatial: "Spatial reach",
@@ -1210,6 +1220,8 @@ Require rollback plan before high-irreversibility actions.</textarea>
       let autoTimer = null;
       let wizardTemplates = [];
       let wizardDraft = null;
+      let wizardDomainAxisWeights = {};
+      const WIZARD_DOMAIN_AXIS_WEIGHTS_KEY = "scopebench.wizard.domainAxisWeights.v1";
       let sessionState = { agents: clone(defaultSessionState.agents) };
       let calibrationDashboardState = null;
       let calibrationSelection = { domain: null, axisScaleDelta: {}, axisThresholdFactorDelta: {}, abstainDelta: 0.0 };
@@ -2650,6 +2662,52 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         });
       }
 
+      function normalizeDomainKey(domain) {
+        return String(domain || "").trim().toLowerCase();
+      }
+
+      function cloneAxisWeights(source) {
+        const seeded = Object.fromEntries(CONTRACT_AXES.map((axis) => [axis, 1.0]));
+        Object.entries(source || {}).forEach(([axis, weight]) => {
+          if (!CONTRACT_AXES.includes(axis)) return;
+          const value = Number(weight);
+          if (Number.isFinite(value) && value > 0) seeded[axis] = Math.min(2, Math.max(0.5, value));
+        });
+        return seeded;
+      }
+
+      function updateDomainAxisWeightStatus() {
+        if (!wizardAxisWeightDomainStatusEl) return;
+        const domainLabel = wizardDomainEl?.value || "this domain";
+        const hasDefaults = Boolean(wizardDomainAxisWeights[normalizeDomainKey(domainLabel)]);
+        wizardAxisWeightDomainStatusEl.textContent = hasDefaults
+          ? `Saved defaults available for ${domainLabel}.`
+          : `No saved defaults for ${domainLabel} yet.`;
+      }
+
+      function persistDomainAxisWeights() {
+        try { localStorage.setItem(WIZARD_DOMAIN_AXIS_WEIGHTS_KEY, JSON.stringify(wizardDomainAxisWeights)); }
+        catch (_err) { /* ignore storage errors */ }
+      }
+
+      function loadPersistedDomainAxisWeights() {
+        try {
+          const raw = localStorage.getItem(WIZARD_DOMAIN_AXIS_WEIGHTS_KEY);
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") return;
+          const normalized = {};
+          Object.entries(parsed).forEach(([domain, weights]) => {
+            const key = normalizeDomainKey(domain);
+            if (!key) return;
+            normalized[key] = cloneAxisWeights(weights);
+          });
+          wizardDomainAxisWeights = normalized;
+        } catch (_err) {
+          wizardDomainAxisWeights = {};
+        }
+      }
+
       function getAxisWeightProfileWeights(profileKey) {
         const profile = axisWeightProfiles[profileKey] || axisWeightProfiles.balanced;
         const seeded = Object.fromEntries(CONTRACT_AXES.map((axis) => [axis, 1.0]));
@@ -2683,7 +2741,44 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         });
         contractEl.value = JSON.stringify(contract, null, 2);
         if (rerender) renderAxisWeightControls(contract);
+        updateDomainAxisWeightStatus();
         if (schedule) scheduleAutoEvaluate();
+      }
+
+      function loadDomainAxisWeights(options = {}) {
+        const { rerender = true, schedule = true } = options;
+        const domainKey = normalizeDomainKey(wizardDomainEl?.value);
+        if (!domainKey || !wizardDomainAxisWeights[domainKey]) {
+          updateDomainAxisWeightStatus();
+          return false;
+        }
+        let contract = {};
+        try { contract = JSON.parse(contractEl.value); } catch (_err) { contract = {}; }
+        ensureAxisWeights(contract);
+        const domainWeights = cloneAxisWeights(wizardDomainAxisWeights[domainKey]);
+        CONTRACT_AXES.forEach((axis) => {
+          contract.axis_weights[axis] = domainWeights[axis];
+          if (wizardDraft?.contract) {
+            ensureAxisWeights(wizardDraft.contract);
+            wizardDraft.contract.axis_weights[axis] = domainWeights[axis];
+          }
+        });
+        contractEl.value = JSON.stringify(contract, null, 2);
+        if (rerender) renderAxisWeightControls(contract);
+        updateDomainAxisWeightStatus();
+        if (schedule) scheduleAutoEvaluate();
+        return true;
+      }
+
+      function saveDomainAxisWeights() {
+        const domainKey = normalizeDomainKey(wizardDomainEl?.value);
+        if (!domainKey) return;
+        let contract = {};
+        try { contract = JSON.parse(contractEl.value); } catch (_err) { contract = {}; }
+        ensureAxisWeights(contract);
+        wizardDomainAxisWeights[domainKey] = cloneAxisWeights(contract.axis_weights);
+        persistDomainAxisWeights();
+        updateDomainAxisWeightStatus();
       }
 
       function renderAxisWeightControls(contract) {
@@ -2759,9 +2854,16 @@ scopebench plugin-install /tmp/robotics-plugin.yaml --plugin-dir .scopebench/plu
         }
         ensureAxisWeights(contract);
 
+        const domainKey = normalizeDomainKey(domain);
+        const savedWeights = wizardDomainAxisWeights[domainKey];
+        if (savedWeights) {
+          contract.axis_weights = cloneAxisWeights(savedWeights);
+        }
+
         wizardDraft = { contract, plan };
         renderWizardSteps(plan);
         renderAxisWeightControls(contract);
+        updateDomainAxisWeightStatus();
       }
 
       function computeCaseSeverity(item) {
@@ -4582,7 +4684,9 @@ ${body}`;
       renderEffectLabWeightControls();
       renderDag(defaultPlan);
       renderWhatIfEditors(defaultPlan);
+      loadPersistedDomainAxisWeights();
       syncAxisWeightControlsFromContract();
+      updateDomainAxisWeightStatus();
       renderEffectLabComparison();
       wizardDomainEl.addEventListener("change", () => {
         renderWizardVariantOptions();
@@ -4591,6 +4695,12 @@ ${body}`;
       });
       wizardAxisWeightsLoadProfileEl.addEventListener("click", () => {
         applyAxisWeightProfile(wizardAxisWeightProfileEl?.value || "balanced");
+      });
+      wizardAxisWeightsSaveDomainEl?.addEventListener("click", () => {
+        saveDomainAxisWeights();
+      });
+      wizardAxisWeightsLoadDomainEl?.addEventListener("click", () => {
+        loadDomainAxisWeights();
       });
       wizardVariantEl.addEventListener("change", () => generateWizardDraft());
       wizardGoalEl.addEventListener("input", () => generateWizardDraft());
@@ -4617,6 +4727,7 @@ ${body}`;
         }
         contractEl.value = JSON.stringify(contract, null, 2);
         syncAxisWeightControlsFromContract();
+        updateDomainAxisWeightStatus();
         scheduleAutoEvaluate();
       });
 
