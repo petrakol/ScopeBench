@@ -1,0 +1,6 @@
+{
+  "name": "ScopeBench Getting to Green",
+  "description": "Install ScopeBench, run quickstart smoke checks, and upload artifacts.",
+  "iconName": "code",
+  "categories": ["Python", "Continuous integration"]
+}

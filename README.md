@@ -224,7 +224,7 @@ curl -s http://localhost:8080/evaluate \
 
 ```bash
 scopebench run <contract.yaml> <plan.yaml> [--json] [--compact-json] [--otel-console] [--calibration-scale <float>]
-scopebench quickstart [--json] [--compact-json] [--otel-console]
+scopebench quickstart [--json] [--compact-json] [--otel-console] [--out-dir <path>]
 scopebench coding-quickstart [--json] [--compact-json] [--otel-console]
 scopebench suggest-effects <plan.yaml> [--json] [--in-place]
 scopebench weekly-calibrate <telemetry.jsonl> [--json]
@@ -235,6 +235,7 @@ scopebench serve [--host 127.0.0.1] [--port 8080] [--policy-backend python|opa|c
 scopebench dataset-validate <cases.jsonl>
 scopebench dataset-suggest --id <case_id> --domain <domain> --instruction <text> --contract <contract.yaml> --plan <plan.yaml> --expected-decision ALLOW|ASK|DENY --expected-rationale <text> [--append-to <cases.jsonl>]
 scopebench dataset-pr --title <title> --body <body>
+scopebench plugin-try <domain> [--json]
 ```
 
 ---
@@ -368,6 +369,7 @@ Plugin scaffolding and linting are available via CLI and UI:
 - `scopebench plugin-generate --out plugin.yaml` (interactive skeleton + signing + built-in lint/harness run)
 - `scopebench plugin-lint plugin.yaml` (schema lint checks)
 - `/ui` → **Plugin Authoring Wizard** for guided bundle generation, linting, and harness summary
+- `scopebench plugin-try robotics --json` (marketplace-driven trial recipe + smoke eval output)
 
 ---
 
