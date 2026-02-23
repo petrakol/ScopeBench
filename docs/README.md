@@ -32,6 +32,7 @@ If you prefer a pure-CLI flow, use the paired markdown walkthroughs under `docs/
 ## Integrations and extension
 
 - [Python integrations SDK](integrations/python_sdk.md) — embed ScopeBench in orchestration frameworks.
+- [Integration starters (adoption)](integrations/adoption_starters.md) — copy-paste golden paths for Airflow, Prefect, and Dagster.
 - [Plugin ecosystem](plugins.md) — create, sign, and validate plugin bundles.
 - [Plugin marketplace catalog](plugin_marketplace.yaml) — community domain/plugin metadata.
 
@@ -39,6 +40,7 @@ If you prefer a pure-CLI flow, use the paired markdown walkthroughs under `docs/
 
 - [Rubric v1](rubric_v1.md) — annotation guidance and benchmark expectations.
 - [Architecture blueprint](BLUEPRINT.md) — long-term design, roadmap, and open questions.
+- [Adoption telemetry baseline](adoption_telemetry.md) — opt-in events and funnel schema for measuring activation and retention.
 
 ## Architecture decisions
 

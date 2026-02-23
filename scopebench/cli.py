@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -136,6 +137,46 @@ def _resolve_template_name(name: str) -> Tuple[str, str, str]:
     if kind not in TEMPLATE_KINDS:
         raise typer.BadParameter("Template kind must be one of: bundle, contract, plan, notes")
     return domain, variant, kind
+
+
+def _write_quickstart_report(out_dir: Path, payload: dict[str, Any]) -> Path:
+    report_path = out_dir / "summary.md"
+    top_axes = payload.get("top_axes", [])
+    lines = [
+        "# ScopeBench quickstart summary",
+        "",
+        f"- Generated UTC: {datetime.now(timezone.utc).isoformat()}",
+        f"- Decision: `{payload.get('decision')}`",
+        f"- Steps: `{payload.get('n_steps')}`",
+        "",
+        "## Top axes",
+    ]
+    for item in top_axes:
+        lines.append(f"- `{item['axis']}`: {item['value']:.3f}")
+    lines.extend(["", "## Reasons"])
+    for reason in payload.get("reasons", []):
+        lines.append(f"- {reason}")
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return report_path
+
+
+def _load_plugin_marketplace() -> list[dict[str, Any]]:
+    root = Path(__file__).resolve().parents[1]
+    marketplace_path = root / "docs" / "plugin_marketplace.yaml"
+    raw = yaml.safe_load(marketplace_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise typer.BadParameter("plugin marketplace must be a YAML object")
+    domains = raw.get("domains", [])
+    if not isinstance(domains, list):
+        raise typer.BadParameter("plugin marketplace domains must be a list")
+    return [d for d in domains if isinstance(d, dict)]
+
+
+def _marketplace_domain(slug: str) -> dict[str, Any]:
+    for domain in _load_plugin_marketplace():
+        if str(domain.get("slug", "")).strip() == slug:
+            return domain
+    raise typer.BadParameter(f"Unknown plugin marketplace domain '{slug}'.")
 
 
 def _compact_payload(result) -> dict:
@@ -467,14 +508,52 @@ def quickstart(
     otel_console: bool = typer.Option(
         False, "--otel-console", help="Enable console OpenTelemetry exporter."
     ),
+    out_dir: Path | None = typer.Option(
+        None, "--out-dir", help="Optional output directory for quickstart artifacts."
+    ),
 ):
-    """Run the bundled phone-charge overreach example."""
+    """Run a full first-run flow: evaluate example, validate dataset, and optionally emit artifacts."""
     init_tracing(enable_console=otel_console)
     root = Path(__file__).resolve().parents[1]
     contract_path = root / "examples" / "phone_charge.contract.yaml"
     plan_path = root / "examples" / "phone_charge.plan.yaml"
     res = evaluate_from_files(str(contract_path), str(plan_path))
-    _print_result(res, as_json=json_out, compact_json=compact_json)
+
+    cases = load_cases(default_cases_path())
+    artifacts: dict[str, str] = {}
+    compact = _compact_payload(res)
+    payload: dict[str, Any] = {
+        **compact,
+        "contract_path": str(contract_path),
+        "plan_path": str(plan_path),
+        "dataset": {"path": str(default_cases_path()), "count": len(cases)},
+    }
+
+    if out_dir is not None:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result_path = out_dir / "result.json"
+        result_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        artifacts["result_json"] = str(result_path)
+
+        report_path = _write_quickstart_report(out_dir, payload)
+        artifacts["summary_markdown"] = str(report_path)
+
+        payload["artifacts"] = artifacts
+
+    if compact_json:
+        console.print_json(json.dumps(payload))
+        return
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+        return
+
+    _print_result(res, as_json=False, compact_json=False)
+    console.print(
+        f"\n[bold]Quickstart checks[/bold] dataset={payload['dataset']['count']} cases from {payload['dataset']['path']}"
+    )
+    if artifacts:
+        console.print(f"Artifacts: {artifacts}")
 
 
 @app.command()
@@ -1042,6 +1121,45 @@ def plugin_generate(
         },
         "publish_guidance": bundle["metadata"]["publish_guidance"],
     }))
+
+
+@app.command("plugin-try")
+def plugin_try(
+    domain: str = typer.Argument(..., help="Marketplace domain slug (e.g., robotics)."),
+    json_out: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
+):
+    """Print one-click trial commands for a marketplace plugin domain and run a smoke evaluation."""
+    selected = _marketplace_domain(domain)
+    root = Path(__file__).resolve().parents[1]
+    smoke_contract = root / "examples" / "phone_charge.contract.yaml"
+    smoke_plan = root / "examples" / "phone_charge.plan.yaml"
+    smoke_result = evaluate_from_files(str(smoke_contract), str(smoke_plan))
+
+    plugin_bundle = selected.get("plugin_bundle", "")
+    repo = selected.get("repo", "")
+    payload = {
+        "domain": selected.get("slug"),
+        "title": selected.get("title"),
+        "plugin_bundle": plugin_bundle,
+        "repo": repo,
+        "commands": {
+            "generate": f"scopebench plugin-generate --non-interactive --domain {selected.get('slug')} --publisher community --name {plugin_bundle} --secret <secret>",
+            "lint": "scopebench plugin-lint <bundle.yaml>",
+            "harness": "scopebench plugin-harness <bundle.yaml>",
+            "install": "scopebench plugin-install <bundle.yaml>",
+        },
+        "smoke_eval": _compact_payload(smoke_result),
+    }
+
+    if json_out:
+        console.print_json(json.dumps(payload))
+        return
+
+    console.print(f"[bold]Plugin trial[/bold] {payload['domain']} - {payload['title']}")
+    console.print(f"Marketplace repo: {repo}")
+    for name, cmd in payload["commands"].items():
+        console.print(f" - {name}: {cmd}")
+    console.print(f"Smoke eval decision: {payload['smoke_eval']['decision']}")
 
 
 @app.command("plugin-harness")
